@@ -1,0 +1,66 @@
+export const dashboardMock = {
+    metrics: [
+        { label: '등록 프로젝트', value: 12, change: '+2 이번 달', tone: 'blue' },
+        { label: '검토 대기 변경요청', value: 7, change: '3건 긴급', tone: 'amber' },
+        { label: '완료된 분석', value: 48, change: '+11 이번 주', tone: 'emerald' },
+        { label: '활성 AI 모델', value: 'v1.4.2', change: 'LoRA Adapter', tone: 'violet' },
+    ],
+    systems: [
+        { name: 'AI 추론 서버', description: 'Mac Studio · FastAPI', status: 'ONLINE', latency: '42ms' },
+        { name: '학습 서버', description: 'M4 Max MacBook · MLX-LM', status: 'OFFLINE', latency: '-' },
+        { name: 'Supabase', description: 'Auth · PostgreSQL · pgvector', status: 'ONLINE', latency: '68ms' },
+    ],
+    recentAnalyses: [
+        { id: 'AN-2026-048', project: '공공마이데이터 전자서명', request: '전자서명 검증 결과 저장', risk: 'HIGH', score: 78, status: 'COMPLETED', date: '2026-07-23 11:02' },
+        { id: 'AN-2026-047', project: '국세청 면세 연계', request: '수신 파일 재처리 구조 개선', risk: 'MEDIUM', score: 54, status: 'COMPLETED', date: '2026-07-22 17:42' },
+        { id: 'AN-2026-046', project: '경영안정바우처', request: '검증 상태코드 추가', risk: 'LOW', score: 31, status: 'REVIEW', date: '2026-07-22 14:18' },
+    ],
+}
+
+export const projectsMock = [
+    { id: 'PRJ-001', name: '공공마이데이터 전자서명', stack: 'Vue 3 · Spring Boot · Tibero', source: 'GitHub', branch: 'develop', status: 'READY', updatedAt: '2026-07-23 10:32' },
+    { id: 'PRJ-002', name: '국세청 면세사업자 연계', stack: 'Spring Boot · MyBatis · Tibero', source: 'ZIP', branch: 'release', status: 'ANALYZING', updatedAt: '2026-07-22 18:10' },
+    { id: 'PRJ-003', name: '경영안정바우처', stack: 'Vue 3 · Spring Boot · Oracle', source: 'GitHub', branch: 'main', status: 'READY', updatedAt: '2026-07-22 15:44' },
+    { id: 'PRJ-004', name: 'PDF 비교 검토 시스템', stack: 'Vue 3 · Spring Boot · PostgreSQL', source: 'GitHub', branch: 'main', status: 'ERROR', updatedAt: '2026-07-21 09:20' },
+]
+
+export const changeRequestsMock = [
+    { id: 'CR-2026-031', project: '공공마이데이터 전자서명', title: '전자서명 검증 결과와 원문 저장', requester: '사업운영팀', priority: 'HIGH', status: 'ANALYZED', riskScore: 78, createdAt: '2026-07-23' },
+    { id: 'CR-2026-030', project: '국세청 면세사업자 연계', title: '파일 재수신 및 중복 방지 개선', requester: '데이터연계팀', priority: 'MEDIUM', status: 'REVIEW', riskScore: 54, createdAt: '2026-07-22' },
+    { id: 'CR-2026-029', project: '경영안정바우처', title: '검증 상태코드 506 추가', requester: '바우처운영팀', priority: 'LOW', status: 'REQUESTED', riskScore: null, createdAt: '2026-07-22' },
+]
+
+export const analysisHistoryMock = [
+    { id: 'AN-2026-048', project: '공공마이데이터 전자서명', model: 'doenaai-impact-v1.4.2', risk: 'HIGH', score: 78, duration: '2분 14초', reviewer: '김은태', result: 'APPROVED', analyzedAt: '2026-07-23 11:02' },
+    { id: 'AN-2026-047', project: '국세청 면세사업자 연계', model: 'doenaai-impact-v1.4.2', risk: 'MEDIUM', score: 54, duration: '1분 49초', reviewer: '박검토', result: 'CORRECTED', analyzedAt: '2026-07-22 17:42' },
+    { id: 'AN-2026-046', project: '경영안정바우처', model: 'doenaai-impact-v1.4.1', risk: 'LOW', score: 31, duration: '1분 22초', reviewer: '-', result: 'PENDING', analyzedAt: '2026-07-22 14:18' },
+]
+
+export const modelsMock = {
+    active: {
+        name: 'doenaai-impact-v1.4.2',
+        baseModel: 'Qwen Local Base',
+        adapter: 'impact-lora-v1.4.2',
+        status: 'ACTIVE',
+        deployedAt: '2026-07-20 22:15',
+        server: 'Mac Studio AI Server',
+        accuracy: 87.6,
+    },
+    versions: [
+        { version: 'v1.4.2', adapter: 'impact-lora-v1.4.2', dataset: 'dataset-2026-07-18', accuracy: 87.6, status: 'ACTIVE', createdAt: '2026-07-20' },
+        { version: 'v1.4.1', adapter: 'impact-lora-v1.4.1', dataset: 'dataset-2026-07-10', accuracy: 84.9, status: 'STANDBY', createdAt: '2026-07-12' },
+        { version: 'v1.3.0', adapter: 'impact-lora-v1.3.0', dataset: 'dataset-2026-06-25', accuracy: 80.8, status: 'ARCHIVED', createdAt: '2026-06-28' },
+    ],
+    evaluations: [
+        { label: '위험등급 정확도', value: 87.6, delta: '+2.7%' },
+        { label: '영향 파일 Recall', value: 91.2, delta: '+1.4%' },
+        { label: 'DB 영향 Recall', value: 88.4, delta: '+3.1%' },
+        { label: '형식 준수율', value: 99.1, delta: '+0.3%' },
+    ],
+}
+
+export const documentsMock = [
+    { id: 'DOC-101', name: '공공마이데이터 전자서명 요구사항.pdf', project: '공공마이데이터 전자서명', type: '요구사항', size: '2.4 MB', indexed: true, updatedAt: '2026-07-23 09:12' },
+    { id: 'DOC-100', name: '국세청 연계 인터페이스 정의서.xlsx', project: '국세청 면세사업자 연계', type: '인터페이스', size: '840 KB', indexed: true, updatedAt: '2026-07-22 16:30' },
+    { id: 'DOC-099', name: '바우처 검증 업무절차.md', project: '경영안정바우처', type: '업무절차', size: '42 KB', indexed: false, updatedAt: '2026-07-22 13:05' },
+]

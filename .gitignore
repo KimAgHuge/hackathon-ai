@@ -1,26 +1,141 @@
-# Logs
-logs
-*.log
+# =========================================================
+# Frontend / Node
+# =========================================================
+
+**/node_modules/
+**/dist/
+**/.vite/
+**/coverage/
+
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
-lerna-debug.log*
-
-node_modules
-dist
-dist-ssr
-*.local
 
 
+# =========================================================
+# Java / Gradle
+# =========================================================
 
-# Editor directories and files
-.vscode/*
-!.vscode/extensions.json
-.idea
+**/.gradle/
+**/build/
+**/out/
+*.class
+
+
+# =========================================================
+# Spring Boot local configuration
+# 실제 DB 비밀번호 / Supabase 설정 등이 들어가는 파일
+# =========================================================
+
+backend/src/main/resources/application-local.yml
+backend/src/main/resources/application-*.local.yml
+
+
+# =========================================================
+# Python
+# =========================================================
+
+**/.venv/
+**/venv/
+**/__pycache__/
+
+*.py[cod]
+
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+
+.coverage
+coverage.xml
+htmlcov/
+
+
+# =========================================================
+# AI / ML artifacts
+#
+# 루트의 모델/데이터/학습 결과만 제외
+# Python source package의 models/까지 제외하지 않도록
+# 앞에 / 사용
+# =========================================================
+
+/models/
+/datasets/
+/checkpoints/
+/training-runs/
+/artifacts/
+
+/training/outputs/
+/training/checkpoints/
+/training/logs/
+
+*.safetensors
+*.gguf
+*.ckpt
+*.onnx
+
+
+# =========================================================
+# Hugging Face / ML caches
+# =========================================================
+
+**/.cache/huggingface/
+**/.cache/mlx/
+
+
+# =========================================================
+# Environment / Secrets
+# =========================================================
+
+.env
+.env.*
+!**/.env.example
+
+
+# =========================================================
+# Frontend local environment
+#
+# 위의 .env.*에서도 제외되지만 명시적으로 남겨둠
+# =========================================================
+
+frontend/.env.local
+frontend/.env.*.local
+
+
+# =========================================================
+# Supabase
+#
+# migration SQL은 반드시 Git에 포함
+# supabase/migrations/*.sql 은 ignore 하지 않음
+# =========================================================
+
+supabase/.temp/
+supabase/.branches/
+
+
+# =========================================================
+# Logs / Runtime
+# =========================================================
+
+*.log
+logs/
+
+*.pid
+
+
+# =========================================================
+# IDE
+# =========================================================
+
+.idea/
+.vscode/
+*.iml
+
+
+# =========================================================
+# OS
+# =========================================================
+
 .DS_Store
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
+Thumbs.db
+Desktop.ini
