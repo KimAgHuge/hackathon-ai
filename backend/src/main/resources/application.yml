@@ -1,51 +1,32 @@
 server:
-  port: ${SERVER_PORT:8080}
+  port: 8080
+
+  # 같은 네트워크의 다른 PC에서도 접근 가능하게 함
+  address: 0.0.0.0
 
 spring:
   application:
     name: doenaai-backend
 
-  datasource:
-    url: ${SUPABASE_DB_JDBC_URL}
-    username: ${SUPABASE_DB_USERNAME}
-    password: ${SUPABASE_DB_PASSWORD}
-    driver-class-name: org.postgresql.Driver
-
-    hikari:
-      pool-name: DoenaaiHikariPool
-      maximum-pool-size: ${DB_MAX_POOL_SIZE:5}
-      minimum-idle: ${DB_MIN_IDLE:1}
-      connection-timeout: 10000
-      validation-timeout: 5000
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:local}
 
   jpa:
     open-in-view: false
 
     hibernate:
+      # DB는 Supabase migration SQL로 관리
+      # Hibernate가 임의로 생성/수정하지 않음
       ddl-auto: validate
 
     properties:
       hibernate:
         default_schema: public
         format_sql: true
+
         jdbc:
           time_zone: UTC
 
-  security:
-    oauth2:
-      resourceserver:
-        jwt:
-          issuer-uri: ${SUPABASE_JWT_ISSUER}
-          jwk-set-uri: ${SUPABASE_JWKS_URI}
-          audiences:
-            - authenticated
-
 logging:
   level:
-    org.hibernate.SQL: debug
-    org.springframework.security: info
-
-doenaai:
-  supabase:
-    url: ${SUPABASE_URL}
-    service-role-key: ${SUPABASE_SERVICE_ROLE_KEY:}
+    org.springframework.security: DEBUG
