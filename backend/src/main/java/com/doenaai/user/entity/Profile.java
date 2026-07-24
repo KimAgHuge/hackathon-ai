@@ -4,93 +4,40 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import lombok.AccessLevel;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
 
 import java.time.OffsetDateTime;
 import java.util.UUID;
 
+@Getter
 @Entity
-@Table(
-        name = "profiles",
-        schema = "public"
-)
+@Table(name = "profiles", schema = "public")
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Profile {
 
     @Id
     private UUID id;
 
-    @Column(
-            name = "display_name",
-            nullable = false,
-            length = 100
-    )
+    @Column(name = "display_name", nullable = false, length = 100)
     private String displayName;
 
-    @Column(
-            name = "department",
-            length = 100
-    )
+    @Column(length = 100)
     private String department;
 
-    @Column(
-            name = "job_title",
-            length = 100
-    )
+    @Column(name = "job_title", length = 100)
     private String jobTitle;
 
-    @Column(
-            name = "status",
-            nullable = false,
-            length = 20
-    )
+    @Column(nullable = false, length = 20)
     private String status;
 
     @Column(name = "last_login_at")
     private OffsetDateTime lastLoginAt;
 
-    @Column(
-            name = "created_at",
-            nullable = false
-    )
+    @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
 
-    @Column(
-            name = "updated_at",
-            nullable = false
-    )
+    @Column(name = "updated_at", nullable = false)
     private OffsetDateTime updatedAt;
-
-    protected Profile() {
-    }
-
-    public UUID getId() {
-        return id;
-    }
-
-    public String getDisplayName() {
-        return displayName;
-    }
-
-    public String getDepartment() {
-        return department;
-    }
-
-    public String getJobTitle() {
-        return jobTitle;
-    }
-
-    public String getStatus() {
-        return status;
-    }
-
-    public OffsetDateTime getLastLoginAt() {
-        return lastLoginAt;
-    }
-
-    public OffsetDateTime getCreatedAt() {
-        return createdAt;
-    }
-
-    public OffsetDateTime getUpdatedAt() {
-        return updatedAt;
-    }
 }

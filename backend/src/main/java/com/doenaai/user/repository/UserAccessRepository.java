@@ -1,5 +1,6 @@
 package com.doenaai.user.repository;
 
+import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
@@ -8,19 +9,13 @@ import java.util.Set;
 import java.util.UUID;
 
 @Repository
+@RequiredArgsConstructor
 public class UserAccessRepository {
 
     private final JdbcTemplate jdbcTemplate;
 
-    public UserAccessRepository(
-            JdbcTemplate jdbcTemplate
-    ) {
-        this.jdbcTemplate = jdbcTemplate;
-    }
+    public Set<String> findRoles(UUID userId) {
 
-    public Set<String> findRoles(
-            UUID userId
-    ) {
         String sql = """
                 select distinct
                     r.code
@@ -40,9 +35,8 @@ public class UserAccessRepository {
         );
     }
 
-    public Set<String> findPermissions(
-            UUID userId
-    ) {
+    public Set<String> findPermissions(UUID userId) {
+
         String sql = """
                 select distinct
                     p.code
