@@ -1,6 +1,7 @@
 package com.doenaai.project.dto;
 
 import com.doenaai.project.entity.ProjectStatus;
+import com.doenaai.project.entity.ProjectSourceType;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
@@ -19,6 +20,8 @@ public record ProjectUpdateRequest(
         @NotBlank
         @Size(max = 200)
         String defaultBranch,
+
+        ProjectSourceType sourceType,
 
         @NotNull
         ProjectStatus status

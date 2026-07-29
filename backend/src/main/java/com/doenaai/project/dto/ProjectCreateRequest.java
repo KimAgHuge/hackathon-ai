@@ -1,5 +1,6 @@
 package com.doenaai.project.dto;
 
+import com.doenaai.project.entity.ProjectSourceType;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
@@ -15,7 +16,9 @@ public record ProjectCreateRequest(
         String repositoryUrl,
 
         @Size(max = 200)
-        String defaultBranch
+        String defaultBranch,
+
+        ProjectSourceType sourceType
 
 ) {
 }

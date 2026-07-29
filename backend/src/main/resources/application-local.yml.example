@@ -87,6 +87,18 @@ spring:
 # -----------------------------------------------------------------------------
 doenaai:
 
+  # DB 연결 비밀번호를 AES-256-GCM으로 암호화할 때 사용하는 키
+  #
+  # 32바이트 난수 값을 Base64로 인코딩해서 환경변수로 주입
+  # 예: openssl rand -base64 32
+  security:
+    credential-encryption-key: ${DOENAAI_CREDENTIAL_ENCRYPTION_KEY:}
+
+  # Git 원격 조회 제한시간(초). 허용 호스트는 006 migration으로 생성되는
+  # public.git_host_policies 테이블에서 관리
+  git:
+    connection-timeout-seconds: ${DOENAAI_GIT_CONNECTION_TIMEOUT_SECONDS:10}
+
   # Supabase 프로젝트 기본 URL
   #
   # 예:

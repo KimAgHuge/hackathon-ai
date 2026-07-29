@@ -24,7 +24,10 @@ dependencies {
     // PostgreSQL / JPA
     implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
     implementation 'org.springframework.boot:spring-boot-starter-jdbc'
+    implementation 'org.eclipse.jgit:org.eclipse.jgit:7.7.0.202606012155-r'
+    implementation 'org.eclipse.jgit:org.eclipse.jgit.ssh.apache:7.7.0.202606012155-r'
     runtimeOnly 'org.postgresql:postgresql'
+    runtimeOnly 'com.oracle.database.jdbc:ojdbc11'
 
     // Security / Supabase JWT 검증
     implementation 'org.springframework.boot:spring-boot-starter-security'

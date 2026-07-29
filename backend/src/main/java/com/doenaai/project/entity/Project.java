@@ -32,6 +32,16 @@ public class Project {
     private String defaultBranch;
 
     @Enumerated(EnumType.STRING)
+    @Column(name = "source_type", nullable = false, length = 20)
+    private ProjectSourceType sourceType;
+
+    @Column(name = "source_file_name", length = 500)
+    private String sourceFileName;
+
+    @Column(name = "source_file_uri")
+    private String sourceFileUri;
+
+    @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     private ProjectStatus status;
 
@@ -49,6 +59,7 @@ public class Project {
             String description,
             String repositoryUrl,
             String defaultBranch,
+            ProjectSourceType sourceType,
             UUID createdBy
     ) {
         this.name = name;
@@ -57,6 +68,9 @@ public class Project {
         this.defaultBranch = defaultBranch == null || defaultBranch.isBlank()
                 ? "main"
                 : defaultBranch;
+        this.sourceType = sourceType == null
+                ? ProjectSourceType.GIT
+                : sourceType;
         this.status = ProjectStatus.ACTIVE;
         this.createdBy = createdBy;
     }
@@ -79,12 +93,16 @@ public class Project {
             String description,
             String repositoryUrl,
             String defaultBranch,
+            ProjectSourceType sourceType,
             ProjectStatus status
     ) {
         this.name = name;
         this.description = description;
         this.repositoryUrl = repositoryUrl;
         this.defaultBranch = defaultBranch;
+        this.sourceType = sourceType == null
+                ? this.sourceType
+                : sourceType;
         this.status = status;
     }
 }

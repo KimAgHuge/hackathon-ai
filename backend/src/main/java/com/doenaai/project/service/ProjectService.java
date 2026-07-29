@@ -70,6 +70,7 @@ public class ProjectService {
                 request.description(),
                 request.repositoryUrl(),
                 request.defaultBranch(),
+                request.sourceType(),
                 userId
         );
 
@@ -102,6 +103,7 @@ public class ProjectService {
                 request.description(),
                 request.repositoryUrl(),
                 request.defaultBranch(),
+                request.sourceType(),
                 request.status()
         );
 
@@ -162,6 +164,15 @@ public class ProjectService {
                     "프로젝트 수정 권한이 없습니다."
             );
         }
+    }
+
+    @Transactional(readOnly = true)
+    public void assertCanManage(
+            UUID projectId,
+            UUID userId
+    ) {
+        findProject(projectId);
+        checkManageAccess(projectId, userId);
     }
 
     private boolean isAdmin(
