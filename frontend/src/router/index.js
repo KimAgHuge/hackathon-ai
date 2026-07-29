@@ -125,13 +125,19 @@ const routes = [
                 },
             },
             {
-                path: 'analysis/progress',
+                path: 'projects/:projectId/analysis/:analysisJobId/progress',
                 name: 'analysis-progress',
                 component: AnalysisProgressView,
                 meta: {
                     title: '분석 진행 상태',
                     breadcrumb: '프로젝트 관리 > 분석 진행 상태',
                     permission: 'ANALYSIS_READ',
+                },
+            },
+            {
+                path: 'analysis/progress',
+                redirect: {
+                    name: 'projects',
                 },
             },
             {
@@ -212,12 +218,7 @@ router.beforeEach(async (to) => {
 
     const requiredPermission = to.meta.permission
 
-    if (
-        requiresAuth &&
-        requiredPermission &&
-        authStore.currentUser &&
-        !authStore.hasPermission(requiredPermission)
-    ) {
+    if (requiresAuth && requiredPermission && authStore.currentUser && !authStore.hasPermission(requiredPermission)) {
         return {
             name: 'forbidden',
         }
@@ -227,9 +228,7 @@ router.beforeEach(async (to) => {
 })
 
 router.afterEach((to) => {
-    document.title = to.meta.title
-        ? `${to.meta.title} | doenaai`
-        : 'doenaai'
+    document.title = to.meta.title ? `${to.meta.title} | doenaai` : 'doenaai'
 })
 
 export default router

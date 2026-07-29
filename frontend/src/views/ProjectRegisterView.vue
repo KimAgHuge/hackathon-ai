@@ -1,182 +1,274 @@
 <script setup>
-import { ref } from 'vue'
+import { reactive, ref, watch } from 'vue'
+import { storeToRefs } from 'pinia'
 import { useRouter } from 'vue-router'
 import PageTitle from '@/components/common/PageTitle.vue'
 import StepHeader from '@/components/common/StepHeader.vue'
-import { startAnalysis } from '@/api/projectApi'
+import ProjectConnectionStep from '@/components/project/connection/ProjectConnectionStep.vue'
+import { startProjectAnalysis } from '@/api/analysisApi'
+import { saveGitRepositoryConnection, saveProjectConnection, testDatabaseConnection, testGitRepositoryConnection } from '@/api/projectConnectionApi'
+import { createProject, updateProject } from '@/api/projectApi'
+import { useProjectWizardStore } from '@/stores/projectWizardStore'
 
 const router = useRouter()
-const loading = ref(false)
+const wizardStore = useProjectWizardStore()
+const {
+    projectId,
+    repositoryStatus,
+    repositoryMessage,
+    repositoryBranch,
+    repositoryCommitSha,
+    connectionStatus,
+    connectionMessage,
+    databaseProduct,
+    databaseVersion,
+} = storeToRefs(wizardStore)
 
-const form = ref({
-    projectName: 'doenaai',
-    sourceType: 'ZIP',
+const saving = ref(false)
+const testingRepository = ref(false)
+const testingConnection = ref(false)
+const startingAnalysis = ref(false)
+const notice = ref('')
+const noticeType = ref('success')
+
+const project = reactive({
+    name: 'doenaai',
+    description: '소스코드와 데이터베이스 구조를 함께 분석하는 프로젝트',
+    sourceType: 'GIT',
     repositoryUrl: 'https://github.com/example/doenaai.git',
-    branch: 'main',
-    databaseMode: 'CONNECTION',
-    databaseType: 'TIBERO',
-    host: '192.168.0.30',
-    port: '8629',
-    schema: 'DOENAAI',
-    username: 'doenaai_reader',
+    defaultBranch: 'main',
 })
 
-const handleStart = async () => {
-    loading.value = true
+const repositoryConnection = reactive({
+    providerType: 'AUTO',
+    authType: 'NONE',
+    username: '',
+    secret: '',
+    sshPrivateKey: '',
+    sshPassphrase: '',
+    knownHostsEntry: '',
+})
+
+const databaseSource = reactive({
+    connectionMode: 'DB_CONNECTION',
+    dbType: 'ORACLE',
+    host: '127.0.0.1',
+    port: 1521,
+    databaseName: 'ORCL',
+    schemaName: 'DOENAAI',
+    username: 'doenaai_reader',
+    password: '',
+})
+
+watch(
+    databaseSource,
+    () => {
+        if (connectionStatus.value !== 'IDLE') {
+            wizardStore.invalidateConnection()
+        }
+    },
+    { deep: true }
+)
+
+watch(
+    [() => [project.sourceType, project.repositoryUrl, project.defaultBranch], repositoryConnection],
+    () => {
+        if (repositoryStatus.value !== 'IDLE') {
+            wizardStore.invalidateRepository()
+        }
+    },
+    { deep: true }
+)
+
+const showNotice = (message, type = 'success') => {
+    notice.value = message
+    noticeType.value = type
+}
+
+const getErrorMessage = (error) => error?.response?.data?.message || error?.response?.data?.detail || error?.message || '요청을 처리하지 못했습니다.'
+
+const updateProjectForm = (value) => {
+    Object.assign(project, value)
+}
+
+const updateDatabaseSourceForm = (value) => {
+    Object.assign(databaseSource, value)
+}
+
+const updateRepositoryConnectionForm = (value) => {
+    Object.assign(repositoryConnection, value)
+}
+
+const buildProjectPayload = () => ({
+    name: project.name.trim(),
+    description: project.description.trim() || null,
+    sourceType: project.sourceType,
+    repositoryUrl: project.sourceType === 'GIT' ? project.repositoryUrl.trim() : null,
+    defaultBranch: project.sourceType === 'GIT' ? project.defaultBranch.trim() : 'main',
+})
+
+const ensureProject = async () => {
+    const payload = buildProjectPayload()
+    let savedProject
+
+    if (projectId.value) {
+        savedProject = await updateProject(projectId.value, {
+            ...payload,
+            status: 'ACTIVE',
+        })
+    } else {
+        savedProject = await createProject(payload)
+    }
+
+    wizardStore.setProject(savedProject)
+    return savedProject
+}
+
+const buildRepositoryConnectionPayload = () => ({
+    repositoryUrl: project.repositoryUrl.trim(),
+    branch: project.defaultBranch.trim(),
+    providerType: repositoryConnection.providerType,
+    authType: repositoryConnection.authType,
+    username: ['HTTPS_TOKEN', 'HTTPS_BASIC'].includes(repositoryConnection.authType) ? repositoryConnection.username.trim() || null : null,
+    secret: ['HTTPS_TOKEN', 'HTTPS_BASIC'].includes(repositoryConnection.authType) ? repositoryConnection.secret || null : null,
+    sshPrivateKey: repositoryConnection.authType === 'SSH_KEY' ? repositoryConnection.sshPrivateKey || null : null,
+    sshPassphrase: repositoryConnection.authType === 'SSH_KEY' ? repositoryConnection.sshPassphrase || null : null,
+    knownHostsEntry: repositoryConnection.authType === 'SSH_KEY' ? repositoryConnection.knownHostsEntry || null : null,
+})
+
+const handleSave = async () => {
+    saving.value = true
+    notice.value = ''
 
     try {
-        await startAnalysis(form.value)
-        router.push('/analysis/progress')
+        await ensureProject()
+        showNotice('프로젝트 기본정보를 저장했습니다.')
+    } catch (error) {
+        showNotice(getErrorMessage(error), 'error')
     } finally {
-        loading.value = false
+        saving.value = false
+    }
+}
+
+const handleTestConnection = async () => {
+    testingConnection.value = true
+    notice.value = ''
+    wizardStore.setConnectionTesting()
+
+    try {
+        const savedProject = await ensureProject()
+        const result = await testDatabaseConnection(savedProject.id, { ...databaseSource })
+
+        wizardStore.setConnectionResult(result)
+
+        if (!result.success) {
+            showNotice(result.message, 'error')
+        }
+    } catch (error) {
+        const message = getErrorMessage(error)
+        wizardStore.setConnectionError(message)
+        showNotice(message, 'error')
+    } finally {
+        testingConnection.value = false
+    }
+}
+
+const handleTestRepository = async () => {
+    testingRepository.value = true
+    notice.value = ''
+    wizardStore.setRepositoryTesting()
+
+    try {
+        const savedProject = await ensureProject()
+        const result = await testGitRepositoryConnection(savedProject.id, buildRepositoryConnectionPayload())
+
+        wizardStore.setRepositoryResult(result)
+
+        if (!result.success) {
+            showNotice(result.message, 'error')
+        }
+    } catch (error) {
+        const message = getErrorMessage(error)
+        wizardStore.setRepositoryError(message)
+        showNotice(message, 'error')
+    } finally {
+        testingRepository.value = false
+    }
+}
+
+const handleNext = async () => {
+    if (repositoryStatus.value !== 'SUCCESS' || connectionStatus.value !== 'SUCCESS') {
+        return
+    }
+
+    startingAnalysis.value = true
+    notice.value = ''
+
+    try {
+        const savedProject = await ensureProject()
+        await saveGitRepositoryConnection(savedProject.id, buildRepositoryConnectionPayload())
+        await saveProjectConnection(savedProject.id, { ...databaseSource })
+
+        const analysisJob = await startProjectAnalysis(savedProject.id)
+        wizardStore.setAnalysisJob(analysisJob)
+
+        await router.push({
+            name: 'analysis-progress',
+            params: {
+                projectId: savedProject.id,
+                analysisJobId: analysisJob.jobId,
+            },
+        })
+    } catch (error) {
+        showNotice(getErrorMessage(error), 'error')
+    } finally {
+        startingAnalysis.value = false
     }
 }
 </script>
 
 <template>
     <div>
-        <PageTitle
-            eyebrow="STEP 1"
-            title="프로젝트와 데이터베이스 연결"
-            description="소스코드와 DB 스키마를 동시에 분석하기 위한 연결 정보를 등록합니다."
-        />
+        <PageTitle eyebrow="STEP 1" title="프로젝트와 데이터베이스 연결" description="Git 저장소와 읽기 전용 DB 연결정보를 등록하고 실제 연결을 확인합니다." />
 
         <StepHeader :current="1" />
 
-        <div class="grid two-columns">
-            <section class="panel">
-                <div class="panel-heading">
-                    <div>
-                        <h2>프로젝트 소스</h2>
-                        <p>Git 저장소 또는 ZIP 파일을 연결합니다.</p>
-                    </div>
-                    <span class="badge blue">SOURCE</span>
-                </div>
-
-                <div class="form-group">
-                    <label>프로젝트명</label>
-                    <input v-model="form.projectName" />
-                </div>
-
-                <div class="segmented">
-                    <button
-                        type="button"
-                        :class="{ selected: form.sourceType === 'ZIP' }"
-                        @click="form.sourceType = 'ZIP'"
-                    >
-                        ZIP 업로드
-                    </button>
-                    <button
-                        type="button"
-                        :class="{ selected: form.sourceType === 'GIT' }"
-                        @click="form.sourceType = 'GIT'"
-                    >
-                        Git 저장소
-                    </button>
-                </div>
-
-                <div v-if="form.sourceType === 'ZIP'" class="dropzone">
-                    <div class="dropzone-icon">ZIP</div>
-                    <strong>프로젝트 ZIP 파일 업로드</strong>
-                    <p>현재는 화면 확인용이며 실제 업로드 API 연결 전 상태입니다.</p>
-                    <button type="button" class="button secondary">파일 선택</button>
-                </div>
-
-                <template v-else>
-                    <div class="form-group">
-                        <label>저장소 URL</label>
-                        <input v-model="form.repositoryUrl" />
-                    </div>
-                    <div class="form-group">
-                        <label>브랜치</label>
-                        <input v-model="form.branch" />
-                    </div>
-                </template>
-            </section>
-
-            <section class="panel">
-                <div class="panel-heading">
-                    <div>
-                        <h2>데이터베이스</h2>
-                        <p>읽기 전용 연결 또는 DDL 파일을 등록합니다.</p>
-                    </div>
-                    <span class="badge purple">DATABASE</span>
-                </div>
-
-                <div class="segmented">
-                    <button
-                        type="button"
-                        :class="{ selected: form.databaseMode === 'CONNECTION' }"
-                        @click="form.databaseMode = 'CONNECTION'"
-                    >
-                        DB 연결
-                    </button>
-                    <button
-                        type="button"
-                        :class="{ selected: form.databaseMode === 'DDL' }"
-                        @click="form.databaseMode = 'DDL'"
-                    >
-                        DDL 업로드
-                    </button>
-                </div>
-
-                <template v-if="form.databaseMode === 'CONNECTION'">
-                    <div class="form-group">
-                        <label>DB 종류</label>
-                        <select v-model="form.databaseType">
-                            <option>TIBERO</option>
-                            <option>ORACLE</option>
-                            <option>POSTGRESQL</option>
-                            <option>MYSQL</option>
-                        </select>
-                    </div>
-
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label>호스트</label>
-                            <input v-model="form.host" />
-                        </div>
-                        <div class="form-group small">
-                            <label>포트</label>
-                            <input v-model="form.port" />
-                        </div>
-                    </div>
-
-                    <div class="form-group">
-                        <label>스키마</label>
-                        <input v-model="form.schema" />
-                    </div>
-
-                    <div class="form-group">
-                        <label>읽기 전용 계정</label>
-                        <input v-model="form.username" />
-                    </div>
-                </template>
-
-                <div v-else class="dropzone compact-dropzone">
-                    <div class="dropzone-icon">DDL</div>
-                    <strong>스키마 DDL 파일 업로드</strong>
-                    <p>CREATE TABLE, INDEX, CONSTRAINT 파일을 등록합니다.</p>
-                    <button type="button" class="button secondary">파일 선택</button>
-                </div>
-
-                <div class="info-box">
-                    실제 업무 데이터는 읽지 않고 테이블, 컬럼, 인덱스, 제약조건 등
-                    스키마 메타데이터만 조회합니다.
-                </div>
-            </section>
+        <div
+            v-if="notice"
+            class="mb-5 rounded-xl border px-4 py-3 text-sm"
+            :class="
+                noticeType === 'error'
+                    ? 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300'
+                    : 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-300'
+            "
+            role="status"
+        >
+            {{ notice }}
         </div>
 
-        <div class="page-actions">
-            <button type="button" class="button secondary">임시 저장</button>
-            <button
-                type="button"
-                class="button primary"
-                :disabled="loading"
-                @click="handleStart"
-            >
-                {{ loading ? '분석 작업 생성 중...' : '프로젝트 분석 시작' }}
-            </button>
-        </div>
+        <ProjectConnectionStep
+            :project="project"
+            :repository-connection="repositoryConnection"
+            :database-source="databaseSource"
+            :connection-status="connectionStatus"
+            :connection-message="connectionMessage"
+            :database-product="databaseProduct"
+            :database-version="databaseVersion"
+            :repository-status="repositoryStatus"
+            :repository-message="repositoryMessage"
+            :repository-branch="repositoryBranch"
+            :repository-commit-sha="repositoryCommitSha"
+            :saving="saving"
+            :testing-repository="testingRepository"
+            :testing-connection="testingConnection"
+            :starting-analysis="startingAnalysis"
+            @update:project="updateProjectForm"
+            @update:repository-connection="updateRepositoryConnectionForm"
+            @update:database-source="updateDatabaseSourceForm"
+            @save="handleSave"
+            @test-repository="handleTestRepository"
+            @test-connection="handleTestConnection"
+            @next="handleNext"
+        />
     </div>
 </template>

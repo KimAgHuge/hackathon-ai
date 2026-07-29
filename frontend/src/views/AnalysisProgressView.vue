@@ -1,40 +1,35 @@
 <script setup>
 import { onMounted } from 'vue'
+import { useRoute } from 'vue-router'
 import PageTitle from '@/components/common/PageTitle.vue'
 import StepHeader from '@/components/common/StepHeader.vue'
 import { useProjectStore } from '@/stores/projectStore'
 
 const store = useProjectStore()
+const route = useRoute()
 
 onMounted(() => {
-    store.loadProgress()
+    store.loadProgress(route.params.analysisJobId)
 })
 </script>
 
 <template>
     <div>
-        <PageTitle
-            eyebrow="STEP 2"
-            title="소스코드와 DB 구조 병렬 분석"
-            description="Mac Studio의 분석 서버가 두 입력을 병렬로 처리한 뒤 관계를 연결합니다."
-        />
+        <PageTitle eyebrow="STEP 2" title="소스코드와 DB 구조 병렬 분석" description="Mac Studio의 분석 서버가 두 입력을 병렬로 처리한 뒤 관계를 연결합니다." />
 
         <StepHeader :current="2" />
 
         <section v-if="store.progress" class="hero-progress panel">
             <div class="hero-progress-header">
                 <div>
-                    <span class="badge green">PROCESSING</span>
+                    <span class="badge green">{{ store.progress.status }}</span>
                     <h2>doenaai 통합 분석 진행 중</h2>
                     <p>Controller부터 DB 테이블까지 연결 관계를 생성하고 있습니다.</p>
                 </div>
                 <div class="progress-score">{{ store.progress.overallProgress }}%</div>
             </div>
             <div class="progress-track large">
-                <div
-                    class="progress-fill"
-                    :style="{ width: `${store.progress.overallProgress}%` }"
-                ></div>
+                <div class="progress-fill" :style="{ width: `${store.progress.overallProgress}%` }"></div>
             </div>
         </section>
 
@@ -44,10 +39,7 @@ onMounted(() => {
                 <h3>소스코드 분석</h3>
                 <p>Vue, Spring Boot, MyBatis 구조 추출</p>
                 <div class="progress-track">
-                    <div
-                        class="progress-fill"
-                        :style="{ width: `${store.progress.sourceProgress}%` }"
-                    ></div>
+                    <div class="progress-fill" :style="{ width: `${store.progress.sourceProgress}%` }"></div>
                 </div>
                 <strong>{{ store.progress.sourceProgress }}%</strong>
                 <ul class="check-list">
@@ -63,10 +55,7 @@ onMounted(() => {
                 <h3>DB 스키마 분석</h3>
                 <p>테이블, 컬럼, 인덱스, 관계 추출</p>
                 <div class="progress-track">
-                    <div
-                        class="progress-fill purple-fill"
-                        :style="{ width: `${store.progress.databaseProgress}%` }"
-                    ></div>
+                    <div class="progress-fill purple-fill" :style="{ width: `${store.progress.databaseProgress}%` }"></div>
                 </div>
                 <strong>{{ store.progress.databaseProgress }}%</strong>
                 <ul class="check-list">
@@ -82,10 +71,7 @@ onMounted(() => {
                 <h3>코드·DB 관계 연결</h3>
                 <p>화면부터 테이블까지 의존관계 생성</p>
                 <div class="progress-track">
-                    <div
-                        class="progress-fill orange-fill"
-                        :style="{ width: `${store.progress.relationProgress}%` }"
-                    ></div>
+                    <div class="progress-fill orange-fill" :style="{ width: `${store.progress.relationProgress}%` }"></div>
                 </div>
                 <strong>{{ store.progress.relationProgress }}%</strong>
                 <ul class="check-list">
