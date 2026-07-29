@@ -64,9 +64,7 @@ const getOptionValue = (option) => {
 
 const handleChange = (event) => {
     const rawValue = event.target.value
-    const value = typeof props.modelValue === 'number'
-        ? Number(rawValue)
-        : rawValue
+    const value = typeof props.modelValue === 'number' ? Number(rawValue) : rawValue
 
     emit('update:modelValue', value)
 }
@@ -90,11 +88,7 @@ const handleChange = (event) => {
             @change="handleChange"
         >
             <slot name="before-options" />
-            <option
-                v-for="option in options"
-                :key="String(getOptionValue(option))"
-                :value="getOptionValue(option)"
-            >
+            <option v-for="option in options" :key="String(getOptionValue(option))" :value="getOptionValue(option)" :disabled="Boolean(option?.disabled)">
                 {{ getOptionLabel(option) }}
             </option>
         </select>
