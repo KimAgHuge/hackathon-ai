@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ProjectScanAnalysis",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "summary",
+    "frameworks",
+    "riskLevel",
+    "riskScore",
+    "impactAreas",
+    "evidences",
+    "recommendations"
+  ],
+  "properties": {
+    "summary": {
+      "type": "string"
+    },
+    "frameworks": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "riskLevel": {
+      "type": "string",
+      "enum": [
+        "LOW",
+        "MEDIUM",
+        "HIGH",
+        "CRITICAL",
+        "UNKNOWN"
+      ]
+    },
+    "riskScore": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "impactAreas": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "evidences": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "recommendations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}
