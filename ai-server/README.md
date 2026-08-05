@@ -12,6 +12,9 @@ Mac Studio에서 Ollama의 로컬 모델을 호출하는 FastAPI 내부 분석 �
 Git clone/checkout Worker, DB 메타데이터 수집, 클래스·메서드·SQL 호출 관계 분석은
 아직 포함하지 않는다.
 
+기준 Mac Studio에서는 `devstral:latest` 설치, 구조화 JSON 단독 추론,
+FastAPI 실제 분석 요청과 주요 장애 경로까지 검증을 완료했다.
+
 ## 범용 기술 스택 탐지
 
 탐지기는 `app/analyzers/technology_detector.py`에 있으며 특정 frontend/backend
@@ -86,11 +89,14 @@ FastAPI -> Ollama:11434           Mac Studio localhost
 
 ## 준비
 
-Ollama 앱을 실행하고 모델을 설치한다.
+Ollama 앱을 실행하고 모델을 설치한다. 기준 Mac Studio에는
+`devstral:latest` 14GB 모델이 설치되어 있다.
 
 ```bash
+open -a Ollama
 ollama pull devstral
 curl http://127.0.0.1:11434/api/tags
+ollama list
 ```
 
 Python 가상환경을 준비한다.
@@ -165,5 +171,99 @@ Ollama를 mock하는 단위 테스트:
 pytest
 ```
 
-실제 모델 통합 검증은 Ollama와 `devstral` 설치가 끝난 뒤 위 API 요청으로 별도
-수행한다.
+현재 자동화 테스트는 17개가 통과한다. Ollama 응답은 자동화 테스트에서 mock하며,
+실제 모델 통합은 아래 절차로 별도 확인한다.
+
+## 실제 Devstral 통합 검증
+
+2026-08-05 기준 Mac Studio에서 다음을 실제로 확인했다.
+
+```text
+ollama list                            devstral:latest 14GB
+Ollama /api/chat                      구조화 한국어 JSON 성공
+GET /health                           HTTP 200
+GET /api/models/health                HTTP 200, available=true
+POST /api/analysis/project, key 없음  HTTP 401, Ollama 호출 없음
+POST /api/analysis/project, key 있음  HTTP 200
+Pydantic/JSON Schema 검증              통과
+```
+
+측정 결과:
+
+```text
+Devstral 단독 추론 총 처리시간     약 27초
+초기 모델 load                    약 7.3초
+FastAPI 실제 분석 처리시간         약 23.25초
+```
+
+FastAPI 응답은 camelCase 계약, `riskLevel` 허용값, `riskScore` 0~100 범위와
+Pydantic schema를 통과했다. 로그에는 request ID, HTTP method/path/status,
+처리시간과 Ollama 호출 상태만 남았고 API key와 prompt 원문은 노출되지 않았다.
+
+Devstral을 직접 재검증한다.
+
+```bash
+curl http://127.0.0.1:11434/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "devstral",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Spring Controller와 Service의 관계를 JSON으로 설명해줘."
+      }
+    ],
+    "stream": false,
+    "format": "json"
+  }'
+```
+
+실제 FastAPI 분석은 위 `POST /api/analysis/project` 예제를 사용한다. 내부 API
+key는 command에 직접 적지 않고 `DOENAAI_AI_INTERNAL_API_KEY` 환경변수로 전달한다.
+
+## 장애 대응과 검증 결과
+
+실제 오류 설정으로 다음 HTTP 계약을 확인했다.
+
+```text
+잘못된 Ollama URL       HTTP 503, MODEL_UNAVAILABLE
+설치되지 않은 모델      HTTP 503, MODEL_UNAVAILABLE
+0.001초 모델 timeout    HTTP 504, MODEL_TIMEOUT
+```
+
+모델 JSON Schema 위반 후 제한 재시도와 `502` 변환은 mock 자동화 테스트로
+검증했다.
+
+`127.0.0.1:11434` 연결이 거부되면 Ollama 앱이 실행 중인지 먼저 확인한다.
+
+```bash
+open -a Ollama
+curl http://127.0.0.1:11434/api/tags
+```
+
+Ollama는 실행되지만 모델이 보이지 않으면 다음 명령으로 설치 상태를 확인한다.
+
+```bash
+ollama list
+ollama pull devstral
+```
+
+FastAPI의 `/health`는 모델을 호출하지 않는다. Ollama와 모델까지 함께 확인하려면
+내부 API key를 포함해 `/api/models/health`를 호출한다.
+
+## 다음 구현 범위
+
+현재 `TechnologyDetector`와 FastAPI/Ollama 분석 API는 각각 동작하지만,
+`analysis_jobs.PENDING` 작업을 자동 처리하는 Worker는 없다. 다음 구현 대상은
+다음과 같다.
+
+1. Worker claim, lease, heartbeat와 retry
+2. 고정 commit clone/checkout
+3. `TechnologyDetector` 실행과 DB metadata 수집
+4. 분석 facts를 FastAPI 요청으로 변환
+5. `analysis_results` 저장과 작업 `COMPLETED` 처리
+6. 프런트 진행률 polling과 결과 화면 연결
+
+관련 DB 변경은 공식 진행상황 문서의 순서에 따라 신규
+`008_analysis_pipeline.sql`에서 설계한다. 기존 `001`~`006` migration은
+수정하거나 재실행하지 않는다.
