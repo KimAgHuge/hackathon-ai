@@ -1,6 +1,6 @@
 # doenaai Mac Studio 작업 진행상황 및 PC 이동 인수인계
 
-최종 갱신: 2026-07-30
+최종 갱신: 2026-08-05
 
 이 문서는 Mac Studio에서 진행한 `doenaai` 프로젝트 작업 내용, 현재 검증 상태,
 미완료 항목과 다른 PC에서 이어서 작업하는 방법을 정리한다.
@@ -14,11 +14,13 @@ key는 이 문서에 기록하지 않는다.
 프런트엔드 실행 확인                  완료
 Spring Boot Gradle build/실행 확인    완료
 Ollama 애플리케이션 설치              완료
-Devstral 모델 설치                    미완료
+Devstral 모델 설치                    완료, devstral:latest 14GB
 FastAPI/Ollama 호출 코드              구현 완료
 FastAPI mock 단위 테스트              완료, 17개 통과
-실제 Devstral 단독 추론               미검증
-FastAPI -> 실제 Devstral 통합         미검증
+실제 Devstral 단독 추론               완료
+FastAPI -> 실제 Devstral 통합         완료
+실제 health/인증 실패/API 응답 검증    완료
+실제 장애/미설치 모델/timeout 검증     완료
 범용 기술 스택 정적 탐지              구현 완료
 실제 저장소 기술 탐지                 검증 완료
 analysis_jobs Worker                  미구현
@@ -42,8 +44,8 @@ Spring Boot -> FastAPI client         미구현
 
 ```text
 branch: main
-HEAD: 5e99ad5
-commit: AI 서버 Ollama 연동 및 범용 기술 스택 탐지 추가
+HEAD: cd95fb9
+commit: Mac Studio AI 작업 진행상황 인수인계 문서 추가
 working tree: clean
 local origin/main 대비: ahead 0, behind 0
 ```
@@ -51,6 +53,7 @@ local origin/main 대비: ahead 0, behind 0
 주요 최근 commit:
 
 ```text
+cd95fb9 Mac Studio AI 작업 진행상황 인수인계 문서 추가
 5e99ad5 AI 서버 Ollama 연동 및 범용 기술 스택 탐지 추가
 c024751 ai서버 인수인계문서 추가
 f90b046 Git 연결 설정 및 작업 인수인계 문서 추가
@@ -64,7 +67,7 @@ a117fc8 프로젝트 응답에 소스 정보 추가 누락된 사항 추가 커�
 https://github.com/KimAgHuge/hackathon-ai.git
 ```
 
-로컬 remote-tracking ref는 `5e99ad5`와 동기화되어 있었다. 다만 문서 작성 시점의
+로컬 remote-tracking ref는 문서 작성 시점의 HEAD와 동기화되어 있었다. 다만
 실시간 `git ls-remote` 조회는 현재 Mac의 GitHub username/token 인증 실패로
 확인하지 못했다. 다른 PC에서 반드시 다음을 확인한다.
 
@@ -74,8 +77,9 @@ git log -5 --oneline
 git status -sb
 ```
 
-이 문서 파일은 `5e99ad5` 이후 새로 생성한 파일이므로 다른 PC에 전달하려면 별도
-commit과 push가 필요하다.
+이 문서의 최초 버전은 `cd95fb9`에 포함되어 있다. 2026-08-05 실제
+Devstral 통합 검증 결과는 현재 문서 수정분에 포함되므로 다른 PC에
+전달하려면 별도 commit과 push가 필요하다.
 
 ## 이 Mac의 확인된 환경
 
@@ -107,15 +111,15 @@ Ollama 애플리케이션과 CLI 설치:
 client version: 0.32.5
 ```
 
-문서 작성 시점에는 Ollama 애플리케이션이 실행 중이 아니었다.
+최종 확인 상태:
 
 ```text
-Warning: could not connect to a running Ollama instance
+NAME               ID              SIZE
+devstral:latest    9bd74193e939    14 GB
 ```
 
-로컬 `~/.ollama/models`에는 약 3.9GB가 내려받아져 있지만 설치 완료를 나타내는
-model manifest가 확인되지 않았다. 따라서 Devstral 다운로드가 중간에 멈춘
-상태로 판단한다. 모델 설치 완료로 간주하지 않는다.
+`ollama list`와 localhost API에서 모델이 확인됐고, 구조화 JSON 단독 추론이
+성공했다.
 
 다른 PC 또는 이 Mac에서 다시 진행할 때:
 
@@ -126,8 +130,8 @@ ollama pull devstral
 ollama list
 ```
 
-`ollama pull`은 기존 partial blob이 있으면 재사용하거나 이어받을 수 있으므로
-모델 파일을 임의로 삭제하지 않는다.
+`ollama pull`은 다른 PC에서 모델이 없을 때만 실행한다. Ollama 모델 파일은
+Git에 포함되지 않는다.
 
 설치 완료 조건:
 
@@ -589,8 +593,8 @@ Ollama 장애와 timeout
 모듈 경계와 evidence
 ```
 
-Ollama는 mock으로 테스트했다. 실제 Devstral 통합 테스트가 통과했다는 의미는
-아니다.
+위 `17 passed`는 Ollama를 mock한 자동화 테스트다. 이와 별도로 2026-08-05에
+실제 Devstral을 사용한 HTTP 통합 테스트도 성공했다.
 
 ## 다른 PC에서 소스 준비
 
@@ -685,7 +689,48 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 FastAPI를 `0.0.0.0:8000`으로 실행하더라도 사설 LAN에서만 접근시키고 인터넷
 port forwarding을 설정하지 않는다.
 
-## 남아 있는 실제 통합 검증
+## 2026-08-05 실제 Devstral 통합 검증 결과
+
+실제 로컬 모델과 FastAPI를 사용해 다음을 확인했다.
+
+```text
+ollama list                         devstral:latest 14GB 확인
+Ollama /api/chat                   구조화 한국어 JSON 응답 성공
+GET /health                        HTTP 200
+GET /api/models/health             HTTP 200, model=devstral, available=true
+POST /api/analysis/project, key 없음  HTTP 401
+POST /api/analysis/project, key 있음  HTTP 200
+Pydantic/JSON Schema 검증           통과
+```
+
+실제 모델 단독 추론:
+
+```text
+입력: Spring Controller와 Service의 관계를 한국어 JSON으로 설명
+결과: relationship, explanation key를 가진 JSON 반환
+총 처리시간: 약 27초
+초기 모델 load: 약 7.3초
+```
+
+FastAPI 실제 분석:
+
+```text
+입력 framework: Vue, Spring Boot, FastAPI
+입력 language: JavaScript, Java, Python
+입력 database: PostgreSQL
+응답 riskLevel: UNKNOWN
+응답 riskScore: 0
+HTTP status: 200
+FastAPI 측정 처리시간: 약 23.25초
+```
+
+로그에는 request ID, HTTP method/path/status, 처리시간, Ollama 호출 상태만
+나타났고 API key와 prompt 전체는 출력되지 않았다.
+
+임시 통합 테스트 key는 process 환경변수로만 사용했고 파일에 저장하지
+않았다. 검증 후 FastAPI 임시 process는 정상 종료했다.
+
+### 재검증 명령
 
 ### Devstral 단독 호출
 
@@ -770,16 +815,20 @@ Pydantic 검증 통과
 로그에 prompt/source/API key 미노출
 ```
 
-### 실패 경로
+### 실제 장애 주입 검증 결과
 
-별도 process 또는 환경설정으로 다음을 확인한다.
+임시 FastAPI process를 서로 다른 port에서 잘못된 설정으로 실행해
+다음을 실제 HTTP로 확인했다.
 
 ```text
-Ollama 중지             -> 503
-잘못된 Ollama URL       -> 503 또는 timeout이면 504
-없는 모델 이름          -> 503
-모델 JSON schema 위반   -> 제한 재시도 후 502
+잘못된 Ollama URL       -> HTTP 503, MODEL_UNAVAILABLE
+설치되지 않은 모델     -> HTTP 503, MODEL_UNAVAILABLE
+0.001초 모델 timeout     -> HTTP 504, MODEL_TIMEOUT
 ```
+
+모델 JSON schema 위반 후 제한 재시도와 `502` 변환은 mock 자동화
+테스트로 검증했다. Ollama에 JSON Schema를 직접 전달하는 정상 호출에서는
+스키마 위반 응답을 의도적으로 유발하지 않았다.
 
 ## 아직 구현되지 않은 자동 분석 파이프라인
 
@@ -824,8 +873,9 @@ analysis_jobs.PENDING
 10. `analysis_results` 저장
 11. 프런트 진행률 polling과 결과 화면 연결
 
-`007` migration과 Worker 구조는 실제 Devstral/FastAPI 통합 검증이 완료된 뒤
-진행한다. 기존 `001`~`006` migration은 임의로 수정하거나 재실행하지 않는다.
+실제 Devstral/FastAPI 정상 통합 검증이 완료됐으므로 다음 단계에서
+`007_analysis_pipeline.sql`과 Worker 구조 설계를 진행할 수 있다. 기존
+`001`~`006` migration은 임의로 수정하거나 재실행하지 않는다.
 
 ## 현재 구현의 의도적인 제한
 
@@ -837,19 +887,16 @@ analysis_jobs.PENDING
   아직 분석하지 않음
 - DB driver dependency 탐지는 실제 DB metadata 수집을 의미하지 않음
 - sourceSummary 생성과 LLM 호출은 구현됐지만 Worker가 두 기능을 자동 연결하지 않음
-- 실제 Devstral inference는 아직 성공 검증되지 않음
+- 실제 Devstral inference와 FastAPI 정상 경로는 검증됐지만 Worker 연결은 없음
 
 ## 다음 PC에서 권장하는 작업 순서
 
-1. Git에서 `5e99ad5`와 이 인수인계 문서 commit 확인
+1. Git에서 `5e99ad5`, `cd95fb9`와 이 문서의 최종 갱신 commit 확인
 2. `ai-server` 가상환경 생성과 `17 passed` 재현
 3. 범용 기술 탐지 CLI로 현재 저장소 결과 재현
-4. Ollama와 Devstral 설치 완료
-5. Devstral 단독 structured JSON 추론 성공
-6. FastAPI health, 인증 실패, 실제 분석 성공
-7. Ollama 중지, timeout, 없는 모델 실패 경로 검증
-8. 검증 결과를 이 문서 또는 별도 실행 기록에 갱신
-9. 이후 `007_analysis_pipeline.sql`과 Worker 설계 시작
+4. AI runtime PC에서 Ollama/Devstral health 재확인
+5. `007_analysis_pipeline.sql`과 Worker claim/heartbeat 구조 설계
+6. Git checkout -> TechnologyDetector -> LLM -> analysis_results 최소 수직 흐름 구현
 
 ## 변경 금지 및 보안 주의
 
