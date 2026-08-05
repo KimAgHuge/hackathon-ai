@@ -36,7 +36,7 @@ npm run dev
 ```env
 VITE_AUTH_MODE=supabase
 VITE_AUTH_PROFILE_SOURCE=backend
-VITE_USE_MOCK=true
+VITE_USE_MOCK=false
 
 VITE_SUPABASE_URL=https://프로젝트ID.supabase.co
 VITE_SUPABASE_PUBLISHABLE_KEY=publishable-key
@@ -133,10 +133,23 @@ src/
 
 프론트 환경변수에는 Supabase publishable key 또는 anon key만 넣습니다. `service_role`, secret key, 데이터베이스 비밀번호는 Spring Boot 서버에서만 관리해야 합니다.
 
-## 공통 컴포넌트 가이드
+## 프로젝트 문서
 
-버튼, 입력 필드, 카드, 테이블, 페이지네이션과 Tailwind 공통 스타일의 상세 사용법은 다음 문서를 참고합니다.
+Frontend 기술, 디렉터리, 공통 컴포넌트와 작성 규칙은 다음 공식 문서에
+통합되어 있습니다.
 
 ```text
-docs/COMPONENT_GUIDE.md
+../docs/01_프로젝트_개요.md
+```
+
+전체 배치와 통신 흐름:
+
+```text
+../docs/02_시스템_아키텍처.md
+```
+
+실제 구현과 검증 상태:
+
+```text
+../docs/03_현재_진행상황.md
 ```
