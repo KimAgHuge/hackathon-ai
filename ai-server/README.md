@@ -108,13 +108,34 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-`.env.example`을 참고해 로컬 환경변수를 설정한다. 내부 API key에는 충분히 긴
-무작위 값을 사용한다.
+`.env.example`을 참고해 로컬 환경변수를 설정한다. 내부 API key는 다음 로컬
+명령으로 한 번 생성한다. Python 표준 `secrets`로 384-bit 난수를 만들며 화면에만
+출력하고 파일에는 자동 저장하지 않는다.
+
+```bash
+python -m app.security.internal_api_key
+```
+
+한 번 실행하면 동일한 키를 사용하는 `.env`, macOS/Linux shell, Windows
+PowerShell 설정문이 함께 출력된다. 출력 예시의 실제 값은 실행할 때마다 달라진다.
+
+```text
+# .env file
+DOENAAI_AI_INTERNAL_API_KEY=doenaai_생성된_실제_난수값
+# macOS/Linux shell
+export DOENAAI_AI_INTERNAL_API_KEY='doenaai_생성된_동일한_난수값'
+# Windows PowerShell
+$env:DOENAAI_AI_INTERNAL_API_KEY='doenaai_생성된_동일한_난수값'
+```
+
+생성된 키 하나를 Mac Studio의 FastAPI와 다른 PC의 Spring Boot에 동일하게
+설정한다. 생성기를 PC마다 따로 실행하면 서로 다른 키가 만들어지므로 한 번만
+실행한다. 키를 채팅, 문서, Git 또는 로그에 기록하지 않는다.
 
 ```bash
 export DOENAAI_OLLAMA_URL=http://127.0.0.1:11434
 export DOENAAI_AI_MODEL=devstral
-export DOENAAI_AI_INTERNAL_API_KEY='로컬에서만 관리하는 실제 값'
+export DOENAAI_AI_INTERNAL_API_KEY='위에서 한 번 생성한 실제 값'
 export DOENAAI_AI_REQUEST_TIMEOUT_SECONDS=300
 export DOENAAI_AI_KEEP_ALIVE=30m
 ```
@@ -171,7 +192,7 @@ Ollama를 mock하는 단위 테스트:
 pytest
 ```
 
-현재 자동화 테스트는 17개가 통과한다. Ollama 응답은 자동화 테스트에서 mock하며,
+현재 자동화 테스트는 25개가 통과한다. Ollama 응답은 자동화 테스트에서 mock하며,
 실제 모델 통합은 아래 절차로 별도 확인한다.
 
 ## 실제 Devstral 통합 검증
