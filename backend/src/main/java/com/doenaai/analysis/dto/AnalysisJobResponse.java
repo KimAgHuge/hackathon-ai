@@ -6,6 +6,7 @@ import java.util.UUID;
 public record AnalysisJobResponse(
         UUID jobId,
         UUID projectId,
+        UUID requirementVersionId,
         String status,
         int sourceProgress,
         int databaseProgress,
@@ -17,6 +18,7 @@ public record AnalysisJobResponse(
     public static AnalysisJobResponse of(
             UUID jobId,
             UUID projectId,
+            UUID requirementVersionId,
             String status,
             int sourceProgress,
             int databaseProgress,
@@ -33,6 +35,7 @@ public record AnalysisJobResponse(
         return new AnalysisJobResponse(
                 jobId,
                 projectId,
+                requirementVersionId,
                 status,
                 sourceProgress,
                 databaseProgress,

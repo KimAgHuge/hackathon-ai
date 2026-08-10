@@ -1,6 +1,7 @@
 package com.doenaai.project.service;
 
 import com.doenaai.organization.service.OrganizationService;
+import com.doenaai.project.dto.ProjectAccessContext;
 import com.doenaai.project.dto.ProjectCreateRequest;
 import com.doenaai.project.dto.ProjectResponse;
 import com.doenaai.project.dto.ProjectUpdateRequest;
@@ -212,6 +213,35 @@ public class ProjectService {
         Project project = findProject(projectId);
         checkTenantAccess(project, userId);
         checkManageAccess(projectId, userId);
+    }
+
+    @Transactional(readOnly = true)
+    public ProjectAccessContext getAccessContext(
+            UUID projectId,
+            UUID userId
+    ) {
+        Project project = findProject(projectId);
+        checkTenantAccess(project, userId);
+
+        String memberRole;
+
+        if (isAdmin(userId)) {
+            memberRole = "ADMIN";
+        } else {
+            memberRole = projectAccessRepository
+                    .findMemberRole(projectId, userId)
+                    .orElseThrow(() ->
+                            new AccessDeniedException(
+                                    "프로젝트 조회 권한이 없습니다."
+                            )
+                    );
+        }
+
+        return new ProjectAccessContext(
+                project.getId(),
+                project.getOrganizationId(),
+                memberRole
+        );
     }
 
     private boolean isAdmin(

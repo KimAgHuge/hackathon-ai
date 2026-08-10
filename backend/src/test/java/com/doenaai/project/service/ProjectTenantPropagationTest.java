@@ -8,6 +8,7 @@ import com.doenaai.project.connection.repository.ProjectRepositoryConnectionRepo
 import com.doenaai.project.connection.security.CredentialCipher;
 import com.doenaai.project.connection.service.DatabaseConnectionService;
 import com.doenaai.project.connection.service.GitRepositoryConnectionService;
+import com.doenaai.requirement.service.RequirementService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -48,6 +49,9 @@ class ProjectTenantPropagationTest {
     @Mock
     private AnalysisJobRepository analysisJobRepository;
 
+    @Mock
+    private RequirementService requirementService;
+
     private GitRepositoryConnectionService gitService;
     private DatabaseConnectionService databaseService;
     private AnalysisJobService analysisService;
@@ -70,7 +74,8 @@ class ProjectTenantPropagationTest {
         analysisService = new AnalysisJobService(
                 analysisJobRepository,
                 projectService,
-                gitService
+                gitService,
+                requirementService
         );
     }
 
@@ -129,6 +134,7 @@ class ProjectTenantPropagationTest {
 
         assertThatThrownBy(() -> analysisService.createProjectScan(
                 projectId,
+                UUID.randomUUID(),
                 userId
         )).isSameAs(denial);
 

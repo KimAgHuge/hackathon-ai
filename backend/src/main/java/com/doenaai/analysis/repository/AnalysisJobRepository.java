@@ -18,6 +18,7 @@ public class AnalysisJobRepository {
 
     public AnalysisJobResponse createProjectScan(
             UUID projectId,
+            UUID requirementVersionId,
             UUID requestedBy,
             String repositoryUrl,
             String branch,
@@ -27,12 +28,14 @@ public class AnalysisJobRepository {
                 """
                 insert into public.analysis_jobs (
                     project_id,
+                    requirement_version_id,
                     requested_by,
                     analysis_type,
                     status,
                     input_snapshot
                 )
                 values (
+                    ?,
                     ?,
                     ?,
                     'PROJECT_SCAN',
@@ -47,6 +50,7 @@ public class AnalysisJobRepository {
                 returning
                     id,
                     project_id,
+                    requirement_version_id,
                     status,
                     source_progress,
                     database_progress,
@@ -55,6 +59,7 @@ public class AnalysisJobRepository {
                 """,
                 this::mapRow,
                 projectId,
+                requirementVersionId,
                 requestedBy,
                 repositoryUrl,
                 branch,
@@ -70,6 +75,7 @@ public class AnalysisJobRepository {
                 select
                     id,
                     project_id,
+                    requirement_version_id,
                     status,
                     source_progress,
                     database_progress,
@@ -94,6 +100,10 @@ public class AnalysisJobRepository {
                 ),
                 resultSet.getObject(
                         "project_id",
+                        UUID.class
+                ),
+                resultSet.getObject(
+                        "requirement_version_id",
                         UUID.class
                 ),
                 resultSet.getString("status"),

@@ -5,6 +5,7 @@ import com.doenaai.analysis.repository.AnalysisJobRepository;
 import com.doenaai.project.connection.dto.GitRepositoryConnectionResponse;
 import com.doenaai.project.connection.service.GitRepositoryConnectionService;
 import com.doenaai.project.service.ProjectService;
+import com.doenaai.requirement.service.RequirementService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -21,15 +22,25 @@ public class AnalysisJobService {
     private final ProjectService projectService;
     private final GitRepositoryConnectionService
             gitRepositoryConnectionService;
+    private final RequirementService requirementService;
 
     public AnalysisJobResponse createProjectScan(
             UUID projectId,
+            UUID requirementVersionId,
             UUID userId
     ) {
         projectService.assertCanManage(
                 projectId,
                 userId
         );
+
+        if (requirementVersionId != null) {
+            requirementService.assertVersionBelongsToProject(
+                    requirementVersionId,
+                    projectId,
+                    userId
+            );
+        }
 
         GitRepositoryConnectionResponse repository =
                 gitRepositoryConnectionService
@@ -47,6 +58,7 @@ public class AnalysisJobService {
 
         return analysisJobRepository.createProjectScan(
                 projectId,
+                requirementVersionId,
                 userId,
                 repository.repositoryUrl(),
                 repository.branch(),

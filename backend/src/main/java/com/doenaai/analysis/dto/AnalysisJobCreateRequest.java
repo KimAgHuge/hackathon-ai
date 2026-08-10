@@ -1,0 +1,8 @@
+package com.doenaai.analysis.dto;
+
+import java.util.UUID;
+
+public record AnalysisJobCreateRequest(
+        UUID requirementVersionId
+) {
+}

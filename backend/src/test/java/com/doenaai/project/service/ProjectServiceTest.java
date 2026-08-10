@@ -276,6 +276,32 @@ class ProjectServiceTest {
                 .findMemberRole(projectId, userId);
     }
 
+    @Test
+    void accessContextReturnsTenantAndProjectRole() {
+        UUID organizationId = UUID.randomUUID();
+        UUID projectId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        Project project = project(projectId, organizationId, userId);
+
+        when(projectRepository.findById(projectId))
+                .thenReturn(Optional.of(project));
+        when(userAccessRepository.findRoles(userId))
+                .thenReturn(Set.of());
+        when(projectAccessRepository.findMemberRole(projectId, userId))
+                .thenReturn(Optional.of("PM"));
+
+        var context = projectService.getAccessContext(
+                projectId,
+                userId
+        );
+
+        assertThat(context.projectId()).isEqualTo(projectId);
+        assertThat(context.organizationId())
+                .isEqualTo(organizationId);
+        assertThat(context.memberRole()).isEqualTo("PM");
+        assertThat(context.hasRole("PL", "PM")).isTrue();
+    }
+
     private ProjectCreateRequest createRequest(
             UUID organizationId
     ) {

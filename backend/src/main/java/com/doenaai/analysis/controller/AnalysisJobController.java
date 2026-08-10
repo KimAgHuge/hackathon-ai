@@ -1,5 +1,6 @@
 package com.doenaai.analysis.controller;
 
+import com.doenaai.analysis.dto.AnalysisJobCreateRequest;
 import com.doenaai.analysis.dto.AnalysisJobResponse;
 import com.doenaai.analysis.service.AnalysisJobService;
 import lombok.RequiredArgsConstructor;
@@ -26,10 +27,15 @@ public class AnalysisJobController {
     @ResponseStatus(HttpStatus.CREATED)
     public AnalysisJobResponse createProjectScan(
             @PathVariable UUID projectId,
+            @RequestBody(required = false)
+            AnalysisJobCreateRequest request,
             @AuthenticationPrincipal Jwt jwt
     ) {
         return analysisJobService.createProjectScan(
                 projectId,
+                request == null
+                        ? null
+                        : request.requirementVersionId(),
                 getUserId(jwt)
         );
     }
