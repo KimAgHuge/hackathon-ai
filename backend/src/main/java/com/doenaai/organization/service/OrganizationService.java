@@ -133,6 +133,15 @@ public class OrganizationService {
     }
 
     @Transactional(readOnly = true)
+    public void assertActiveMember(
+            UUID organizationId,
+            UUID userId
+    ) {
+        requireActiveMembership(organizationId, userId);
+        findOrganization(organizationId);
+    }
+
+    @Transactional(readOnly = true)
     public List<OrganizationMemberResponse> getMembers(
             UUID organizationId,
             UUID userId

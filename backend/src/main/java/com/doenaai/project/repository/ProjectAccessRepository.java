@@ -19,10 +19,16 @@ public class ProjectAccessRepository {
             UUID userId
     ) {
         String sql = """
-                select member_role
-                from public.project_members
-                where project_id = ?
-                  and user_id = ?
+                select pm.member_role
+                from public.project_members pm
+                join public.projects p
+                  on p.id = pm.project_id
+                join public.organization_members om
+                  on om.organization_id = p.organization_id
+                 and om.user_id = pm.user_id
+                 and om.status = 'ACTIVE'
+                where pm.project_id = ?
+                  and pm.user_id = ?
                 """;
 
         List<String> result = jdbcTemplate.queryForList(

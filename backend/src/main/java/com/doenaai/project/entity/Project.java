@@ -19,6 +19,9 @@ public class Project {
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
+    @Column(name = "organization_id")
+    private UUID organizationId;
+
     @Column(nullable = false, length = 200)
     private String name;
 
@@ -55,6 +58,7 @@ public class Project {
     private OffsetDateTime updatedAt;
 
     public Project(
+            UUID organizationId,
             String name,
             String description,
             String repositoryUrl,
@@ -62,6 +66,7 @@ public class Project {
             ProjectSourceType sourceType,
             UUID createdBy
     ) {
+        this.organizationId = organizationId;
         this.name = name;
         this.description = description;
         this.repositoryUrl = repositoryUrl;

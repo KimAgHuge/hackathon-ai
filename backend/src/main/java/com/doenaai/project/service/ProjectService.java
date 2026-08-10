@@ -1,5 +1,6 @@
 package com.doenaai.project.service;
 
+import com.doenaai.organization.service.OrganizationService;
 import com.doenaai.project.dto.ProjectCreateRequest;
 import com.doenaai.project.dto.ProjectResponse;
 import com.doenaai.project.dto.ProjectUpdateRequest;
@@ -25,6 +26,7 @@ public class ProjectService {
     private final ProjectRepository projectRepository;
     private final ProjectAccessRepository projectAccessRepository;
     private final UserAccessRepository userAccessRepository;
+    private final OrganizationService organizationService;
 
     @Transactional(readOnly = true)
     public List<ProjectResponse> getProjects(
@@ -34,10 +36,10 @@ public class ProjectService {
 
         if (isAdmin(userId)) {
             projects = projectRepository
-                    .findAllByOrderByCreatedAtDesc();
+                    .findAllByOrganizationMemberUserId(userId);
         } else {
             projects = projectRepository
-                    .findAllByMemberUserId(userId);
+                    .findAllByProjectAndOrganizationMemberUserId(userId);
         }
 
         return projects.stream()
@@ -52,6 +54,8 @@ public class ProjectService {
     ) {
         Project project = findProject(projectId);
 
+        checkTenantAccess(project, userId);
+
         checkReadAccess(
                 projectId,
                 userId
@@ -65,7 +69,13 @@ public class ProjectService {
             ProjectCreateRequest request,
             UUID userId
     ) {
+        organizationService.assertActiveMember(
+                request.organizationId(),
+                userId
+        );
+
         Project project = new Project(
+                request.organizationId(),
                 request.name(),
                 request.description(),
                 request.repositoryUrl(),
@@ -93,10 +103,21 @@ public class ProjectService {
     ) {
         Project project = findProject(projectId);
 
+        checkTenantAccess(project, userId);
+
         checkManageAccess(
                 projectId,
                 userId
         );
+
+        if (!project.getOrganizationId().equals(
+                request.organizationId()
+        )) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    "프로젝트의 소유 조직은 일반 수정 API에서 변경할 수 없습니다."
+            );
+        }
 
         project.update(
                 request.name(),
@@ -166,12 +187,30 @@ public class ProjectService {
         }
     }
 
+    private void checkTenantAccess(
+            Project project,
+            UUID userId
+    ) {
+        if (project.getOrganizationId() == null) {
+            throw new ResponseStatusException(
+                    HttpStatus.NOT_FOUND,
+                    "프로젝트를 찾을 수 없습니다."
+            );
+        }
+
+        organizationService.assertActiveMember(
+                project.getOrganizationId(),
+                userId
+        );
+    }
+
     @Transactional(readOnly = true)
     public void assertCanManage(
             UUID projectId,
             UUID userId
     ) {
-        findProject(projectId);
+        Project project = findProject(projectId);
+        checkTenantAccess(project, userId);
         checkManageAccess(projectId, userId);
     }
 
