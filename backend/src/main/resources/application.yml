@@ -34,5 +34,8 @@ logging:
 doenaai:
   security:
     credential-encryption-key: ${DOENAAI_CREDENTIAL_ENCRYPTION_KEY:}
+  ai-server:
+    base-url: ${DOENAAI_AI_BASE_URL:http://localhost:8000}
+    internal-api-key: ${DOENAAI_AI_INTERNAL_API_KEY:}
   git:
     connection-timeout-seconds: ${DOENAAI_GIT_CONNECTION_TIMEOUT_SECONDS:10}

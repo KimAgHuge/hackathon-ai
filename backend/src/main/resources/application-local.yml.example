@@ -115,3 +115,4 @@ doenaai:
   # http://MAC_STUDIO_IP:8000
   ai-server:
     base-url: http://localhost:8000
+    internal-api-key: ${DOENAAI_AI_INTERNAL_API_KEY:}
