@@ -1,4 +1,5 @@
 <script setup>
+import { computed, reactive, ref } from 'vue'
 import BaseInput from '@/components/base/BaseInput.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseSelect from '@/components/base/BaseSelect.vue'
@@ -10,6 +11,30 @@ const props = defineProps({
     modelValue: {
         type: Object,
         required: true,
+    },
+    organizationOptions: {
+        type: Array,
+        default: () => [],
+    },
+    organizationsLoading: {
+        type: Boolean,
+        default: false,
+    },
+    organizationLoadError: {
+        type: String,
+        default: '',
+    },
+    canCreateOrganization: {
+        type: Boolean,
+        default: false,
+    },
+    creatingOrganization: {
+        type: Boolean,
+        default: false,
+    },
+    organizationCreateError: {
+        type: String,
+        default: '',
     },
     connectionModelValue: {
         type: Object,
@@ -41,7 +66,20 @@ const props = defineProps({
     },
 })
 
-const emit = defineEmits(['update:modelValue', 'update:connectionModelValue', 'test-repository'])
+const emit = defineEmits(['update:modelValue', 'update:connectionModelValue', 'create-organization', 'test-repository'])
+
+const showOrganizationForm = ref(false)
+const newOrganization = reactive({
+    name: '',
+    slug: '',
+    description: '',
+})
+
+const organizationFormVisible = computed(
+    () => showOrganizationForm.value || (!props.organizationsLoading && !props.organizationOptions.length && props.canCreateOrganization)
+)
+
+const organizationFormValid = computed(() => Boolean(newOrganization.name.trim() && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(newOrganization.slug.trim())))
 
 const updateValue = (patch) => {
     emit('update:modelValue', {
@@ -64,6 +102,16 @@ const selectSourceType = (sourceType) => {
 
     updateValue({ sourceType })
 }
+
+const createOrganization = () => {
+    if (!organizationFormValid.value || props.creatingOrganization) return
+
+    emit('create-organization', {
+        name: newOrganization.name.trim(),
+        slug: newOrganization.slug.trim(),
+        description: newOrganization.description.trim() || null,
+    })
+}
 </script>
 
 <template>
@@ -79,6 +127,66 @@ const selectSourceType = (sourceType) => {
         </div>
 
         <div class="space-y-5">
+            <div class="space-y-3 rounded-2xl border border-slate-200 bg-slate-50/70 p-4 dark:border-slate-700 dark:bg-slate-800/40">
+                <BaseSelect
+                    :model-value="modelValue.organizationId"
+                    :options="organizationOptions"
+                    name="organizationId"
+                    label="소속 조직"
+                    :disabled="organizationsLoading || Boolean(organizationLoadError)"
+                    :hint="organizationsLoading ? '조직 목록을 불러오는 중입니다.' : '프로젝트가 소속될 조직을 선택하세요.'"
+                    :error="organizationLoadError"
+                    required
+                    @update:model-value="updateValue({ organizationId: $event })"
+                >
+                    <template #before-options>
+                        <option value="" disabled>
+                            {{ organizationsLoading ? '불러오는 중...' : organizationOptions.length ? '조직을 선택하세요' : '선택 가능한 조직이 없습니다' }}
+                        </option>
+                    </template>
+                </BaseSelect>
+
+                <div v-if="canCreateOrganization && organizationOptions.length" class="flex justify-end">
+                    <BaseButton variant="secondary" size="small" :disabled="organizationsLoading" @click="showOrganizationForm = !showOrganizationForm">
+                        {{ organizationFormVisible ? '조직 생성 닫기' : '새 조직 생성' }}
+                    </BaseButton>
+                </div>
+
+                <div
+                    v-else-if="!organizationsLoading && !organizationOptions.length && !organizationLoadError"
+                    class="rounded-xl bg-amber-50 px-4 py-3 text-xs text-amber-700 dark:bg-amber-950/30 dark:text-amber-300"
+                >
+                    소속된 활성 조직이 없습니다. 조직 관리자에게 멤버 등록을 요청하세요.
+                </div>
+
+                <div v-if="organizationFormVisible" class="grid gap-4 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
+                    <BaseInput v-model="newOrganization.name" name="newOrganizationName" label="새 조직명" placeholder="예: 두나AI 개발팀" required />
+                    <BaseInput
+                        v-model="newOrganization.slug"
+                        name="newOrganizationSlug"
+                        label="조직 식별자"
+                        placeholder="예: doenaai-dev"
+                        hint="소문자 영문, 숫자와 단일 하이픈만 사용할 수 있습니다."
+                        required
+                    />
+                    <BaseTextarea
+                        v-model="newOrganization.description"
+                        name="newOrganizationDescription"
+                        label="조직 설명"
+                        placeholder="조직의 용도나 담당 업무를 입력하세요."
+                        rows="2"
+                    />
+                    <p v-if="organizationCreateError" class="text-xs font-medium text-rose-600 dark:text-rose-400">
+                        {{ organizationCreateError }}
+                    </p>
+                    <div class="flex justify-end">
+                        <BaseButton :loading="creatingOrganization" :disabled="!organizationFormValid" @click="createOrganization">
+                            조직 생성 및 선택
+                        </BaseButton>
+                    </div>
+                </div>
+            </div>
+
             <BaseInput
                 :model-value="modelValue.name"
                 name="projectName"

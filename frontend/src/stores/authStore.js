@@ -9,6 +9,8 @@ const MOCK_SESSION_KEY = 'doenaai.mock.session'
 
 const mockPermissions = [
     'DASHBOARD_READ',
+    'ORGANIZATION_READ',
+    'ORGANIZATION_MANAGE',
     'PROJECT_READ',
     'PROJECT_CREATE',
     'PROJECT_UPDATE',
@@ -197,9 +199,7 @@ export const useAuthStore = defineStore('auth', () => {
 
             return currentUser.value
         } catch (error) {
-            errorMessage.value = error instanceof Error
-                ? error.message
-                : '로그인에 실패했습니다.'
+            errorMessage.value = error instanceof Error ? error.message : '로그인에 실패했습니다.'
 
             throw error
         } finally {

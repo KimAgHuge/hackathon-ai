@@ -1,16 +1,19 @@
 <script setup>
-import { reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRouter } from 'vue-router'
 import PageTitle from '@/components/common/PageTitle.vue'
 import StepHeader from '@/components/common/StepHeader.vue'
 import ProjectConnectionStep from '@/components/project/connection/ProjectConnectionStep.vue'
 import { startProjectAnalysis } from '@/api/analysisApi'
+import { createOrganization, getOrganizations } from '@/api/organizationApi'
 import { saveGitRepositoryConnection, saveProjectConnection, testDatabaseConnection, testGitRepositoryConnection } from '@/api/projectConnectionApi'
 import { createProject, updateProject } from '@/api/projectApi'
+import { useAuthStore } from '@/stores/authStore'
 import { useProjectWizardStore } from '@/stores/projectWizardStore'
 
 const router = useRouter()
+const authStore = useAuthStore()
 const wizardStore = useProjectWizardStore()
 const {
     projectId,
@@ -30,8 +33,25 @@ const testingConnection = ref(false)
 const startingAnalysis = ref(false)
 const notice = ref('')
 const noticeType = ref('success')
+const organizations = ref([])
+const organizationsLoading = ref(false)
+const organizationLoadError = ref('')
+const creatingOrganization = ref(false)
+const organizationCreateError = ref('')
+
+const organizationOptions = computed(() =>
+    organizations.value
+        .filter(({ status }) => status === 'ACTIVE')
+        .map((organization) => ({
+            label: organization.memberRole ? `${organization.name} (${organization.memberRole})` : organization.name,
+            value: organization.id,
+        }))
+)
+
+const canCreateOrganization = computed(() => authStore.hasPermission('ORGANIZATION_MANAGE'))
 
 const project = reactive({
+    organizationId: '',
     name: 'doenaai',
     description: '소스코드와 데이터베이스 구조를 함께 분석하는 프로젝트',
     sourceType: 'GIT',
@@ -71,7 +91,7 @@ watch(
 )
 
 watch(
-    [() => [project.sourceType, project.repositoryUrl, project.defaultBranch], repositoryConnection],
+    [() => [project.organizationId, project.sourceType, project.repositoryUrl, project.defaultBranch], repositoryConnection],
     () => {
         if (repositoryStatus.value !== 'IDLE') {
             wizardStore.invalidateRepository()
@@ -99,7 +119,44 @@ const updateRepositoryConnectionForm = (value) => {
     Object.assign(repositoryConnection, value)
 }
 
+const loadOrganizations = async () => {
+    organizationsLoading.value = true
+    organizationLoadError.value = ''
+
+    try {
+        organizations.value = await getOrganizations()
+
+        const activeOrganizations = organizations.value.filter(({ status }) => status === 'ACTIVE')
+
+        if (!activeOrganizations.some(({ id }) => id === project.organizationId)) {
+            project.organizationId = activeOrganizations.length === 1 ? activeOrganizations[0].id : ''
+        }
+    } catch (error) {
+        organizationLoadError.value = getErrorMessage(error)
+        showNotice(`조직 목록을 불러오지 못했습니다. ${organizationLoadError.value}`, 'error')
+    } finally {
+        organizationsLoading.value = false
+    }
+}
+
+const handleCreateOrganization = async (payload) => {
+    creatingOrganization.value = true
+    organizationCreateError.value = ''
+
+    try {
+        const createdOrganization = await createOrganization(payload)
+        organizations.value = [createdOrganization, ...organizations.value]
+        project.organizationId = createdOrganization.id
+        showNotice(`조직 '${createdOrganization.name}'을 생성하고 선택했습니다.`)
+    } catch (error) {
+        organizationCreateError.value = getErrorMessage(error)
+    } finally {
+        creatingOrganization.value = false
+    }
+}
+
 const buildProjectPayload = () => ({
+    organizationId: project.organizationId,
     name: project.name.trim(),
     description: project.description.trim() || null,
     sourceType: project.sourceType,
@@ -225,6 +282,8 @@ const handleNext = async () => {
         startingAnalysis.value = false
     }
 }
+
+onMounted(loadOrganizations)
 </script>
 
 <template>
@@ -248,6 +307,12 @@ const handleNext = async () => {
 
         <ProjectConnectionStep
             :project="project"
+            :organization-options="organizationOptions"
+            :organizations-loading="organizationsLoading"
+            :organization-load-error="organizationLoadError"
+            :can-create-organization="canCreateOrganization"
+            :creating-organization="creatingOrganization"
+            :organization-create-error="organizationCreateError"
             :repository-connection="repositoryConnection"
             :database-source="databaseSource"
             :connection-status="connectionStatus"
@@ -263,6 +328,7 @@ const handleNext = async () => {
             :testing-connection="testingConnection"
             :starting-analysis="startingAnalysis"
             @update:project="updateProjectForm"
+            @create-organization="handleCreateOrganization"
             @update:repository-connection="updateRepositoryConnectionForm"
             @update:database-source="updateDatabaseSourceForm"
             @save="handleSave"

@@ -23,6 +23,7 @@ export const getProjects = async () => {
         return mockDelay([
             {
                 id: projectMock.id || 'project-demo-001',
+                organizationId: projectMock.organizationId || '00000000-0000-0000-0000-000000000100',
                 name: projectMock.name || 'doenaai-demo',
                 description: projectMock.description || 'AI 기반 소프트웨어 변경 영향도 분석 프로젝트',
                 repositoryUrl: projectMock.repositoryUrl || 'https://github.com/example/doenaai-demo.git',
@@ -53,6 +54,7 @@ export const getProjectById = async (projectId) => {
     if (useMock) {
         return mockDelay({
             id: projectId,
+            organizationId: projectMock.organizationId || '00000000-0000-0000-0000-000000000100',
             name: projectMock.name || 'doenaai-demo',
             description: projectMock.description || 'AI 기반 소프트웨어 변경 영향도 분석 프로젝트',
             repositoryUrl: projectMock.repositoryUrl || 'https://github.com/example/doenaai-demo.git',
@@ -79,6 +81,7 @@ export const createProject = async (payload) => {
     if (useMock) {
         return mockDelay({
             id: crypto.randomUUID(),
+            organizationId: payload.organizationId,
             name: payload.name,
             description: payload.description || null,
             repositoryUrl: payload.repositoryUrl || null,
@@ -105,6 +108,7 @@ export const updateProject = async (projectId, payload) => {
     if (useMock) {
         return mockDelay({
             id: projectId,
+            organizationId: payload.organizationId,
             name: payload.name,
             description: payload.description || null,
             repositoryUrl: payload.repositoryUrl || null,

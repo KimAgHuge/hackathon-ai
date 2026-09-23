@@ -17,7 +17,9 @@ import org.springframework.web.server.ResponseStatusException;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.DriverManager;
+import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.Properties;
 import java.util.UUID;
 
@@ -141,7 +143,19 @@ public class DatabaseConnectionService {
                                     properties
                             )
             ) {
-                configureReadOnly(connection);
+                configureReadOnly(
+                        connection,
+                        databaseType
+                );
+
+                if (
+                        databaseType == DatabaseType.POSTGRESQL &&
+                        !isPostgreSqlReadOnly(connection)
+                ) {
+                    return DatabaseConnectionTestResponse.failure(
+                            "PostgreSQL 연결이 읽기 전용으로 설정되지 않았습니다."
+                    );
+                }
 
                 if (!connection.isValid(LOGIN_TIMEOUT_SECONDS)) {
                     return DatabaseConnectionTestResponse.failure(
@@ -204,6 +218,26 @@ public class DatabaseConnectionService {
 
         if (request.dbType() == DatabaseType.POSTGRESQL) {
             properties.setProperty(
+                    "sslmode",
+                    "require"
+            );
+            properties.setProperty(
+                    "readOnly",
+                    "true"
+            );
+            properties.setProperty(
+                    "readOnlyMode",
+                    "always"
+            );
+            properties.setProperty(
+                    "currentSchema",
+                    request.schemaName()
+            );
+            properties.setProperty(
+                    "logServerErrorDetail",
+                    "false"
+            );
+            properties.setProperty(
                     "connectTimeout",
                     String.valueOf(
                             LOGIN_TIMEOUT_SECONDS
@@ -225,19 +259,38 @@ public class DatabaseConnectionService {
     }
 
     private void configureReadOnly(
+            Connection connection,
+            DatabaseType databaseType
+    ) throws SQLException {
+        connection.setReadOnly(true);
+        connection.setNetworkTimeout(
+                Runnable::run,
+                NETWORK_TIMEOUT_MILLISECONDS
+        );
+
+        if (
+                databaseType == DatabaseType.POSTGRESQL &&
+                !connection.isReadOnly()
+        ) {
+            throw new SQLException(
+                    "PostgreSQL JDBC connection rejected read-only mode."
+            );
+        }
+    }
+
+    private boolean isPostgreSqlReadOnly(
             Connection connection
-    ) {
-        try {
-            connection.setReadOnly(true);
-            connection.setNetworkTimeout(
-                    Runnable::run,
-                    NETWORK_TIMEOUT_MILLISECONDS
-            );
-        } catch (SQLException exception) {
-            log.debug(
-                    "Database driver does not support read-only or network timeout configuration: {}",
-                    exception.getClass().getSimpleName()
-            );
+    ) throws SQLException {
+        try (
+                Statement statement = connection.createStatement();
+                ResultSet resultSet = statement.executeQuery(
+                        "select current_setting('transaction_read_only')"
+                )
+        ) {
+            return resultSet.next() &&
+                    "on".equalsIgnoreCase(
+                            resultSet.getString(1)
+                    );
         }
     }
 

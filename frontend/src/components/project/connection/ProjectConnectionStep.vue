@@ -10,6 +10,30 @@ const props = defineProps({
         type: Object,
         required: true,
     },
+    organizationOptions: {
+        type: Array,
+        default: () => [],
+    },
+    organizationsLoading: {
+        type: Boolean,
+        default: false,
+    },
+    organizationLoadError: {
+        type: String,
+        default: '',
+    },
+    canCreateOrganization: {
+        type: Boolean,
+        default: false,
+    },
+    creatingOrganization: {
+        type: Boolean,
+        default: false,
+    },
+    organizationCreateError: {
+        type: String,
+        default: '',
+    },
     repositoryConnection: {
         type: Object,
         required: true,
@@ -68,10 +92,25 @@ const props = defineProps({
     },
 })
 
-const emit = defineEmits(['update:project', 'update:repositoryConnection', 'update:databaseSource', 'save', 'test-repository', 'test-connection', 'next'])
+const emit = defineEmits([
+    'update:project',
+    'update:repositoryConnection',
+    'update:databaseSource',
+    'create-organization',
+    'save',
+    'test-repository',
+    'test-connection',
+    'next',
+])
 
 const projectValid = computed(() =>
-    Boolean(props.project.name.trim() && props.project.sourceType === 'GIT' && props.project.repositoryUrl.trim() && props.project.defaultBranch.trim())
+    Boolean(
+        props.project.organizationId &&
+        props.project.name.trim() &&
+        props.project.sourceType === 'GIT' &&
+        props.project.repositoryUrl.trim() &&
+        props.project.defaultBranch.trim()
+    )
 )
 
 const databaseValid = computed(() =>
@@ -123,6 +162,12 @@ const updateRepositoryConnection = (repositoryConnection) => {
         <div class="grid gap-5 xl:grid-cols-2">
             <ProjectSourceForm
                 :model-value="project"
+                :organization-options="organizationOptions"
+                :organizations-loading="organizationsLoading"
+                :organization-load-error="organizationLoadError"
+                :can-create-organization="canCreateOrganization"
+                :creating-organization="creatingOrganization"
+                :organization-create-error="organizationCreateError"
                 :connection-model-value="repositoryConnection"
                 :repository-status="repositoryStatus"
                 :repository-message="repositoryMessage"
@@ -132,6 +177,7 @@ const updateRepositoryConnection = (repositoryConnection) => {
                 :repository-test-disabled="!projectValid || !repositoryCredentialsValid || saving || testingConnection || startingAnalysis"
                 @update:model-value="updateProject"
                 @update:connection-model-value="updateRepositoryConnection"
+                @create-organization="emit('create-organization', $event)"
                 @test-repository="emit('test-repository')"
             />
             <div>
