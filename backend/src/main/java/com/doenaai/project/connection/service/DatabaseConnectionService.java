@@ -187,7 +187,7 @@ public class DatabaseConnectionService {
         }
     }
 
-    private Properties buildProperties(
+    static Properties buildProperties(
             DatabaseConnectionRequest request
     ) {
         Properties properties = new Properties();
@@ -258,7 +258,7 @@ public class DatabaseConnectionService {
         return properties;
     }
 
-    private void configureReadOnly(
+    static void configureReadOnly(
             Connection connection,
             DatabaseType databaseType
     ) throws SQLException {
@@ -278,19 +278,17 @@ public class DatabaseConnectionService {
         }
     }
 
-    private boolean isPostgreSqlReadOnly(
+    static boolean isPostgreSqlReadOnly(
             Connection connection
     ) throws SQLException {
-        try (
-                Statement statement = connection.createStatement();
-                ResultSet resultSet = statement.executeQuery(
-                        "select current_setting('transaction_read_only')"
-                )
-        ) {
-            return resultSet.next() &&
-                    "on".equalsIgnoreCase(
-                            resultSet.getString(1)
-                    );
+        try (Statement statement = connection.createStatement()) {
+            statement.setQueryTimeout(LOGIN_TIMEOUT_SECONDS);
+            try (ResultSet resultSet = statement.executeQuery(
+                    "select current_setting('transaction_read_only')"
+            )) {
+                return resultSet.next() &&
+                        "on".equalsIgnoreCase(resultSet.getString(1));
+            }
         }
     }
 

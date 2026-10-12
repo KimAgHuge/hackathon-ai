@@ -16,6 +16,13 @@ import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.api.errors.TransportException;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.Repository;
+import org.eclipse.jgit.lib.FileMode;
+import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.lib.ProgressMonitor;
+import org.eclipse.jgit.lib.ObjectInserter;
+import org.eclipse.jgit.internal.storage.file.FileRepository;
+import org.eclipse.jgit.revwalk.RevWalk;
+import org.eclipse.jgit.treewalk.TreeWalk;
 import org.eclipse.jgit.transport.*;
 import org.eclipse.jgit.transport.sshd.JGitKeyCache;
 import org.eclipse.jgit.transport.sshd.SshdSessionFactory;
@@ -30,19 +37,43 @@ import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.FilterInputStream;
+import java.io.BufferedInputStream;
+import java.io.ByteArrayInputStream;
+import java.io.SequenceInputStream;
 import java.net.IDN;
 import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.nio.file.attribute.PosixFilePermissions;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.Locale;
+import java.util.List;
 import java.util.UUID;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicLong;
 
 @Slf4j
 @Service
 public class GitRepositoryConnectionService {
+    static final long MAX_PACK_BYTES = 128L * 1024 * 1024;
+    static final long MAX_CLONE_DISK_BYTES = 256L * 1024 * 1024;
+    static final long MAX_RECEIVED_OBJECT_BYTES = 16L * 1024 * 1024;
+    static final int MAX_RECEIVED_OBJECTS = 100_000;
+    private static final Set<String> SNAPSHOT_EXCLUDED_DIRECTORIES = Set.of(
+            ".git", ".svn", ".hg", ".idea", ".vscode", ".gradle", ".venv", "venv", "node_modules",
+            "vendor", "build", "dist", "target", "out", "coverage", "generated", "generated-sources",
+            "__pycache__", ".next", ".nuxt", ".cache", ".pytest_cache", "pods", "bin", "obj",
+            "artifacts", "datasets", "checkpoints", "secrets", ".ssh", ".aws");
+    private static final Set<String> SNAPSHOT_BINARY_EXTENSIONS = Set.of(
+            "png", "jpg", "jpeg", "gif", "webp", "ico", "bmp", "tiff", "psd", "mp3", "mp4", "mov",
+            "wav", "ogg", "webm", "avi", "pdf", "doc", "docx", "ppt", "pptx", "xls", "xlsx",
+            "zip", "gz", "bz2", "xz", "7z", "tar", "rar", "jar", "war", "class", "exe", "dll",
+            "so", "dylib", "a", "o", "pyc", "pyo", "woff", "woff2", "ttf", "otf", "eot",
+            "db", "sqlite", "sqlite3", "parquet", "npy", "npz", "pt", "pth", "onnx", "bin");
 
     private final ProjectService projectService;
     private final ProjectRepositoryConnectionRepository
@@ -345,6 +376,221 @@ public class GitRepositoryConnectionService {
                     request.authType()
             );
         }
+    }
+
+    /** Fetch a validated snapshot without running checkout filters, hooks or repository scripts. */
+    public GitSnapshot checkoutSnapshot(UUID projectId, UUID userId, String repositoryUrl,
+                                        String branch, String commitSha) throws IOException, GitAPIException {
+        projectService.assertCanManage(projectId, userId);
+        ProjectResponse project = projectService.getProject(projectId, userId);
+        if (!java.util.Objects.equals(project.repositoryUrl(), repositoryUrl)
+                || !java.util.Objects.equals(project.defaultBranch(), branch)
+                || commitSha == null || !commitSha.matches("[0-9a-fA-F]{40}")) {
+            throw new IllegalStateException("Project repository changed or snapshot is invalid.");
+        }
+        var connection = repositoryConnectionRepository.findByProjectId(projectId).orElse(null);
+        var credentials = connection == null ? emptyCredentials() : decryptCredentials(connection);
+        var request = new GitRepositoryConnectionRequest(repositoryUrl, branch,
+                connection == null ? RepositoryProviderType.AUTO : connection.getProviderType(),
+                connection == null ? RepositoryAuthType.NONE : connection.getAuthType(),
+                connection == null ? null : connection.getUsername(), credentials.secret(),
+                credentials.privateKey(), credentials.passphrase(),
+                connection == null ? null : connection.getKnownHostsEntry());
+        var target = validateTarget(request);
+        validateAuthentication(request, target, credentials);
+        Path root = Files.createTempDirectory("doenaai-analysis-");
+        boolean succeeded = false;
+        try {
+          Path checkout;
+          try (var authentication = createAuthenticationContext(request, target, credentials)) {
+            var monitor = new SnapshotProgressMonitor(root);
+            // The inserter hook bounds decoded pack bytes for both HTTPS and SSH transports.
+            try (var repository = new SnapshotRepository(root.resolve("objects.git"), monitor)) {
+                repository.create(true);
+                var command = new Git(repository).fetch().setRemote(target.repositoryUrl())
+                        .setRefSpecs(new RefSpec("+refs/heads/" + target.branch() + ":refs/heads/snapshot"))
+                        .setTagOpt(TagOpt.NO_TAGS).setDepth(100)
+                        .setTimeout(Math.min(180, Math.max(connectionTimeoutSeconds, 60)))
+                        .setProgressMonitor(monitor);
+                authentication.configure(command);
+                command.call();
+                monitor.checkDiskNow();
+                monitor.check();
+                checkout = Files.createDirectory(root.resolve("source"));
+                exportTree(repository, commitSha, checkout);
+            }
+          }
+          succeeded = true;
+          return new GitSnapshot(checkout, root);
+        } finally {
+            if (!succeeded) GitAuthenticationContext.deleteDirectory(root);
+        }
+    }
+
+    static void exportTree(Repository repository, String commitSha, Path target) throws IOException {
+        try (RevWalk commits = new RevWalk(repository); TreeWalk tree = new TreeWalk(repository)) {
+            var commit = commits.parseCommit(ObjectId.fromString(commitSha));
+            if (!commit.name().equalsIgnoreCase(commitSha)) throw new IOException("Snapshot mismatch.");
+            tree.addTree(commit.getTree());
+            tree.setRecursive(true);
+            int files = 0;
+            long totalBytes = 0;
+            while (tree.next()) {
+                if (Thread.currentThread().isInterrupted()) throw new IOException("Snapshot extraction cancelled.");
+                var mode = tree.getFileMode(0);
+                if (!mode.equals(FileMode.REGULAR_FILE) && !mode.equals(FileMode.EXECUTABLE_FILE)) continue;
+                String relative = tree.getPathString();
+                if (relative.indexOf('\\') >= 0 || relative.indexOf(':') >= 0
+                        || java.util.Arrays.stream(relative.split("/")).anyMatch(part ->
+                        part.equals("..") || part.equalsIgnoreCase(".git"))) {
+                    throw new IOException("Unsafe snapshot path.");
+                }
+                Path file = target.resolve(relative).normalize();
+                if (!file.startsWith(target)) throw new IOException("Unsafe snapshot path.");
+                if (excludedFromSnapshot(relative)) continue;
+                var object = repository.open(tree.getObjectId(0));
+                if (++files > 10000 || object.getSize() > 2 * 1024 * 1024
+                        || (totalBytes += object.getSize()) > 64L * 1024 * 1024) {
+                    throw new IOException("Snapshot exceeds analysis limits.");
+                }
+                Files.createDirectories(file.getParent());
+                // Git object bytes only. No executable permission, hooks, LFS or smudge filters.
+                try (var output = Files.newOutputStream(file, StandardOpenOption.CREATE_NEW)) {
+                    object.copyTo(output);
+                }
+            }
+        }
+    }
+
+    public record GitSnapshot(Path path, Path ownedRoot) implements AutoCloseable {
+        @Override
+        public void close() throws IOException {
+            GitAuthenticationContext.deleteDirectory(ownedRoot);
+        }
+    }
+
+    private static boolean excludedFromSnapshot(String relative) {
+        String[] parts = relative.toLowerCase(Locale.ROOT).split("/");
+        for (int i = 0; i < parts.length - 1; i++) if (SNAPSHOT_EXCLUDED_DIRECTORIES.contains(parts[i])) return true;
+        String name = parts[parts.length - 1];
+        String extension = name.substring(name.lastIndexOf('.') + 1);
+        return SNAPSHOT_BINARY_EXTENSIONS.contains(extension) || name.startsWith(".env")
+                || name.startsWith("application-local") || name.startsWith("application-secret")
+                || name.startsWith("application-prod") || name.contains("credential") || name.contains("secret")
+                || name.equals("id_rsa") || name.equals("id_ed25519") || name.equals(".npmrc") || name.equals(".pypirc")
+                || name.endsWith(".pem") || name.endsWith(".key") || name.endsWith(".p12") || name.endsWith(".jks")
+                || name.endsWith(".lock") || name.equals("package-lock.json") || name.equals("npm-shrinkwrap.json")
+                || name.endsWith(".min.js") || name.endsWith(".min.css") || name.endsWith(".generated.java")
+                || name.endsWith(".g.cs") || name.endsWith(".g.dart") || name.endsWith(".freezed.dart");
+    }
+
+    /** JGit's fetch path obtains its PackParser from this hook, after HTTP/SSH protocol decoding. */
+    static final class SnapshotRepository extends FileRepository {
+        private final SnapshotProgressMonitor monitor;
+        SnapshotRepository(Path directory, SnapshotProgressMonitor monitor) throws IOException {
+            super(directory.toFile());
+            this.monitor = monitor;
+        }
+        @Override public ObjectInserter newObjectInserter() {
+            ObjectInserter original = super.newObjectInserter();
+            return new ObjectInserter.Filter() {
+                @Override protected ObjectInserter delegate() { return original; }
+                @Override public PackParser newPackParser(InputStream input) throws IOException {
+                    PackParser parser = original.newPackParser(boundedPackInput(input, monitor));
+                    parser.setMaxObjectSizeLimit(MAX_RECEIVED_OBJECT_BYTES);
+                    return parser;
+                }
+            };
+        }
+    }
+
+    static InputStream boundedPackInput(InputStream input, SnapshotProgressMonitor monitor) throws IOException {
+        InputStream bounded = new FilterInputStream(input) {
+            @Override public int read() throws IOException {
+                byte[] one = new byte[1];
+                return read(one, 0, 1) == -1 ? -1 : one[0] & 0xff;
+            }
+            @Override public int read(byte[] bytes, int offset, int length) throws IOException {
+                if (length == 0) return 0;
+                monitor.check();
+                int read = in.read(bytes, offset, Math.min(length, 8192));
+                if (read > 0) monitor.received(read);
+                return read;
+            }
+            @Override public long skip(long count) throws IOException {
+                byte[] buffer = new byte[(int) Math.min(Math.max(count, 0), 8192)];
+                long skipped = 0;
+                while (skipped < count) {
+                    int read = read(buffer, 0, (int) Math.min(buffer.length, count - skipped));
+                    if (read == -1) break;
+                    skipped += read;
+                }
+                return skipped;
+            }
+        };
+        byte[] header = bounded.readNBytes(12);
+        if (header.length != 12 || header[0] != 'P' || header[1] != 'A' || header[2] != 'C' || header[3] != 'K') {
+            throw new IOException("Invalid snapshot pack header.");
+        }
+        long objects = Integer.toUnsignedLong(java.nio.ByteBuffer.wrap(header, 8, 4).getInt());
+        if (objects > monitor.maxObjects) throw new IOException("Snapshot object count exceeds analysis limits.");
+        // Reject the advertised count before JGit allocates its object array, then replay the checked header.
+        return new BufferedInputStream(new SequenceInputStream(new ByteArrayInputStream(header), bounded));
+    }
+
+    static final class SnapshotProgressMonitor implements ProgressMonitor {
+        private final Path ownedRoot;
+        private final long deadline;
+        private final long maxPackBytes;
+        private final long maxDiskBytes;
+        private final int maxObjects;
+        private final AtomicLong packBytes = new AtomicLong();
+        private volatile boolean cancelled;
+        private long lastDiskCheck;
+        SnapshotProgressMonitor(Path ownedRoot) {
+            this(ownedRoot, MAX_PACK_BYTES, MAX_CLONE_DISK_BYTES, MAX_RECEIVED_OBJECTS,
+                    java.time.Duration.ofMinutes(3).toNanos());
+        }
+        SnapshotProgressMonitor(Path ownedRoot, long maxPackBytes, long maxDiskBytes, int maxObjects, long timeoutNanos) {
+            this.ownedRoot = ownedRoot;
+            this.maxPackBytes = maxPackBytes;
+            this.maxDiskBytes = maxDiskBytes;
+            this.maxObjects = maxObjects;
+            this.deadline = System.nanoTime() + timeoutNanos;
+        }
+        public void start(int totalTasks) { }
+        public void beginTask(String title, int totalWork) { if (totalWork > maxObjects) cancelled = true; }
+        public void update(int completed) { }
+        public void endTask() { }
+        public boolean isCancelled() {
+            if (cancelled || Thread.currentThread().isInterrupted() || System.nanoTime() > deadline) return true;
+            if (System.nanoTime() - lastDiskCheck > java.time.Duration.ofMillis(250).toNanos()) checkDiskNow();
+            return cancelled;
+        }
+        void received(int count) throws IOException {
+            if (packBytes.addAndGet(count) > maxPackBytes) cancelled = true;
+            check();
+        }
+        void check() throws IOException {
+            if (isCancelled()) throw new IOException("Snapshot transfer exceeds analysis limits or was cancelled.");
+        }
+        void checkDiskNow() {
+            lastDiskCheck = System.nanoTime();
+            try {
+                Files.walkFileTree(ownedRoot, new SimpleFileVisitor<>() {
+                    private long bytes;
+                    private int entries;
+                    @Override public FileVisitResult visitFile(Path file, BasicFileAttributes attributes) {
+                        bytes += attributes.size();
+                        if (++entries > MAX_RECEIVED_OBJECTS * 2 || bytes > maxDiskBytes) cancelled = true;
+                        return cancelled ? FileVisitResult.TERMINATE : FileVisitResult.CONTINUE;
+                    }
+                });
+            } catch (IOException | SecurityException exception) {
+                cancelled = true;
+            }
+        }
+        public void showDuration(boolean enabled) { }
     }
 
     private void assertRequestMatchesProject(
@@ -968,7 +1214,7 @@ public class GitRepositoryConnectionService {
         }
 
         void configure(
-                LsRemoteCommand command
+                org.eclipse.jgit.api.TransportCommand<?, ?> command
         ) {
             if (credentialsProvider != null) {
                 command.setCredentialsProvider(
