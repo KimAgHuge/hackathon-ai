@@ -9,8 +9,9 @@ Mac Studio에서 Ollama의 로컬 모델을 호출하는 FastAPI 내부 분석 �
 - 로컬에 준비된 저장소를 실행하지 않고 manifest와 소스 파일 근거로 언어,
   프레임워크, 런타임, 빌드 도구 등 기술 스택을 탐지하는 정적 분석기
 
-Git clone/checkout Worker, DB 메타데이터 수집, 클래스·메서드·SQL 호출 관계 분석은
-아직 포함하지 않는다.
+Git snapshot 수집, DB 메타데이터 수집과 SQL/ORM 테이블 참조 분석은 Backend Worker가
+담당한다. FastAPI는 전달받은 정제된 사실만 모델에 전달한다. 실행 및 현재 한계는
+`../docs/06_2026-10-12_분석_Worker_구현_인수인계.md`를 참고한다.
 
 기준 Mac Studio에서는 `devstral:latest` 설치, 구조화 JSON 단독 추론,
 FastAPI 실제 분석 요청과 주요 장애 경로까지 검증을 완료했다.

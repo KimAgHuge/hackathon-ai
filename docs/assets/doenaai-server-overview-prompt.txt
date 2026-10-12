@@ -1,0 +1,54 @@
+Use case: infographic-diagram
+Asset type: A polished raster server architecture illustration for a Korean hackathon project's nontechnical teammates. One complete landscape 16:9 presentation image, high resolution, large legible Korean labels.
+
+Primary request: Make the doenaai server architecture immediately understandable to ordinary people. This is a friendly illustrated infrastructure picture with recognizable computers, a server appliance, a silver Mac Studio, a cloud, source-code folders, and database cylinders. NOT a UML/use-case diagram, NOT a Mermaid-style flowchart, NOT a screenshot, NOT a wall of text or tiny boxes.
+
+Style: premium editorial isometric 3D illustration blended with clean infographic typography. Soft studio lighting, subtle physical depth, tidy light background, ample whitespace, crisp large dark Korean sans-serif text. Restrained blue for the user/business area and violet for the Mac AI area, with neutral cloud/database illustrations. Illustration and hardware should occupy most of the canvas; annotations are concise. No decorative unrelated objects, no stock-photo watermark. All Korean must be correctly spelled and highly readable.
+
+Title at top, exact: "doenaai 서버 구성도"
+Subtitle exact: "프로젝트 정보를 모아, Mac의 AI가 구조와 위험을 설명합니다"
+
+Composition: Three dominant physical stations across the upper/middle row, connected cleanly, with two distinct support-resource groups below. Avoid crossings, tangled lines and extra redundant arrows. Connection labels must align with their actual endpoints, not float ambiguously.
+
+LEFT main station: realistic friendly desktop computer with a simple web dashboard on its monitor, optionally one small person seated using it.
+Heading: "사용자 PC"
+Caption: "프로젝트 등록 · 분석 요청 · 결과 확인"
+Small secondary technical label: "웹 화면 · Vue"
+
+CENTER main station: a compact server appliance, much more substantial than a generic flowchart rectangle.
+Heading: "업무 서버"
+Caption: "정보 수집 · 작업 관리 · 결과 저장"
+Small secondary technical label: "Spring Boot"
+
+RIGHT main station: recognizable silver compact Mac Studio desktop computer with a monitor showing a stylized AI chip and a short analysis report, all contained in one clearly grouped softly tinted AI area. The AI chip is symbolic, not a separate remote server.
+Heading: "AI 서버 · Mac Studio"
+Caption: "근거를 읽고 분석 · 위험과 권장사항 설명"
+Small secondary technical label: "FastAPI + Ollama + Devstral"
+Important: these software components run inside the same Mac area, not three external cloud servers.
+
+LOWER LEFT support group, separate from user PC: two small related illustrations, a code-folder/repository and a database cylinder, under a shared clear heading.
+Heading: "분석할 프로젝트"
+Under code-folder: "Git 저장소"
+Under database: "대상 DB"
+Caption: "소스코드와 DB 구조만 확인"
+
+LOWER CENTER/RIGHT support group: a cloud with a storage/database illustration.
+Heading: "서비스 저장소 · Supabase"
+Caption: "회원 · 프로젝트 · 분석 결과 보관"
+This platform storage must be visually distinct from the target DB in the lower-left group.
+
+Connections, semantic accuracy is essential:
+- User PC to business server: arrow labeled "분석 요청"
+- Business server back to user PC: separate clean return arrow labeled "결과 화면"
+- Business server connected bidirectionally ONLY to the lower-left analysis target group, label "소스·DB 구조 수집"
+- Business server connected bidirectionally to the Supabase service-storage group, label "기록 저장·조회"
+- Business server to Mac AI server: prominent arrow labeled "정리된 근거 전달"
+- Mac AI server back to business server: return arrow labeled "분석 결과"
+- No arrow between the Mac and the target DB or Git. No arrow from the user directly to the Mac. The model must not appear to fetch DB credentials or modify files. Supabase and target DB are different logical roles, not duplicate unlabeled databases.
+- This is a role-focused simplified physical server layout, not an exhaustive authentication/network-protocol diagram. Do not add login-protocol paths, APIs, ports, URLs, SQL, keys, credentials, sequence lifelines, actor stick figures, use-case ellipses, or code blocks.
+
+Bottom readable note strip with two brief notes, exact:
+"대상 DB는 읽기 전용 · 업무 데이터 행은 수집하지 않음"
+"AI는 분석을 돕고, 최종 판단은 사람이 합니다"
+
+Ensure no gibberish, no extra slogans, no fabricated dashboard statistics. Use the exact text above without extra technical detail. The finished image should feel approachable and suitable to show to a non-engineer in a team meeting.
