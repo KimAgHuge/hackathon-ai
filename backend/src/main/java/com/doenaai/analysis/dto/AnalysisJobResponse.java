@@ -12,7 +12,10 @@ public record AnalysisJobResponse(
         int databaseProgress,
         int relationProgress,
         int overallProgress,
-        OffsetDateTime createdAt
+        OffsetDateTime createdAt,
+        String errorMessage,
+        OffsetDateTime startedAt,
+        OffsetDateTime completedAt
 ) {
 
     public static AnalysisJobResponse of(
@@ -41,7 +44,10 @@ public record AnalysisJobResponse(
                 databaseProgress,
                 relationProgress,
                 overallProgress,
-                createdAt
+                createdAt,
+                null,
+                null,
+                null
         );
     }
 }
