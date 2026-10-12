@@ -1,103 +1,456 @@
 <script setup>
-import { onMounted } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import PageTitle from '@/components/common/PageTitle.vue'
-import StepHeader from '@/components/common/StepHeader.vue'
-import { useProjectStore } from '@/stores/projectStore'
+import { getAnalysisJob, getAnalysisResult, isAnalysisDemoMode } from '@/api/analysisApi'
+import { createAnalysisPoller } from '@/lib/analysisPolling'
 
-const store = useProjectStore()
 const route = useRoute()
+const job = ref(null)
+const analysis = ref(null)
+const loading = ref(false)
+const retryScheduled = ref(false)
+const requestError = ref(null)
+const lastCheckedAt = ref(null)
 
-onMounted(() => {
-    store.loadProgress(route.params.analysisJobId)
+const statusLabels = { PENDING: '분석 대기', RUNNING: '분석 진행 중', COMPLETED: '분석 완료', FAILED: '분석 실패', CANCELLED: '분석 취소' }
+const statusLabel = computed(() => statusLabels[job.value?.status] || job.value?.status || '작업 확인 중')
+const statusDescription = computed(() => {
+    if (job.value?.status === 'COMPLETED') return '분석이 완료되었습니다. 아래에서 저장된 결과와 수집 근거를 확인할 수 있습니다.'
+    if (job.value?.status === 'FAILED') return '작업이 실패하여 자동 조회를 중지했습니다. 오류 원인을 해결한 뒤 프로젝트에서 새 분석을 시작하세요.'
+    if (job.value?.status === 'CANCELLED') return '취소된 분석 작업입니다.'
+    if (job.value?.status === 'PENDING') return '분석 서버가 작업을 시작하기를 기다리고 있습니다.'
+    return '서버에서 소스코드와 DB 구조를 수집하고 분석하고 있습니다.'
 })
+
+const errorMessage = computed(() => {
+    const error = requestError.value?.error
+    return error?.response?.data?.message || error?.response?.data?.detail || error?.message || '요청을 처리하지 못했습니다.'
+})
+
+const poller = createAnalysisPoller({
+    loadJob: getAnalysisJob,
+    loadResult: getAnalysisResult,
+    onJob: (value) => {
+        job.value = value
+        lastCheckedAt.value = new Date()
+    },
+    onResult: (value) => {
+        analysis.value = value
+    },
+    onError: (value) => {
+        requestError.value = value
+    },
+    onState: (value) => {
+        loading.value = value.loading
+        retryScheduled.value = value.retryScheduled
+    },
+})
+
+watch(
+    () => [route.params.projectId, route.params.analysisJobId],
+    ([, jobId]) => {
+        job.value = null
+        analysis.value = null
+        requestError.value = null
+        lastCheckedAt.value = null
+        poller.start(jobId)
+    },
+    { immediate: true }
+)
+
+onBeforeUnmount(() => poller.stop())
+
+const asList = (value) => (Array.isArray(value) ? value : [])
+const displayValue = (value) => {
+    if (value === null || value === undefined) return '정보 없음'
+    return typeof value === 'object' ? JSON.stringify(value, null, 2) : String(value)
+}
+const percentage = (value) => (typeof value === 'number' && Number.isFinite(value) ? Math.min(100, Math.max(0, value)) : null)
+const progressText = (value) => (percentage(value) === null ? '진행률 미제공' : `${percentage(value)}%`)
+const formatDate = (value) => {
+    if (!value) return '—'
+    const date = new Date(value)
+    return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString('ko-KR')
+}
+const count = (value) => (Array.isArray(value) ? `${value.length.toLocaleString('ko-KR')}개` : '정보 없음')
+const source = computed(() => analysis.value?.facts?.sourceSummary || {})
+const database = computed(() => analysis.value?.facts?.databaseSummary || {})
+const aiResult = computed(() => analysis.value?.result || {})
+const frameworks = computed(() => asList(aiResult.value.frameworks))
+const sourceTechnologies = computed(() =>
+    asList(source.value.frameworks)
+        .map((framework) => (typeof framework === 'string' ? framework : framework.name))
+        .filter(Boolean)
+)
+const riskLevel = computed(() => analysis.value?.riskLevel ?? aiResult.value.riskLevel ?? 'UNKNOWN')
+const riskScore = computed(() => analysis.value?.riskScore ?? aiResult.value.riskScore)
+const riskLabels = { LOW: '낮음', MEDIUM: '보통', HIGH: '높음', CRITICAL: '매우 높음', UNKNOWN: '판단 불가' }
+const databaseColumnCount = computed(() => {
+    if (!Array.isArray(database.value.tables) || database.value.tables.some((table) => !Array.isArray(table.columns))) return '정보 없음'
+    return `${database.value.tables.reduce((total, table) => total + table.columns.length, 0).toLocaleString('ko-KR')}개`
+})
+const stages = computed(() => [
+    {
+        name: '소스코드 수집',
+        icon: 'SRC',
+        color: 'blue-bg',
+        progress: job.value?.sourceProgress,
+        metrics: [
+            { label: '구성요소', value: count(source.value.components) },
+            { label: '감지된 프레임워크', value: count(source.value.frameworks) },
+        ],
+    },
+    {
+        name: 'DB 스키마 수집',
+        icon: 'DB',
+        color: 'purple-bg',
+        fill: 'purple-fill',
+        progress: job.value?.databaseProgress,
+        metrics: [
+            { label: '테이블', value: count(database.value.tables) },
+            { label: '컬럼', value: databaseColumnCount.value },
+        ],
+    },
+    {
+        name: '관계 및 AI 분석',
+        icon: 'AI',
+        color: 'orange-bg',
+        fill: 'orange-fill',
+        progress: job.value?.relationProgress,
+        metrics: [{ label: '수집된 관계', value: count(analysis.value?.facts?.relations) }],
+    },
+])
+const collectionWarnings = computed(() => [
+    ...asList(source.value.detectionWarnings),
+    ...asList(source.value.limitations),
+    ...asList(database.value.warnings),
+    ...(database.value.truncated ? ['DB 수집 범위 제한으로 일부 스키마가 생략되었습니다.'] : []),
+    ...(source.value.promptCoverage?.truncated
+        ? [
+              `AI 입력 크기 제한으로 수집 범위 중 테이블 ${source.value.promptCoverage.includedTables}/${source.value.promptCoverage.collectedTables}개, 관계 ${source.value.promptCoverage.includedRelations}/${source.value.promptCoverage.collectedRelations}개를 분석했습니다.`,
+          ]
+        : []),
+])
+const evidenceEntries = (evidence) => (evidence && typeof evidence === 'object' && !Array.isArray(evidence) ? Object.entries(evidence) : [['근거', evidence]])
 </script>
 
 <template>
-    <div>
-        <PageTitle eyebrow="STEP 2" title="소스코드와 DB 구조 병렬 분석" description="Mac Studio의 분석 서버가 두 입력을 병렬로 처리한 뒤 관계를 연결합니다." />
+    <div class="analysis-page">
+        <PageTitle
+            eyebrow="PROJECT ANALYSIS"
+            title="프로젝트 분석 상태 및 결과"
+            description="저장소와 DB에서 수집한 사실을 바탕으로 분석 작업의 상태와 결과를 확인합니다."
+        />
 
-        <StepHeader :current="2" />
+        <p v-if="isAnalysisDemoMode" class="analysis-notice">데모 모드: 아래 상태와 결과는 화면 확인용 샘플이며 실제 분석 결과가 아닙니다.</p>
 
-        <section v-if="store.progress" class="hero-progress panel">
+        <div class="analysis-toolbar">
+            <p role="status" aria-live="polite">
+                <template v-if="loading">{{ job?.status === 'COMPLETED' ? '저장된 분석 결과를 불러오는 중…' : '작업 상태를 확인하는 중…' }}</template>
+                <template v-else-if="retryScheduled">{{
+                    requestError ? '조회 실패 · 약 2.5초 후 자동 재시도합니다.' : '약 2.5초 간격으로 자동 갱신합니다.'
+                }}</template>
+                <template v-else>자동 조회가 중지되었습니다.</template>
+                <span v-if="lastCheckedAt"> · 마지막 확인 {{ formatDate(lastCheckedAt) }}</span>
+            </p>
+            <button class="button secondary" :disabled="loading" @click="poller.refresh()">
+                {{ requestError?.phase === 'result' ? '결과 다시 불러오기' : '상태 다시 확인' }}
+            </button>
+        </div>
+
+        <section v-if="requestError" class="analysis-notice error-notice" role="alert">
+            <strong>{{ requestError.phase === 'result' ? '분석 결과를 불러오지 못했습니다.' : '작업 상태를 불러오지 못했습니다.' }}</strong>
+            <p>{{ errorMessage }}</p>
+            <p v-if="!retryScheduled && !loading">자동 재시도를 중지했습니다. 연결 상태와 접근 권한을 확인한 후 다시 불러오세요.</p>
+        </section>
+
+        <section v-if="job" class="hero-progress panel">
             <div class="hero-progress-header">
                 <div>
-                    <span class="badge green">{{ store.progress.status }}</span>
-                    <h2>doenaai 통합 분석 진행 중</h2>
-                    <p>Controller부터 DB 테이블까지 연결 관계를 생성하고 있습니다.</p>
+                    <span class="badge" :class="job.status === 'COMPLETED' ? 'green' : job.status === 'FAILED' ? 'orange' : 'blue'">{{ statusLabel }}</span>
+                    <h2>{{ statusLabel }}</h2>
+                    <p>{{ statusDescription }}</p>
                 </div>
-                <div class="progress-score">{{ store.progress.overallProgress }}%</div>
+                <div class="progress-score">{{ progressText(job.overallProgress) }}</div>
             </div>
-            <div class="progress-track large">
-                <div class="progress-fill" :style="{ width: `${store.progress.overallProgress}%` }"></div>
+            <div
+                class="progress-track large"
+                role="progressbar"
+                aria-label="전체 분석 진행률"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                :aria-valuenow="percentage(job.overallProgress) ?? undefined"
+            >
+                <div class="progress-fill" :style="{ width: `${percentage(job.overallProgress) ?? 0}%` }"></div>
             </div>
-        </section>
-
-        <div v-if="store.progress" class="grid three-columns">
-            <section class="panel progress-panel">
-                <div class="progress-panel-icon blue-bg">SRC</div>
-                <h3>소스코드 분석</h3>
-                <p>Vue, Spring Boot, MyBatis 구조 추출</p>
-                <div class="progress-track">
-                    <div class="progress-fill" :style="{ width: `${store.progress.sourceProgress}%` }"></div>
-                </div>
-                <strong>{{ store.progress.sourceProgress }}%</strong>
-                <ul class="check-list">
-                    <li>Controller 18개</li>
-                    <li>Service 27개</li>
-                    <li>Mapper SQL 134개</li>
-                    <li>Vue 화면 22개</li>
-                </ul>
-            </section>
-
-            <section class="panel progress-panel">
-                <div class="progress-panel-icon purple-bg">DB</div>
-                <h3>DB 스키마 분석</h3>
-                <p>테이블, 컬럼, 인덱스, 관계 추출</p>
-                <div class="progress-track">
-                    <div class="progress-fill purple-fill" :style="{ width: `${store.progress.databaseProgress}%` }"></div>
-                </div>
-                <strong>{{ store.progress.databaseProgress }}%</strong>
-                <ul class="check-list">
-                    <li>테이블 48개</li>
-                    <li>컬럼 612개</li>
-                    <li>인덱스 96개</li>
-                    <li>관계 53개</li>
-                </ul>
-            </section>
-
-            <section class="panel progress-panel active-panel">
-                <div class="progress-panel-icon orange-bg">LINK</div>
-                <h3>코드·DB 관계 연결</h3>
-                <p>화면부터 테이블까지 의존관계 생성</p>
-                <div class="progress-track">
-                    <div class="progress-fill orange-fill" :style="{ width: `${store.progress.relationProgress}%` }"></div>
-                </div>
-                <strong>{{ store.progress.relationProgress }}%</strong>
-                <ul class="check-list">
-                    <li>API ↔ Service 연결</li>
-                    <li>Mapper ↔ Table 연결</li>
-                    <li>Vue ↔ API 연결</li>
-                    <li class="working">아키텍처 병합 중</li>
-                </ul>
-            </section>
-        </div>
-
-        <section class="panel activity-log">
-            <div class="panel-heading">
+            <dl class="job-metadata">
                 <div>
-                    <h2>실시간 분석 로그</h2>
-                    <p>현재는 화면 검토용 하드코딩 로그입니다.</p>
+                    <dt>작업 ID</dt>
+                    <dd>{{ job.jobId }}</dd>
                 </div>
+                <div>
+                    <dt>요청</dt>
+                    <dd>{{ formatDate(job.createdAt) }}</dd>
+                </div>
+                <div>
+                    <dt>시작</dt>
+                    <dd>{{ formatDate(job.startedAt) }}</dd>
+                </div>
+                <div>
+                    <dt>종료</dt>
+                    <dd>{{ formatDate(job.completedAt) }}</dd>
+                </div>
+            </dl>
+            <div v-if="job.status === 'FAILED'" class="analysis-notice error-notice" role="alert">
+                <strong>분석 실패 사유</strong>
+                <p>{{ job.errorMessage || '서버가 상세 오류를 제공하지 않았습니다.' }}</p>
             </div>
-            <div class="log-row"><span>11:02:15</span><strong>ApplicationController 분석 완료</strong></div>
-            <div class="log-row"><span>11:02:16</span><strong>TB_BM_APLY_RCPT 스키마 확인 완료</strong></div>
-            <div class="log-row"><span>11:02:17</span><strong>ApplicationMapper.insertApplication 관계 연결</strong></div>
-            <div class="log-row"><span>11:02:18</span><strong>통합 아키텍처 스냅샷 생성 중</strong></div>
         </section>
 
-        <div class="page-actions">
-            <RouterLink class="button primary" to="/architecture">통합 구조 확인</RouterLink>
+        <div v-if="job" class="grid three-columns">
+            <section v-for="stage in stages" :key="stage.icon" class="panel progress-panel">
+                <div class="progress-panel-icon" :class="stage.color">{{ stage.icon }}</div>
+                <h3>{{ stage.name }}</h3>
+                <div
+                    class="progress-track"
+                    role="progressbar"
+                    :aria-label="stage.name"
+                    aria-valuemin="0"
+                    aria-valuemax="100"
+                    :aria-valuenow="percentage(stage.progress) ?? undefined"
+                >
+                    <div class="progress-fill" :class="stage.fill" :style="{ width: `${percentage(stage.progress) ?? 0}%` }"></div>
+                </div>
+                <strong>{{ progressText(stage.progress) }}</strong>
+                <dl v-if="analysis" class="metric-list">
+                    <div v-for="metric in stage.metrics" :key="metric.label">
+                        <dt>{{ metric.label }}</dt>
+                        <dd>{{ metric.value }}</dd>
+                    </div>
+                </dl>
+                <p v-else>수집 개수는 완료된 분석 결과에서 확인할 수 있습니다.</p>
+            </section>
         </div>
+
+        <template v-if="analysis">
+            <section class="panel analysis-section">
+                <div class="panel-heading">
+                    <div>
+                        <h2>분석 요약</h2>
+                        <p>결과 저장 시각: {{ formatDate(analysis.createdAt) }}</p>
+                    </div>
+                    <span class="badge" :class="['HIGH', 'CRITICAL'].includes(riskLevel) ? 'orange' : 'blue'">
+                        위험도 {{ riskLabels[riskLevel] || riskLevel }}{{ typeof riskScore === 'number' ? ` · ${riskScore}/100` : '' }}
+                    </span>
+                </div>
+                <p class="result-text">{{ analysis.summary || aiResult.summary || '제공된 요약이 없습니다.' }}</p>
+                <div v-if="frameworks.length" class="tag-list compact">
+                    <span v-for="framework in frameworks" :key="framework">{{ framework }}</span>
+                </div>
+                <h3 class="subheading">영향 영역</h3>
+                <ul v-if="asList(aiResult.impactAreas).length" class="result-list">
+                    <li v-for="(area, index) in aiResult.impactAreas" :key="index">{{ displayValue(area) }}</li>
+                </ul>
+                <p v-else class="empty-copy">보고된 영향 영역이 없습니다.</p>
+            </section>
+
+            <div class="grid two-columns analysis-section">
+                <section class="panel">
+                    <div class="panel-heading">
+                        <div>
+                            <h2>분석 근거</h2>
+                            <p>AI가 분석에 인용한 수집 정보입니다. 실제 코드 및 DB와 함께 검토하세요.</p>
+                        </div>
+                    </div>
+                    <ol v-if="asList(aiResult.evidences).length" class="evidence-list">
+                        <li v-for="(evidence, index) in aiResult.evidences" :key="index">
+                            <dl class="evidence-details">
+                                <div v-for="[key, value] in evidenceEntries(evidence)" :key="key">
+                                    <dt>{{ key }}</dt>
+                                    <dd>{{ displayValue(value) }}</dd>
+                                </div>
+                            </dl>
+                        </li>
+                    </ol>
+                    <p v-else class="empty-copy">제공된 분석 근거가 없습니다.</p>
+                </section>
+                <section class="panel">
+                    <div class="panel-heading">
+                        <div>
+                            <h2>권장 대응 방안</h2>
+                            <p>구현 전 검토할 항목</p>
+                        </div>
+                    </div>
+                    <ol v-if="asList(aiResult.recommendations).length" class="recommendation-list">
+                        <li v-for="(recommendation, index) in aiResult.recommendations" :key="index">{{ displayValue(recommendation) }}</li>
+                    </ol>
+                    <p v-else class="empty-copy">제공된 권장 사항이 없습니다.</p>
+                </section>
+            </div>
+
+            <section class="panel analysis-section">
+                <div class="panel-heading">
+                    <div>
+                        <h2>수집 범위와 한계</h2>
+                        <p>AI 분석에 전달된 사실과 수집 경고입니다. 목록은 수집된 범위에 한정됩니다.</p>
+                    </div>
+                </div>
+                <dl class="metric-list">
+                    <div>
+                        <dt>언어</dt>
+                        <dd>{{ asList(source.languages).join(', ') || '정보 없음' }}</dd>
+                    </div>
+                    <div>
+                        <dt>프레임워크</dt>
+                        <dd>{{ sourceTechnologies.join(', ') || '감지된 항목 없음' }}</dd>
+                    </div>
+                    <div>
+                        <dt>DB 유형 / 스키마</dt>
+                        <dd>{{ database.type || '정보 없음' }} / {{ database.schema || '정보 없음' }}</dd>
+                    </div>
+                </dl>
+                <ul v-if="collectionWarnings.length" class="result-list collection-warnings">
+                    <li v-for="(warning, index) in collectionWarnings" :key="index">{{ displayValue(warning) }}</li>
+                </ul>
+                <details class="facts-details">
+                    <summary>수집 사실 원본 보기</summary>
+                    <pre>{{ JSON.stringify(analysis.facts, null, 2) }}</pre>
+                </details>
+            </section>
+        </template>
+
+        <div class="page-actions"><RouterLink class="button secondary" to="/projects">프로젝트 목록</RouterLink></div>
     </div>
 </template>
+
+<style scoped>
+.analysis-toolbar,
+.metric-list > div {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+}
+.analysis-toolbar {
+    margin-bottom: 20px;
+}
+.analysis-toolbar p,
+.empty-copy {
+    color: #667188;
+    font-size: 13px;
+}
+.analysis-toolbar .button {
+    flex-shrink: 0;
+}
+.analysis-notice {
+    margin-bottom: 20px;
+    border: 1px solid #f0d6ab;
+    border-radius: 12px;
+    background: #fff9ed;
+    padding: 16px;
+    color: #80571a;
+    font-size: 13px;
+    overflow-wrap: anywhere;
+}
+.error-notice {
+    border-color: #f0c3c3;
+    background: #fff3f3;
+    color: #a23434;
+}
+.analysis-notice p {
+    margin: 8px 0 0;
+}
+.job-metadata {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+    margin-top: 24px;
+    font-size: 12px;
+}
+.job-metadata dt,
+.metric-list dt,
+.evidence-details dt {
+    color: #667188;
+}
+.job-metadata dd,
+.metric-list dd,
+.evidence-details dd {
+    margin: 6px 0 0;
+    overflow-wrap: anywhere;
+}
+.metric-list {
+    display: grid;
+    gap: 12px;
+    font-size: 13px;
+}
+.metric-list dd {
+    margin: 0;
+    text-align: right;
+}
+.analysis-section {
+    margin-top: 20px;
+}
+.result-text,
+.result-list,
+.evidence-details dd,
+.recommendation-list {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    line-height: 1.7;
+}
+.result-list {
+    padding-left: 22px;
+}
+.subheading {
+    margin-top: 24px !important;
+}
+.evidence-list {
+    padding-left: 22px;
+}
+.evidence-list > li + li {
+    margin-top: 18px;
+    border-top: 1px solid #e3e7ef;
+    padding-top: 18px;
+}
+.evidence-details {
+    display: grid;
+    gap: 10px;
+    font-size: 13px;
+}
+.collection-warnings {
+    color: #80571a;
+    font-size: 13px;
+}
+.facts-details {
+    margin-top: 24px;
+    font-size: 13px;
+}
+.facts-details summary {
+    cursor: pointer;
+    color: #526077;
+}
+.facts-details pre {
+    max-height: 420px;
+    overflow: auto;
+    border-radius: 10px;
+    background: #f5f7fb;
+    padding: 16px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+@media (max-width: 760px) {
+    .analysis-toolbar,
+    .hero-progress-header,
+    .panel-heading {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 16px;
+    }
+    .three-columns,
+    .two-columns,
+    .job-metadata {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+</style>
