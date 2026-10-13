@@ -71,7 +71,76 @@ class RiskLevel(str, Enum):
     UNKNOWN = "UNKNOWN"
 
 
-class ProjectAnalysisResponse(ApiModel):
+class DatabaseRelevance(str, Enum):
+    RELATED = "RELATED"
+    UNRELATED = "UNRELATED"
+    UNCERTAIN = "UNCERTAIN"
+
+
+class DatabaseImpactStatus(str, Enum):
+    CHANGE_REQUIRED = "CHANGE_REQUIRED"
+    NO_CHANGE = "NO_CHANGE"
+    NEEDS_CLARIFICATION = "NEEDS_CLARIFICATION"
+    UNKNOWN = "UNKNOWN"
+    NOT_APPLICABLE = "NOT_APPLICABLE"
+
+
+class DatabaseChangeType(str, Enum):
+    CREATE_TABLE = "CREATE_TABLE"
+    ADD_COLUMN = "ADD_COLUMN"
+    ALTER_COLUMN = "ALTER_COLUMN"
+    DROP_COLUMN = "DROP_COLUMN"
+    ADD_CONSTRAINT = "ADD_CONSTRAINT"
+    ALTER_CONSTRAINT = "ALTER_CONSTRAINT"
+    DATA_MIGRATION = "DATA_MIGRATION"
+    OTHER = "OTHER"
+
+
+class DatabaseChange(ApiModel):
+    target_table: str = Field(min_length=1)
+    target_column: Optional[str]
+    change_type: DatabaseChangeType
+    description: str = Field(min_length=1)
+    rationale: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def check_column_action(self):
+        if self.change_type in {
+            DatabaseChangeType.ADD_COLUMN,
+            DatabaseChangeType.ALTER_COLUMN,
+            DatabaseChangeType.DROP_COLUMN,
+        } and not self.target_column:
+            raise ValueError("A column change needs the exact target column.")
+        return self
+
+
+class DatabaseConditionalPath(ApiModel):
+    condition: str = Field(min_length=1)
+    database_effect: str = Field(min_length=1)
+
+
+class DatabaseImpact(ApiModel):
+    status: DatabaseImpactStatus
+    explanation: str = Field(min_length=1)
+    observed_tables: List[str]
+    proposed_changes: List[DatabaseChange]
+    conditional_paths: List[DatabaseConditionalPath]
+    open_questions: List[str]
+
+    @model_validator(mode="after")
+    def check_decision(self):
+        if self.status == DatabaseImpactStatus.CHANGE_REQUIRED and not self.proposed_changes:
+            raise ValueError("A required DB change needs a concrete proposed change.")
+        if self.status == DatabaseImpactStatus.NEEDS_CLARIFICATION and not self.open_questions:
+            raise ValueError("An ambiguous DB impact needs a clarification question.")
+        if self.status == DatabaseImpactStatus.NEEDS_CLARIFICATION and len(self.conditional_paths) < 2:
+            raise ValueError("An ambiguous DB impact needs at least two concrete conditional DB paths.")
+        if self.status != DatabaseImpactStatus.CHANGE_REQUIRED and self.proposed_changes:
+            raise ValueError("Only confirmed required DB changes may include proposed changes.")
+        return self
+
+
+class GeneralAnalysisResponse(ApiModel):
     model_config = ConfigDict(
         alias_generator=to_camel,
         populate_by_name=True,
@@ -85,6 +154,15 @@ class ProjectAnalysisResponse(ApiModel):
     impact_areas: List[str]
     evidences: List[Dict[str, Any]]
     recommendations: List[str]
+
+
+class RequirementGeneralAnalysisResponse(GeneralAnalysisResponse):
+    database_relevance: DatabaseRelevance
+    database_relevance_reason: str = Field(min_length=1)
+
+
+class ProjectAnalysisResponse(GeneralAnalysisResponse):
+    database_impact: DatabaseImpact
 
 
 class ModelHealthResponse(ApiModel):

@@ -94,11 +94,11 @@ public class AiAnalysisClient {
             // JSON parser exceptions may quote remote body fragments, so never retain their cause.
             throw new IOException("Invalid AI result JSON.");
         }
-        validate(result);
+        validate(result, payload);
         return result;
     }
 
-    static void validate(Map<String, Object> result) throws IOException {
+    static void validate(Map<String, Object> result, Map<String, Object> payload) throws IOException {
         if (result == null || !(result.get("summary") instanceof String summary) || summary.isBlank()
                 || !(result.get("riskLevel") instanceof String risk)
                 || !Set.of("LOW", "MEDIUM", "HIGH", "CRITICAL", "UNKNOWN").contains(risk)
@@ -115,6 +115,47 @@ public class AiAnalysisClient {
                 || items.stream().anyMatch(v -> !(v instanceof Map<?, ?>))) {
             throw new IOException("Invalid AI evidence list.");
         }
+        if (!(result.get("databaseImpact") instanceof Map<?, ?> databaseImpact)
+                || !(databaseImpact.get("status") instanceof String status)
+                || !Set.of("CHANGE_REQUIRED", "NO_CHANGE", "NEEDS_CLARIFICATION", "UNKNOWN", "NOT_APPLICABLE").contains(status)
+                || !(databaseImpact.get("explanation") instanceof String explanation) || explanation.isBlank()
+                || !stringList(databaseImpact.get("observedTables"))
+                || !stringList(databaseImpact.get("openQuestions"))
+                || !(databaseImpact.get("conditionalPaths") instanceof List<?> paths)
+                || paths.stream().anyMatch(path -> !(path instanceof Map<?, ?> entry)
+                        || !(entry.get("condition") instanceof String condition) || condition.isBlank()
+                        || !(entry.get("databaseEffect") instanceof String effect) || effect.isBlank())
+                || !(databaseImpact.get("proposedChanges") instanceof List<?> changes)
+                || changes.stream().anyMatch(change -> !(change instanceof Map<?, ?> entry)
+                        || !(entry.get("targetTable") instanceof String table) || table.isBlank()
+                        || !entry.containsKey("targetColumn")
+                        || (entry.get("targetColumn") != null
+                            && (!(entry.get("targetColumn") instanceof String column) || column.isBlank()))
+                        || !(entry.get("changeType") instanceof String type) || type.isBlank()
+                        || (Set.of("ADD_COLUMN", "ALTER_COLUMN", "DROP_COLUMN").contains(entry.get("changeType"))
+                            && !(entry.get("targetColumn") instanceof String))
+                        || !(entry.get("description") instanceof String description) || description.isBlank()
+                        || !(entry.get("rationale") instanceof String rationale) || rationale.isBlank())) {
+            throw new IOException("Invalid AI database impact contract.");
+        }
+        boolean requirementAnalysis = payload.get("sourceSummary") instanceof Map<?, ?> source
+                && source.get("changeRequirement") instanceof Map<?, ?>;
+        if ((!requirementAnalysis && !"NOT_APPLICABLE".equals(status))
+                || ("CHANGE_REQUIRED".equals(status) && changes.isEmpty())
+                || ("NEEDS_CLARIFICATION".equals(status)
+                    && (((List<?>) databaseImpact.get("openQuestions")).isEmpty()
+                        || ((List<?>) databaseImpact.get("conditionalPaths")).size() < 2))
+                || (!"CHANGE_REQUIRED".equals(status) && !changes.isEmpty())
+                || ("NOT_APPLICABLE".equals(status)
+                    && (!((List<?>) databaseImpact.get("observedTables")).isEmpty()
+                        || !((List<?>) databaseImpact.get("conditionalPaths")).isEmpty()
+                        || !((List<?>) databaseImpact.get("openQuestions")).isEmpty()))) {
+            throw new IOException("Invalid AI database impact decision.");
+        }
+    }
+
+    private static boolean stringList(Object value) {
+        return value instanceof List<?> items && items.stream().allMatch(item -> item instanceof String);
     }
 
     private static URI endpointFor(String baseUrl) {

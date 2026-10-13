@@ -29,7 +29,9 @@ class AiAnalysisClientTest {
     private static final String VALID_RESULT = """
             {"summary":"테스트 분석 결과","riskLevel":"LOW","riskScore":7,
              "frameworks":["Spring Boot"],"impactAreas":["API"],
-             "recommendations":["검증"],"evidences":[{"source":"test"}]}
+             "recommendations":["검증"],"evidences":[{"source":"test"}],
+             "databaseImpact":{"status":"NOT_APPLICABLE","explanation":"변경 요구사항이 없습니다.",
+             "observedTables":[],"proposedChanges":[],"conditionalPaths":[],"openQuestions":[]}}
             """;
     private static final Map<String, Object> PAYLOAD = Map.of(
             "projectId", "fixture-project", "sourceSummary", Map.of("components", List.of()),
@@ -106,6 +108,31 @@ class AiAnalysisClientTest {
                 .isInstanceOf(IOException.class)
                 .hasMessage("Invalid AI result contract.")
                 .hasNoCause();
+    }
+
+    @Test
+    void requirementWithoutDatabaseImpactAcceptsNotApplicableDecision() throws Exception {
+        serve(exchange -> respond(exchange, 200, VALID_RESULT));
+        Map<String, Object> requirementPayload = Map.of(
+                "projectId", "fixture-project",
+                "sourceSummary", Map.of("changeRequirement", Map.of("title", "버튼 색상 변경")),
+                "databaseSummary", Map.of("tables", List.of()), "relations", List.of());
+
+        assertThat(client(Duration.ofSeconds(3)).analyze(requirementPayload))
+                .extracting(result -> ((Map<?, ?>) result.get("databaseImpact")).get("status"))
+                .isEqualTo("NOT_APPLICABLE");
+    }
+
+    @Test
+    void missingDatabaseImpactIsRejected() {
+        serve(exchange -> respond(exchange, 200, """
+                {"summary":"테스트 분석 결과","riskLevel":"LOW","riskScore":7,
+                 "frameworks":[],"impactAreas":[],"recommendations":[],"evidences":[]}
+                """));
+
+        assertThatThrownBy(() -> client(Duration.ofSeconds(3)).analyze(PAYLOAD))
+                .isInstanceOf(IOException.class)
+                .hasMessage("Invalid AI database impact contract.");
     }
 
     @Test

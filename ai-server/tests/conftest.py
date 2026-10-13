@@ -38,6 +38,14 @@ class FakeLlmService:
             impact_areas=[],
             evidences=[],
             recommendations=["정적 분석 근거를 추가하세요."],
+            database_impact={
+                "status": "NOT_APPLICABLE",
+                "explanation": "변경 요구사항이 없는 프로젝트 구조 분석입니다.",
+                "observedTables": [],
+                "proposedChanges": [],
+                "conditionalPaths": [],
+                "openQuestions": [],
+            },
         )
 
 

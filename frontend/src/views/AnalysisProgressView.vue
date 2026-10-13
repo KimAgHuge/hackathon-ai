@@ -15,6 +15,7 @@ const lastCheckedAt = ref(null)
 
 const statusLabels = { PENDING: '분석 대기', RUNNING: '분석 진행 중', COMPLETED: '분석 완료', FAILED: '분석 실패', CANCELLED: '분석 취소' }
 const statusLabel = computed(() => statusLabels[job.value?.status] || job.value?.status || '작업 확인 중')
+const isRequirementAnalysis = computed(() => Boolean(job.value?.requirementVersionId))
 const statusDescription = computed(() => {
     if (job.value?.status === 'COMPLETED') return '분석이 완료되었습니다. 아래에서 저장된 결과와 수집 근거를 확인할 수 있습니다.'
     if (job.value?.status === 'FAILED') return '작업이 실패하여 자동 조회를 중지했습니다. 오류 원인을 해결한 뒤 프로젝트에서 새 분석을 시작하세요.'
@@ -77,6 +78,24 @@ const count = (value) => (Array.isArray(value) ? `${value.length.toLocaleString(
 const source = computed(() => analysis.value?.facts?.sourceSummary || {})
 const database = computed(() => analysis.value?.facts?.databaseSummary || {})
 const aiResult = computed(() => analysis.value?.result || {})
+const databaseImpact = computed(() => aiResult.value.databaseImpact || null)
+const databaseImpactLabels = {
+    CHANGE_REQUIRED: 'DB 변경 필요',
+    NO_CHANGE: 'DB 변경 불필요',
+    NEEDS_CLARIFICATION: '요구사항 확인 필요',
+    UNKNOWN: '판단 근거 부족',
+    NOT_APPLICABLE: 'DB 분석 대상 아님',
+}
+const databaseChangeLabels = {
+    CREATE_TABLE: '테이블 생성',
+    ADD_COLUMN: '컬럼 추가',
+    ALTER_COLUMN: '컬럼 변경',
+    DROP_COLUMN: '컬럼 삭제',
+    ADD_CONSTRAINT: '제약조건 추가',
+    ALTER_CONSTRAINT: '제약조건 변경',
+    DATA_MIGRATION: '데이터 이관',
+    OTHER: '기타 변경',
+}
 const frameworks = computed(() => asList(aiResult.value.frameworks))
 const sourceTechnologies = computed(() =>
     asList(source.value.frameworks)
@@ -138,9 +157,11 @@ const evidenceEntries = (evidence) => (evidence && typeof evidence === 'object' 
 <template>
     <div class="analysis-page">
         <PageTitle
-            eyebrow="PROJECT ANALYSIS"
-            title="프로젝트 분석 상태 및 결과"
-            description="저장소와 DB에서 수집한 사실을 바탕으로 분석 작업의 상태와 결과를 확인합니다."
+            :eyebrow="isRequirementAnalysis ? 'CHANGE IMPACT' : 'PROJECT ANALYSIS'"
+            :title="isRequirementAnalysis ? '변경 영향 분석 상태 및 결과' : '프로젝트 분석 상태 및 결과'"
+            :description="isRequirementAnalysis
+                ? '선택한 요구사항 버전과 저장소·DB 근거를 바탕으로 영향 범위를 확인합니다.'
+                : '저장소와 DB에서 수집한 사실을 바탕으로 분석 작업의 상태와 결과를 확인합니다.'"
         />
 
         <p v-if="isAnalysisDemoMode" class="analysis-notice">데모 모드: 아래 상태와 결과는 화면 확인용 샘플이며 실제 분석 결과가 아닙니다.</p>
@@ -188,6 +209,10 @@ const evidenceEntries = (evidence) => (evidence && typeof evidence === 'object' 
                 <div>
                     <dt>작업 ID</dt>
                     <dd>{{ job.jobId }}</dd>
+                </div>
+                <div v-if="job.requirementVersionId">
+                    <dt>분석 대상 요구사항</dt>
+                    <dd>{{ source.changeRequirement?.title || `버전 ${job.requirementVersionId}` }}</dd>
                 </div>
                 <div>
                     <dt>요청</dt>
@@ -255,6 +280,52 @@ const evidenceEntries = (evidence) => (evidence && typeof evidence === 'object' 
                 <p v-else class="empty-copy">보고된 영향 영역이 없습니다.</p>
             </section>
 
+            <section v-if="isRequirementAnalysis" class="panel analysis-section">
+                <div class="panel-heading">
+                    <div>
+                        <h2>DB 변경 영향 판단</h2>
+                        <p>실제 DB에 변경을 적용하지 않은 AI 분석 결과입니다.</p>
+                    </div>
+                    <span v-if="databaseImpact" class="badge" :class="databaseImpact.status === 'CHANGE_REQUIRED' ? 'orange' : 'blue'">
+                        {{ databaseImpactLabels[databaseImpact.status] || databaseImpact.status }}
+                    </span>
+                </div>
+                <template v-if="databaseImpact">
+                    <p class="result-text">{{ databaseImpact.explanation }}</p>
+                    <div v-if="asList(databaseImpact.observedTables).length" class="database-impact-group">
+                        <h3 class="subheading">확인한 기존 테이블</h3>
+                        <ul class="result-list">
+                            <li v-for="table in databaseImpact.observedTables" :key="table">{{ table }}</li>
+                        </ul>
+                    </div>
+                    <div v-if="asList(databaseImpact.proposedChanges).length" class="database-impact-group">
+                        <h3 class="subheading">제안된 DB 변경</h3>
+                        <ol class="recommendation-list">
+                            <li v-for="(change, index) in databaseImpact.proposedChanges" :key="index">
+                                <strong>{{ change.targetTable }}{{ change.targetColumn ? `.${change.targetColumn}` : '' }} · {{ databaseChangeLabels[change.changeType] || change.changeType }}</strong>
+                                <p>{{ change.description }}</p>
+                                <p class="database-change-reason">이유: {{ change.rationale }}</p>
+                            </li>
+                        </ol>
+                    </div>
+                    <div v-if="asList(databaseImpact.conditionalPaths).length" class="database-impact-group">
+                        <h3 class="subheading">조건별 DB 영향 (확정 아님)</h3>
+                        <ul class="result-list">
+                            <li v-for="(path, index) in databaseImpact.conditionalPaths" :key="index">
+                                <strong>{{ path.condition }}</strong>: {{ path.databaseEffect }}
+                            </li>
+                        </ul>
+                    </div>
+                    <div v-if="asList(databaseImpact.openQuestions).length" class="database-impact-group">
+                        <h3 class="subheading">확인할 사항</h3>
+                        <ul class="result-list">
+                            <li v-for="(question, index) in databaseImpact.openQuestions" :key="index">{{ question }}</li>
+                        </ul>
+                    </div>
+                </template>
+                <p v-else class="empty-copy">이 분석은 새 DB 영향 판단 형식 도입 전에 저장돼 세부 변경안을 제공하지 않습니다. 다시 분석하면 확인할 수 있습니다.</p>
+            </section>
+
             <div class="grid two-columns analysis-section">
                 <section class="panel">
                     <div class="panel-heading">
@@ -320,7 +391,11 @@ const evidenceEntries = (evidence) => (evidence && typeof evidence === 'object' 
             </section>
         </template>
 
-        <div class="page-actions"><RouterLink class="button secondary" to="/projects">프로젝트 목록</RouterLink></div>
+        <div class="page-actions">
+            <RouterLink class="button secondary" :to="isRequirementAnalysis ? '/change-requests' : '/projects'">
+                {{ isRequirementAnalysis ? '변경요청 목록' : '프로젝트 목록' }}
+            </RouterLink>
+        </div>
     </div>
 </template>
 
@@ -390,6 +465,20 @@ const evidenceEntries = (evidence) => (evidence && typeof evidence === 'object' 
 }
 .analysis-section {
     margin-top: 20px;
+}
+.database-impact-group {
+    margin-top: 16px;
+}
+.database-impact-group .subheading {
+    margin-top: 0 !important;
+}
+.database-impact-group p {
+    margin: 8px 0 0;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+.database-change-reason {
+    color: #667188;
 }
 .result-text,
 .result-list,
