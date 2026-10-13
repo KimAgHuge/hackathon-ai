@@ -1,11 +1,13 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { getChangeRequests } from '@/api/appApi'
+import { isAnalysisDemoMode } from '@/api/analysisApi'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BasePagination from '@/components/base/BasePagination.vue'
 import BaseTable from '@/components/base/BaseTable.vue'
 import StatusBadge from '@/components/common/StatusBadge.vue'
 import ViewHeading from '@/components/common/ViewHeading.vue'
+import LiveRequirementAnalysis from '@/components/requirement/LiveRequirementAnalysis.vue'
 import { useClientTable } from '@/composables/useClientTable'
 import { useAuthStore } from '@/stores/authStore'
 
@@ -70,15 +72,17 @@ const fetchRequests = async () => {
 
 watch(selectedStatus, resetPage)
 
-onMounted(fetchRequests)
+onMounted(() => {
+    if (isAnalysisDemoMode) fetchRequests()
+})
 </script>
 
 <template>
-    <div>
+    <div v-if="isAnalysisDemoMode">
         <ViewHeading title="변경요청 관리" description="고객 또는 업무부서가 요청한 변경사항과 AI 분석 상태를 관리합니다.">
             <template #actions>
-                <BaseButton v-if="authStore.hasPermission('CHANGE_REQUEST_CREATE')">
-                    + 변경요청 등록
+                <BaseButton v-if="authStore.hasPermission('CHANGE_REQUEST_CREATE')" disabled>
+                    데모 변경요청
                 </BaseButton>
             </template>
         </ViewHeading>
@@ -142,4 +146,5 @@ onMounted(fetchRequests)
             </template>
         </BaseTable>
     </div>
+    <LiveRequirementAnalysis v-else />
 </template>

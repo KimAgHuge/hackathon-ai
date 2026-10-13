@@ -1,4 +1,5 @@
 import { httpClient } from '@/api/httpClient'
+import { buildAnalysisJobPayload } from '@/lib/requirementWorkflow'
 
 const useMock = import.meta.env.VITE_USE_MOCK !== 'false'
 export const isAnalysisDemoMode = useMock
@@ -9,11 +10,12 @@ const mockDelay = async (data, delay = 250) => {
     return structuredClone(data)
 }
 
-export const startProjectAnalysis = async (projectId) => {
+export const startProjectAnalysis = async (projectId, requirementVersionId = null) => {
     if (useMock) {
         return mockDelay({
             jobId: crypto.randomUUID(),
             projectId,
+            requirementVersionId,
             status: 'PENDING',
             sourceProgress: 0,
             databaseProgress: 0,
@@ -23,7 +25,7 @@ export const startProjectAnalysis = async (projectId) => {
         })
     }
 
-    const { data } = await httpClient.post(`/projects/${projectId}/analysis-jobs`)
+    const { data } = await httpClient.post(`/projects/${projectId}/analysis-jobs`, buildAnalysisJobPayload(requirementVersionId))
 
     return data
 }
