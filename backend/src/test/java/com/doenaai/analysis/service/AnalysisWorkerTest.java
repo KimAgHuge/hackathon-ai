@@ -10,7 +10,10 @@ import com.doenaai.requirement.repository.RequirementVersionRepository;
 import com.doenaai.requirement.service.RequirementService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.io.TempDir;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.nio.file.Files;
@@ -23,6 +26,7 @@ import static org.assertj.core.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
+@ExtendWith(OutputCaptureExtension.class)
 class AnalysisWorkerTest {
     @TempDir Path directory;
     final AnalysisJobRepository jobs = mock(AnalysisJobRepository.class);
@@ -41,13 +45,13 @@ class AnalysisWorkerTest {
 
     @BeforeEach void setup() throws Exception {
         worker = new AnalysisWorker(jobs, results, projects, git, database, source, requirements, versions,
-                new AnalysisPromptBuilder(JsonMapper.builder().build()), ai);
+                new AnalysisPromptBuilder(JsonMapper.builder().build(), AnalysisPromptBuilder.DEFAULT_MAX_CHARS), ai);
         checkout = Files.createDirectory(directory.resolve("checkout"));
         when(git.checkoutSnapshot(job.projectId(), job.requestedBy(), job.repositoryUrl(), job.branch(), job.commitSha()))
                 .thenReturn(new GitRepositoryConnectionService.GitSnapshot(checkout, checkout));
     }
 
-    @Test void collectsRealFactsCompletesAndDeletesCheckoutBeforeModelCall() throws Exception {
+    @Test void collectsRealFactsCompletesAndDeletesCheckoutBeforeModelCall(CapturedOutput output) throws Exception {
         var db = Map.<String, Object>of("type", "POSTGRESQL", "tables", List.of());
         when(database.collect(job.projectId())).thenReturn(db);
         when(source.collect(checkout, db)).thenReturn(new SourceEvidenceCollector.ScanResult(
@@ -68,6 +72,11 @@ class AnalysisWorkerTest {
         sequence.verify(jobs).progress(job.jobId(), 100, 100, 90);
         sequence.verify(results).complete(eq(job.jobId()), eq(result), anyMap());
         verify(jobs, never()).fail(any(), anyString());
+        assertThat(output.getAll()).contains("Analysis started: jobId=" + job.jobId(),
+                "Analysis stage started: jobId=" + job.jobId() + ", stage=Git 커밋 소스 수집",
+                "Analysis stage completed: jobId=" + job.jobId() + ", stage=Git 커밋 소스 수집",
+                "Analysis stage started: jobId=" + job.jobId() + ", stage=AI 분석 요청",
+                "Analysis completed: jobId=" + job.jobId());
     }
 
     @Test void databaseFailureStopsModelAndPersistsOnlySafeStage() {
@@ -79,12 +88,43 @@ class AnalysisWorkerTest {
         assertThat(checkout).doesNotExist();
     }
 
+    @Test void gitFailureAtZeroProgressRecordsSafeStage(CapturedOutput output) throws Exception {
+        when(git.checkoutSnapshot(job.projectId(), job.requestedBy(), job.repositoryUrl(), job.branch(), job.commitSha()))
+                .thenThrow(new java.io.IOException("token=unsafe-fixture"));
+
+        worker.process(job);
+
+        verify(jobs, never()).progress(any(), anyInt(), anyInt(), anyInt());
+        verify(jobs).fail(eq(job.jobId()), argThat(message -> message.contains("Git 커밋 소스 수집")
+                && !message.contains("unsafe-fixture")));
+        verifyNoInteractions(database, source, ai, results);
+        assertThat(output.getAll()).contains("Analysis stage started: jobId=" + job.jobId()
+                        + ", stage=Git 커밋 소스 수집",
+                "Analysis failed: jobId=" + job.jobId() + ", stage=Git 커밋 소스 수집")
+                .doesNotContain("unsafe-fixture");
+    }
+
     @Test void revokedProjectAccessStopsBeforeCredentialUse() {
         doThrow(new IllegalStateException("access denied")).when(projects)
                 .assertCanManage(job.projectId(), job.requestedBy());
         worker.process(job);
         verifyNoInteractions(git, database, source, ai, results);
         verify(jobs).fail(eq(job.jobId()), contains("접근 권한"));
+    }
+
+    @Test void failureStatusWriteErrorStillLogsJobAndStageWithoutSecrets(CapturedOutput output) {
+        doThrow(new IllegalStateException("password=unsafe-fixture")).when(projects)
+                .assertCanManage(job.projectId(), job.requestedBy());
+        doThrow(new IllegalStateException("token=unsafe-fixture")).when(jobs)
+                .fail(eq(job.jobId()), anyString());
+
+        assertThatCode(() -> worker.process(job)).doesNotThrowAnyException();
+
+        assertThat(output.getAll()).contains("Analysis failed: jobId=" + job.jobId(),
+                        "stage=프로젝트 접근 권한 확인, exception=IllegalStateException",
+                        "Analysis failure status update failed: jobId=" + job.jobId())
+                .doesNotContain("unsafe-fixture");
+        verifyNoInteractions(git, database, source, ai, results);
     }
 
     @Test void modelFailureDoesNotCreateSuccessResult() throws Exception {

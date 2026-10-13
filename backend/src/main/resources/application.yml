@@ -41,6 +41,7 @@ doenaai:
     timeout-seconds: ${DOENAAI_AI_TIMEOUT_SECONDS:660}
   analysis:
     worker-enabled: ${DOENAAI_ANALYSIS_WORKER_ENABLED:true}
+    max-prompt-chars: ${DOENAAI_ANALYSIS_MAX_PROMPT_CHARS:90000}
     poll-delay-ms: ${DOENAAI_ANALYSIS_POLL_DELAY_MS:2500}
     stale-timeout-seconds: ${DOENAAI_ANALYSIS_STALE_TIMEOUT_SECONDS:1800}
   git:

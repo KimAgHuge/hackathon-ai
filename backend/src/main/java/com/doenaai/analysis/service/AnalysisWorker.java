@@ -17,6 +17,8 @@ import org.springframework.beans.factory.annotation.Value;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 
 @Slf4j
 @Service
@@ -50,47 +52,86 @@ public class AnalysisWorker {
     }
 
     void process(AnalysisWorkItem job) {
+        UUID jobId = job.jobId();
+        log.info("Analysis started: jobId={}", jobId);
         String stage = "프로젝트 접근 권한 확인";
+        long stageStartedNanos = startStage(jobId, stage);
         try {
             Map<String, Object> payload;
             if (job.requestedBy() == null) throw new IllegalStateException("Missing requesting user.");
             projects.assertCanManage(job.projectId(), job.requestedBy());
+            completeStage(jobId, stage, stageStartedNanos);
             stage = "Git 커밋 소스 수집 (저장소 설정·인증·커밋과 파일 크기 제한 확인)";
+            stageStartedNanos = startStage(jobId, stage);
             try (var snapshot = git.checkoutSnapshot(job.projectId(), job.requestedBy(), job.repositoryUrl(),
                     job.branch(), job.commitSha())) {
+                completeStage(jobId, stage, stageStartedNanos);
+                stage = "Git 수집 진행률 기록";
                 jobs.progress(job.jobId(), 40, 0, 0);
                 stage = "읽기 전용 DB 구조 수집 (저장된 연결·권한·스키마 확인)";
+                stageStartedNanos = startStage(jobId, stage);
                 Map<String, Object> databaseSummary = database.collect(job.projectId());
+                completeStage(jobId, stage, stageStartedNanos);
+                stage = "DB 수집 진행률 기록";
                 jobs.progress(job.jobId(), 40, 100, 0);
                 stage = "소스와 DB 참조 분석";
+                stageStartedNanos = startStage(jobId, stage);
                 var scan = source.collect(snapshot.path(), databaseSummary);
                 var sourceSummary = new LinkedHashMap<>(scan.sourceSummary());
                 sourceSummary.put("commitSha", job.commitSha());
                 sourceSummary.put("analysisScope", job.requirementVersionId() == null
                         ? "PROJECT_STRUCTURE_SCAN" : "REQUIREMENT_IMPACT");
+                completeStage(jobId, stage, stageStartedNanos);
                 stage = "요구사항 버전 확인";
+                stageStartedNanos = startStage(jobId, stage);
                 addRequirement(job, sourceSummary);
+                completeStage(jobId, stage, stageStartedNanos);
+                stage = "소스 분석 진행률 기록";
                 jobs.progress(job.jobId(), 100, 100, 40);
                 stage = "AI 입력 준비 (분석 범위·민감 필드 확인)";
+                stageStartedNanos = startStage(jobId, stage);
                 payload = prompts.build(job.projectId(), sourceSummary, databaseSummary, scan.relations());
+                completeStage(jobId, stage, stageStartedNanos);
                 stage = "Git 임시 파일 정리";
+                stageStartedNanos = startStage(jobId, stage);
             }
+            completeStage(jobId, stage, stageStartedNanos);
             stage = "AI 분석 요청 (AI 서버·내부 API 키·모델·시간 제한 확인)";
+            stageStartedNanos = startStage(jobId, stage);
             var result = ai.analyze(payload);
+            completeStage(jobId, stage, stageStartedNanos);
+            stage = "AI 분석 진행률 기록";
             jobs.progress(job.jobId(), 100, 100, 90);
             stage = "분석 결과 저장";
+            stageStartedNanos = startStage(jobId, stage);
             // Persist exactly the facts the model saw, including any context truncation notice.
             Map<String, Object> facts = Map.of("sourceSummary", payload.get("sourceSummary"),
                     "databaseSummary", payload.get("databaseSummary"), "relations", payload.get("relations"));
             results.complete(job.jobId(), result, facts);
+            completeStage(jobId, stage, stageStartedNanos);
             log.info("Analysis completed: jobId={}", job.jobId());
         } catch (Exception exception) {
             if (exception instanceof InterruptedException) Thread.currentThread().interrupt();
-            jobs.fail(job.jobId(), stage + " 단계에서 실패했습니다. 설정을 확인한 뒤 새 분석을 시작하세요.");
             // JDBC/Git/HTTP exception messages can contain credentials. Do not log them or stack traces.
             log.warn("Analysis failed: jobId={}, stage={}, exception={}",
                     job.jobId(), stage, exception.getClass().getSimpleName());
+            try {
+                jobs.fail(job.jobId(), stage + " 단계에서 실패했습니다. 설정을 확인한 뒤 새 분석을 시작하세요.");
+            } catch (Exception persistenceException) {
+                log.error("Analysis failure status update failed: jobId={}, stage={}, exception={}",
+                        job.jobId(), stage, persistenceException.getClass().getSimpleName());
+            }
         }
+    }
+
+    private long startStage(UUID jobId, String stage) {
+        log.info("Analysis stage started: jobId={}, stage={}", jobId, stage);
+        return System.nanoTime();
+    }
+
+    private void completeStage(UUID jobId, String stage, long startedNanos) {
+        log.info("Analysis stage completed: jobId={}, stage={}, duration_ms={}",
+                jobId, stage, TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedNanos));
     }
 
     private void addRequirement(AnalysisWorkItem job, Map<String, Object> summary) {

@@ -1,20 +1,27 @@
 package com.doenaai.analysis.service;
 
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Value;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
-import lombok.RequiredArgsConstructor;
 
 import java.util.*;
 
 /** Bound context size and preserve explicit coverage information for the model and UI. */
 @Service
-@RequiredArgsConstructor
 public class AnalysisPromptBuilder {
     private final ObjectMapper mapper;
-    static final int MAX_CHARS = 45_000;
+    static final int DEFAULT_MAX_CHARS = 90_000;
+    private final int maxChars;
     private static final Set<String> SECRET_KEYS = Set.of("password", "token", "accesstoken", "apikey",
             "authorization", "ciphertext", "credential", "dbpassword", "passphrase", "privatekey", "secret");
+
+    public AnalysisPromptBuilder(ObjectMapper mapper,
+                                 @Value("${doenaai.analysis.max-prompt-chars:90000}") int maxChars) {
+        if (maxChars < 1_000) throw new IllegalArgumentException("Analysis input limit must be at least 1000 characters.");
+        this.mapper = mapper;
+        this.maxChars = maxChars;
+    }
 
     @SuppressWarnings("unchecked")
     public Map<String, Object> build(UUID projectId, Map<String, Object> source,
@@ -55,7 +62,7 @@ public class AnalysisPromptBuilder {
         coverage.put("notice", "수집 및 모델 입력 범위만 분석합니다. 누락된 관계가 없다는 보장은 아닙니다.");
         sourceCopy.put("promptCoverage", coverage);
         updateCoverage(coverage, tables, references, components);
-        while (mapper.writeValueAsString(payload).length() > MAX_CHARS) {
+        while (mapper.writeValueAsString(payload).length() > maxChars) {
             if (components.size() > 10) components.removeLast();
             else if (references.size() > 10) references.removeLast();
             else if (tables.size() > 1) tables.removeLast();
