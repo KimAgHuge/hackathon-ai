@@ -20,6 +20,7 @@ public class CurrentUserService {
     private final ProfileRepository profileRepository;
     private final UserAccessRepository userAccessRepository;
 
+    /** JWT의 사용자 ID로 활성 프로필·역할·권한을 조회해 /auth/me 응답을 만든다. */
     @Transactional(readOnly = true)
     public CurrentUserResponse getCurrentUser(Jwt jwt) {
 

@@ -7,7 +7,7 @@ import tools.jackson.databind.ObjectMapper;
 
 import java.util.*;
 
-/** Bound context size and preserve explicit coverage information for the model and UI. */
+/** AI 입력 크기를 제한하고 실제 전달 범위를 모델·화면에서 확인할 수 있게 기록한다. */
 @Service
 public class AnalysisPromptBuilder {
     private final ObjectMapper mapper;
@@ -23,6 +23,15 @@ public class AnalysisPromptBuilder {
         this.maxChars = maxChars;
     }
 
+    /**
+     * AI에 전달할 사실을 복사·검사하고 크기 제한에 맞게 줄인다.
+     *
+     * @param projectId 분석 대상 프로젝트 ID
+     * @param source 소스 스캔 결과 및 선택된 변경 요구사항
+     * @param database 읽기 전용으로 수집한 DB 구조
+     * @param relations 소스와 DB 테이블의 정적 참조 목록
+     * @return 비밀 필드를 검사하고 크기·범위 제한을 적용한 AI 요청 본문
+     */
     @SuppressWarnings("unchecked")
     public Map<String, Object> build(UUID projectId, Map<String, Object> source,
                                       Map<String, Object> database, List<Map<String, Object>> relations) {

@@ -18,6 +18,7 @@ public class PermissionChecker {
     private final ProfileRepository profileRepository;
     private final UserAccessRepository userAccessRepository;
 
+    /** 활성 사용자의 authentication에 permission 문자열이 있으면 true를 반환한다. */
     public boolean has(
             Authentication authentication,
             String permission

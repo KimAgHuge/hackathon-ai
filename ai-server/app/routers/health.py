@@ -13,6 +13,7 @@ router = APIRouter()
 
 @router.get("/health")
 def health():
+    """프로세스 생존 상태를 반환한다; Ollama 연결 여부는 검사하지 않는다."""
     return {
         "status": "UP",
         "service": "doenaai-ai-server",
@@ -28,6 +29,7 @@ def health():
 async def model_health(
     llm_service: LlmService = Depends(get_llm_service),
 ) -> ModelHealthResponse:
+    """내부 키 확인 후 Ollama에서 설정 모델을 조회해 사용 가능 여부를 반환한다."""
     try:
         return await llm_service.health()
     except ModelTimeoutError as exc:

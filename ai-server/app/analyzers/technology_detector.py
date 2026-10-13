@@ -112,6 +112,8 @@ EXTRA_MANIFEST_NAMES = {
 
 
 class TechnologyDetector:
+    """저장소 파일과 manifest를 정적으로 읽어 언어·도구·프레임워크 근거를 만든다."""
+
     def __init__(
         self,
         max_files: int = 100_000,
@@ -123,6 +125,7 @@ class TechnologyDetector:
         self.max_manifest_bytes = max_manifest_bytes
 
     def scan(self, repository_path: Path) -> RepositoryTechnologyReport:
+        """repository_path 아래를 제한 범위로 스캔해 모듈별 기술 보고서를 반환한다."""
         root = repository_path.expanduser().resolve()
         if not root.is_dir():
             raise ValueError(f"Repository path is not a directory: {root}")

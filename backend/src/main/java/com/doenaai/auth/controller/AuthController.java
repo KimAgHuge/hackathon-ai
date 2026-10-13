@@ -16,6 +16,7 @@ public class AuthController {
 
     private final CurrentUserService currentUserService;
 
+    /** 인증된 JWT를 받아 화면에서 사용할 프로필·역할·권한을 반환한다. */
     @GetMapping("/me")
     public CurrentUserResponse me(
             @AuthenticationPrincipal Jwt jwt

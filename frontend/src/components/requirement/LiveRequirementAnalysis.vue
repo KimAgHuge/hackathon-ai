@@ -58,6 +58,7 @@ const getErrorMessage = (error) => error?.response?.data?.message || error?.resp
 
 const formatDate = (value) => (value ? new Date(value).toLocaleString('ko-KR') : '—')
 
+// 사용자가 볼 수 있는 Git 프로젝트를 불러오고 한 개뿐이면 자동 선택한다.
 const loadProjects = async () => {
     projectsLoading.value = true
     errorMessage.value = ''
@@ -71,7 +72,9 @@ const loadProjects = async () => {
     }
 }
 
+// 프로젝트를 빠르게 바꿨을 때 이전 조회 응답이 새 목록을 덮어쓰지 않도록 한다.
 let requirementsRequestId = 0
+// selectedProjectId의 현재 요구사항 목록을 화면 상태에 반영한다.
 const loadRequirements = async () => {
     const requestId = ++requirementsRequestId
     const projectId = selectedProjectId.value
@@ -94,6 +97,7 @@ const loadRequirements = async () => {
     }
 }
 
+// form을 생성 API 본문으로 변환해 첫 버전을 저장하고 목록에 추가한다.
 const createRequirement = async () => {
     if (!selectedProjectId.value || requirementsLoading.value) return
     errorMessage.value = ''
@@ -120,6 +124,7 @@ const createRequirement = async () => {
     }
 }
 
+// requirement.currentVersion.id를 포함해 분석 작업을 만들고 결과 화면으로 이동한다.
 const analyzeRequirement = async (requirement) => {
     const versionId = requirement.currentVersion?.id
     if (!versionId) {

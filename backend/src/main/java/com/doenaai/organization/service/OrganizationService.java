@@ -43,6 +43,7 @@ public class OrganizationService {
             organizationMemberRepository;
     private final ProfileRepository profileRepository;
 
+    /** request의 조직을 만들고 userId를 OWNER로 등록한 응답을 반환한다. */
     @Transactional
     public OrganizationResponse createOrganization(
             OrganizationCreateRequest request,
@@ -83,6 +84,7 @@ public class OrganizationService {
         );
     }
 
+    /** userId가 활성 구성원인 조직과 각 조직의 역할을 반환한다. */
     @Transactional(readOnly = true)
     public List<OrganizationResponse> getOrganizations(
             UUID userId
@@ -132,6 +134,7 @@ public class OrganizationService {
         );
     }
 
+    /** organizationId에서 userId의 활성 소속을 확인한다; 미소속이면 예외를 던진다. */
     @Transactional(readOnly = true)
     public void assertActiveMember(
             UUID organizationId,
@@ -158,6 +161,7 @@ public class OrganizationService {
         return toMemberResponses(members);
     }
 
+    /** 관리 권한을 확인하고 request.userId를 조직 구성원으로 추가해 반환한다. */
     @Transactional
     public OrganizationMemberResponse addMember(
             UUID organizationId,

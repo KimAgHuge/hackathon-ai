@@ -29,6 +29,7 @@ const errorMessage = computed(() => {
     return error?.response?.data?.message || error?.response?.data?.detail || error?.message || '요청을 처리하지 못했습니다.'
 })
 
+// 작업 상태를 자동 조회하고 COMPLETED일 때만 저장된 결과를 한 번 읽는다.
 const poller = createAnalysisPoller({
     loadJob: getAnalysisJob,
     loadResult: getAnalysisResult,
@@ -75,6 +76,7 @@ const formatDate = (value) => {
     return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString('ko-KR')
 }
 const count = (value) => (Array.isArray(value) ? `${value.length.toLocaleString('ko-KR')}개` : '정보 없음')
+// result는 AI 판단, facts는 AI에 실제 전달된 소스·DB 근거다.
 const source = computed(() => analysis.value?.facts?.sourceSummary || {})
 const database = computed(() => analysis.value?.facts?.databaseSummary || {})
 const aiResult = computed(() => analysis.value?.result || {})

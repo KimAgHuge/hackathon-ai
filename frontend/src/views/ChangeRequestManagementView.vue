@@ -72,6 +72,7 @@ const fetchRequests = async () => {
 
 watch(selectedStatus, resetPage)
 
+// 데모 모드만 샘플 목록을 사용한다; 실제 API 모드는 LiveRequirementAnalysis가 담당한다.
 onMounted(() => {
     if (isAnalysisDemoMode) fetchRequests()
 })

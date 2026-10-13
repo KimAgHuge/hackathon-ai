@@ -26,7 +26,7 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.UUID;
 
-/** Collects schema metadata only. Never queries application rows or exports credentials. */
+/** 분석 대상 DB의 구조만 읽는다. 업무 데이터 행이나 접속 비밀번호는 결과에 넣지 않는다. */
 @Service
 public class DatabaseMetadataCollector {
 
@@ -60,6 +60,10 @@ public class DatabaseMetadataCollector {
         this.connectionFactory = connectionFactory;
     }
 
+    /**
+     * @param projectId 저장된 주 연결과 읽기 전용 계정을 찾을 프로젝트 ID
+     * @return 스키마의 테이블·컬럼·키·인덱스 및 수집 제한 경고
+     */
     public Map<String, Object> collect(UUID projectId) {
         ProjectDatabaseSource source = databaseSourceRepository
                 .findByProjectIdAndPrimaryConnectionTrue(projectId)
@@ -149,6 +153,7 @@ public class DatabaseMetadataCollector {
         }
     }
 
+    /** 지정 schema의 테이블/뷰를 열거하고 각 객체의 구조 정보만 state에 담는다. */
     private void collectTables(Connection connection, String schema, CollectionState state) throws SQLException {
         state.checkDeadline();
         DatabaseMetaData metadata = connection.getMetaData();
@@ -195,6 +200,7 @@ public class DatabaseMetadataCollector {
         }
     }
 
+    /** 테이블의 컬럼 이름·타입·null 허용 여부를 제한 개수만큼 반환한다. */
     private List<Map<String, Object>> collectColumns(
             DatabaseMetaData metadata, String catalog, String schema, String table, String escape, CollectionState state
     ) throws SQLException {

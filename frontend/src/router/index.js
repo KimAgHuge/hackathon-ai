@@ -186,6 +186,7 @@ const router = createRouter({
     routes,
 })
 
+// 이동할 화면(to)의 로그인·권한 요구사항을 검사하고 필요하면 로그인/접근 거부로 보낸다.
 router.beforeEach(async (to) => {
     const authStore = useAuthStore()
 

@@ -37,6 +37,7 @@ public class DatabaseConnectionService {
     private final ProjectDatabaseSourceRepository databaseSourceRepository;
     private final CredentialCipher credentialCipher;
 
+    /** projectId 관리 권한을 확인한 뒤 request의 접속정보를 시험하고 성공 여부를 반환한다. */
     @Transactional(readOnly = true)
     public DatabaseConnectionTestResponse testConnection(
             UUID projectId,
@@ -51,6 +52,7 @@ public class DatabaseConnectionService {
         return executeConnectionTest(request);
     }
 
+    /** 검증된 DB 접속정보를 프로젝트에 저장하고 비밀번호는 암호화해 보관한다. */
     @Transactional
     public ProjectDatabaseSourceResponse saveConnection(
             UUID projectId,

@@ -59,6 +59,11 @@ public class AiAnalysisClient {
                 .build();
     }
 
+    /**
+     * @param payload Git·DB 근거와 요구사항을 담은, 비밀정보 검사가 끝난 입력
+     * @return FastAPI가 돌려준 공통 분석 및 databaseImpact JSON
+     * @throws IOException 연결·시간 제한·응답 형식 검사 실패 시 발생
+     */
     public Map<String, Object> analyze(Map<String, Object> payload) throws IOException, InterruptedException {
         if (apiKey == null || apiKey.length() < 32) throw new IOException("Internal AI key is not configured.");
         CompletableFuture<HttpResponse<String>> exchange;
@@ -98,6 +103,7 @@ public class AiAnalysisClient {
         return result;
     }
 
+    /** 결과 필드와 분석 종류별 DB 판단 규칙을 확인하고, 맞지 않으면 거부한다. */
     static void validate(Map<String, Object> result, Map<String, Object> payload) throws IOException {
         if (result == null || !(result.get("summary") instanceof String summary) || summary.isBlank()
                 || !(result.get("riskLevel") instanceof String risk)

@@ -29,6 +29,7 @@ public class ProjectService {
     private final UserAccessRepository userAccessRepository;
     private final OrganizationService organizationService;
 
+    /** userId가 접근 가능한 프로젝트만 조회해 화면용 응답 목록을 반환한다. */
     @Transactional(readOnly = true)
     public List<ProjectResponse> getProjects(
             UUID userId
@@ -65,6 +66,7 @@ public class ProjectService {
         return ProjectResponse.from(project);
     }
 
+    /** request의 조직 소속을 확인하고 프로젝트를 생성해 응답으로 반환한다. */
     @Transactional
     public ProjectResponse createProject(
             ProjectCreateRequest request,

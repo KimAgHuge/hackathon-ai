@@ -131,6 +131,11 @@ public class SourceEvidenceCollector {
 
     public record ScanResult(Map<String, Object> sourceSummary, List<Map<String, Object>> relations) { }
 
+    /**
+     * @param checkout 특정 Git 커밋을 내려받은 임시 디렉터리
+     * @param databaseSummary 수집된 테이블 이름; 소스의 명시적 참조와 대조하는 데 사용
+     * @return 기술·파일 요약과 파일↔테이블 정적 참조 목록(스캔 제한 정보 포함)
+     */
     public ScanResult collect(Path checkout, Map<String, Object> databaseSummary) {
         State state = new State(databaseTables(databaseSummary));
         Path requestedRoot = checkout.toAbsolutePath().normalize();
@@ -238,6 +243,7 @@ public class SourceEvidenceCollector {
         return new ScanResult(Map.copyOf(summary), List.copyOf(state.relations));
     }
 
+    /** 언어별 SQL 문자열·ORM 선언에서 파일/줄번호가 있는 테이블 참조 후보를 찾는다. */
     private void inspectRelations(String file, String content, String language, Lexed lexed, State state) {
         int[] lineOffsets = lineOffsets(content);
         if (language.equals("XML")) {
@@ -287,6 +293,7 @@ public class SourceEvidenceCollector {
         }
     }
 
+    /** SQL 값·주석을 가린 뒤 SELECT/INSERT/UPDATE/DELETE 등의 테이블 이름만 추출한다. */
     private void inspectSql(String file, String sql, int firstLine, State state) {
         // Remove SQL value literals/comments without changing offsets; quoted identifiers remain intact.
         String safeSql = maskSqlValuesAndComments(sql);
@@ -331,6 +338,7 @@ public class SourceEvidenceCollector {
         matchTable(file, schema == null ? name : quote(schema) + "." + quote(name), line, "ORM_TABLE", state);
     }
 
+    /** 참조 이름을 수집된 DB 테이블과 대조한다; 스키마가 생략된 일치는 잠정 근거로 남긴다. */
     private void matchTable(String file, String reference, int line, String kind, State state) {
         reference = reference.strip();
         Matcher identifiers = Pattern.compile(IDENTIFIER).matcher(reference);
@@ -366,6 +374,7 @@ public class SourceEvidenceCollector {
         }
     }
 
+    /** manifest 의존성을 읽어 빌드 도구·프레임워크 선언 근거를 추가한다. */
     private void inspectManifest(String file, String name, String content, State state) {
         state.buildTools.add(MANIFESTS.getOrDefault(name, ".NET SDK"));
         Set<String> dependencies = new LinkedHashSet<>();

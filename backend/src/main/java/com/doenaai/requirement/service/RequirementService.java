@@ -63,6 +63,7 @@ public class RequirementService {
     private final RequirementVersionRepository versionRepository;
     private final ProjectService projectService;
 
+    /** projectId에 요구사항과 첫 버전을 만들고 userId 권한에 맞는 응답을 반환한다. */
     @Transactional
     public RequirementResponse createRequirement(
             UUID projectId,
@@ -123,6 +124,7 @@ public class RequirementService {
         }
     }
 
+    /** 프로젝트에서 userId가 볼 수 있는 요구사항과 현재 버전 목록을 반환한다. */
     @Transactional(readOnly = true)
     public List<RequirementResponse> getRequirements(
             UUID projectId,
@@ -164,6 +166,7 @@ public class RequirementService {
         return toResponse(requirement, customer);
     }
 
+    /** 기존 요구사항에 새 버전을 추가하고 그 버전을 현재 버전으로 지정한다. */
     @Transactional
     public RequirementVersionResponse createVersion(
             UUID requirementId,
@@ -242,6 +245,7 @@ public class RequirementService {
         );
     }
 
+    /** versionId가 해당 projectId에 속하고 userId가 접근 가능한지 확인한 뒤 버전을 반환한다. */
     @Transactional(readOnly = true)
     public RequirementVersion assertVersionBelongsToProject(
             UUID versionId,
@@ -350,6 +354,7 @@ public class RequirementService {
         );
     }
 
+    /** 현재 상태에서 다음 상태로 이동 가능한지 검사한다; 결과 대신 실패 시 예외를 던진다. */
     private void assertTransitionAllowed(
             RequirementStatus current,
             RequirementStatus next

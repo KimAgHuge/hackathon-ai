@@ -37,6 +37,7 @@ public class CredentialCipher {
         this.encodedKey = encodedKey;
     }
 
+    /** 평문 접속 비밀값을 AES-GCM으로 암호화해 버전이 포함된 저장 문자열을 반환한다. */
     public String encrypt(
             String plaintext
     ) {
@@ -77,6 +78,7 @@ public class CredentialCipher {
         }
     }
 
+    /** 저장된 암호문을 복호화해 연결 시에만 사용할 평문을 반환한다. */
     public String decrypt(
             String encryptedValue
     ) {

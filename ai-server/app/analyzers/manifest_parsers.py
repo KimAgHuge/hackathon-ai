@@ -414,6 +414,7 @@ def parse_r_description(path: Path) -> ManifestData:
 
 
 def parse_manifest(path: Path) -> Optional[ManifestData]:
+    """파일명에 맞는 생태계 파서를 선택한다; 지원하지 않는 manifest면 None."""
     name = path.name
     lower_name = name.lower()
     if lower_name == "package.json":

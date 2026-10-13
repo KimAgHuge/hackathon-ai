@@ -18,6 +18,7 @@ public class AnalysisJobRepository {
 
     private final JdbcTemplate jdbcTemplate;
 
+    /** 프로젝트·요구사항 버전·Git 커밋을 고정한 PENDING 작업을 생성해 반환한다. */
     public AnalysisJobResponse createProjectScan(
             UUID projectId,
             UUID requirementVersionId,
@@ -149,6 +150,7 @@ public class AnalysisJobRepository {
         )).stream().findFirst();
     }
 
+    /** RUNNING 작업의 세 수집 단계 진행률(0~100)을 갱신한다. */
     public void progress(UUID jobId, int source, int database, int relation) {
         int changed = jdbcTemplate.update("""
                 update public.analysis_jobs
@@ -158,6 +160,7 @@ public class AnalysisJobRepository {
         if (changed != 1) throw new IllegalStateException("Analysis job is no longer running.");
     }
 
+    /** RUNNING 작업을 FAILED로 끝낸다; safeMessage에는 자격증명·원본 예외를 넣지 않는다. */
     public void fail(UUID jobId, String safeMessage) {
         jdbcTemplate.update("""
                 update public.analysis_jobs set status = 'FAILED', error_message = ?,

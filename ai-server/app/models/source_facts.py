@@ -69,6 +69,7 @@ class RepositoryTechnologyReport(ApiModel):
     warnings: List[str] = Field(default_factory=list)
 
     def to_source_summary(self) -> Dict:
+        """탐지 보고서를 Backend·AI 분석 입력에 쓰는 간단한 sourceSummary로 변환한다."""
         framework_categories = {
             TechnologyCategory.FRONTEND,
             TechnologyCategory.BACKEND,

@@ -18,6 +18,7 @@ SAFE_REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 
 
 def create_app() -> FastAPI:
+    """분석·상태 라우터와 안전한 오류/요청 로그를 등록한 FastAPI 앱을 만든다."""
     application = FastAPI(title="doenaai ai server", version="0.1.0")
     application.include_router(health.router)
     application.include_router(analysis.router)
@@ -39,6 +40,7 @@ def create_app() -> FastAPI:
 
     @application.middleware("http")
     async def request_context(request: Request, call_next):
+        """요청 ID와 처리 시간을 남기고 같은 ID를 응답 헤더에 넣는다."""
         supplied_request_id = request.headers.get("X-Request-Id", "")
         request_id = (
             supplied_request_id

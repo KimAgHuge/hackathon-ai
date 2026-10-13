@@ -5,6 +5,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    """DOENAAI_ 환경변수 또는 .env에서 Ollama·내부 인증 설정을 읽는다."""
     model_config = SettingsConfigDict(
         env_prefix="DOENAAI_",
         env_file=".env",

@@ -10,6 +10,11 @@ const mockDelay = async (data, delay = 250) => {
     return structuredClone(data)
 }
 
+/**
+ * @param {string} projectId 분석할 프로젝트 ID
+ * @param {string|null} requirementVersionId 변경 영향 분석 대상 버전; null이면 전체 구조 분석
+ * @returns {Promise<object>} 생성된 작업 ID와 초기 상태
+ */
 export const startProjectAnalysis = async (projectId, requirementVersionId = null) => {
     if (useMock) {
         return mockDelay({
@@ -30,6 +35,11 @@ export const startProjectAnalysis = async (projectId, requirementVersionId = nul
     return data
 }
 
+/**
+ * @param {string} analysisJobId 조회할 작업 ID
+ * @param {object} options 요청 취소용 signal 등 HTTP 옵션
+ * @returns {Promise<object>} 작업 상태와 단계별 진행률
+ */
 export const getAnalysisJob = async (analysisJobId, options = {}) => {
     if (useMock) {
         return mockDelay({
@@ -52,6 +62,11 @@ export const getAnalysisJob = async (analysisJobId, options = {}) => {
     return data
 }
 
+/**
+ * @param {string} analysisJobId 완료된 작업 ID
+ * @param {object} options 요청 취소용 signal 등 HTTP 옵션
+ * @returns {Promise<object>} AI 결과와 분석에 실제 사용된 근거
+ */
 export const getAnalysisResult = async (analysisJobId, options = {}) => {
     if (useMock) {
         return mockDelay({

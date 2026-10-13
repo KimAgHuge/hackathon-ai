@@ -17,6 +17,7 @@ const mockDelay = async (data, delay = 250) => {
  * 프로젝트 목록 조회
  *
  * GET /api/projects
+ * @returns {Promise<object[]>} 접근 가능한 프로젝트 목록
  */
 export const getProjects = async () => {
     if (useMock) {
@@ -49,6 +50,8 @@ export const getProjects = async () => {
  * getProjectById()로 별도 정의한다.
  *
  * GET /api/projects/{projectId}
+ * @param {string} projectId 조회할 프로젝트 ID
+ * @returns {Promise<object>} 프로젝트 기본정보
  */
 export const getProjectById = async (projectId) => {
     if (useMock) {
@@ -76,6 +79,8 @@ export const getProjectById = async (projectId) => {
  * 프로젝트 생성
  *
  * POST /api/projects
+ * @param {object} payload 조직 ID·이름·Git 정보 등 생성값
+ * @returns {Promise<object>} 생성된 프로젝트
  */
 export const createProject = async (payload) => {
     if (useMock) {
@@ -103,6 +108,7 @@ export const createProject = async (payload) => {
  * 프로젝트 수정
  *
  * PUT /api/projects/{projectId}
+ * @returns {Promise<object>} 수정된 프로젝트
  */
 export const updateProject = async (projectId, payload) => {
     if (useMock) {

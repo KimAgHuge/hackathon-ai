@@ -1,7 +1,11 @@
 const TERMINAL_STATUSES = new Set(['COMPLETED', 'FAILED', 'CANCELLED'])
 const NON_RETRYABLE_STATUSES = new Set([400, 401, 403, 404])
 
-// Schedule after a request finishes so a slow analysis server cannot cause overlapping polls.
+/**
+ * @param {object} handlers 작업/결과 조회 함수와 화면 갱신 콜백
+ * @returns {{start: Function, refresh: Function, stop: Function}} 중복 요청 없이 상태를 조회하는 제어기
+ * 각 요청이 끝난 뒤 다음 조회를 예약하고, 작업 변경·화면 종료 시 이전 요청을 취소한다.
+ */
 export const createAnalysisPoller = ({
     loadJob,
     loadResult,
@@ -70,11 +74,13 @@ export const createAnalysisPoller = ({
     }
 
     return {
+        /** jobId의 자동 조회를 시작하고 이전 작업의 요청·타이머를 취소한다. */
         start(jobId) {
             stop()
             current = { jobId, controller: new AbortController(), busy: false, terminal: false, timer: null }
             void poll(current)
         },
+        /** 현재 작업을 즉시 다시 조회한다; 진행 중인 요청은 중복 실행하지 않는다. */
         refresh() {
             if (!current || current.busy) return
             clearTimer(current.timer)

@@ -15,6 +15,7 @@ public class AnalysisResultService {
     private final AnalysisJobService jobs;
     private final AnalysisResultRepository results;
 
+    /** 완료된 jobId의 저장 결과를 반환한다; userId에 해당 프로젝트 조회 권한이 필요하다. */
     public AnalysisResultResponse get(UUID jobId, UUID userId) {
         var job = jobs.getAnalysisJob(jobId, userId); // Same project/tenant access check as progress.
         if (!"COMPLETED".equals(job.status())) {

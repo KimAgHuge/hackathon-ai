@@ -21,6 +21,7 @@ async def analyze_project(
     request: ProjectAnalysisRequest,
     llm_service: LlmService = Depends(get_llm_service),
 ) -> ProjectAnalysisResponse:
+    """내부 키로 보호된 분석 API; 수집 근거를 받아 결과 또는 모델 오류 HTTP 응답을 돌려준다."""
     try:
         return await llm_service.analyze(request)
     except ModelTimeoutError as exc:

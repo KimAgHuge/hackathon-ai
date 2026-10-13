@@ -15,6 +15,7 @@ import java.util.UUID;
 public class AnalysisResultController {
     private final AnalysisResultService results;
 
+    /** 인증된 사용자가 접근 가능한 완료 작업의 AI 결과와 입력 근거를 반환한다. */
     @GetMapping("/api/analysis-jobs/{jobId}/result")
     @PreAuthorize("@permissionChecker.has(authentication, 'ANALYSIS_READ')")
     public AnalysisResultResponse get(@PathVariable UUID jobId, @AuthenticationPrincipal Jwt jwt) {

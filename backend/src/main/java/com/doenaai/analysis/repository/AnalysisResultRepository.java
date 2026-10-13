@@ -20,7 +20,7 @@ public class AnalysisResultRepository {
     private final ObjectMapper objectMapper;
     private static final TypeReference<Map<String, Object>> MAP = new TypeReference<>() {};
 
-    /** Result and terminal state are committed together, never half-completed. */
+    /** jobId의 상태와 result·AI에 실제 전달된 facts를 한 트랜잭션에 저장한다. */
     @Transactional
     public void complete(UUID jobId, Map<String, Object> result, Map<String, Object> facts) {
         int changed = jdbcTemplate.update("""
@@ -38,6 +38,7 @@ public class AnalysisResultRepository {
                 result.get("summary"), objectMapper.writeValueAsString(Map.of("facts", facts)));
     }
 
+    /** 완료된 jobId의 분석 결과와 당시 입력 근거를 조회한다; 없으면 Optional.empty(). */
     public Optional<AnalysisResultResponse> findByJobId(UUID jobId) {
         return jdbcTemplate.query("""
                 select r.analysis_job_id, j.project_id, r.original_result, r.inference_metadata, r.created_at

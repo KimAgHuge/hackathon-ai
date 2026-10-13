@@ -20,6 +20,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
+/** 대기 작업을 가져와 Git·DB 근거 수집, AI 호출, 결과 저장까지 순서대로 처리한다. */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -40,7 +41,7 @@ public class AnalysisWorker {
     @Value("${doenaai.ai-server.timeout-seconds:660}")
     private int aiTimeoutSeconds = 660;
 
-    // One in-flight model call per Backend process; no transaction is held during IO.
+    /** 대기 작업을 하나 선점한다. 원격 호출 중에는 DB 트랜잭션을 유지하지 않는다. */
     @Scheduled(fixedDelayString = "${doenaai.analysis.poll-delay-ms:2500}", initialDelayString = "5000")
     public void poll() {
         try {
@@ -51,6 +52,7 @@ public class AnalysisWorker {
         }
     }
 
+    /** 선점한 job을 처리해 완료 결과 또는 안전한 실패 사유를 저장한다. */
     void process(AnalysisWorkItem job) {
         UUID jobId = job.jobId();
         log.info("Analysis started: jobId={}", jobId);
@@ -134,6 +136,7 @@ public class AnalysisWorker {
                 jobId, stage, TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedNanos));
     }
 
+    /** 요구사항 버전이 있으면 소유 프로젝트를 검증하고 AI 입력에 변경 내용을 추가한다. */
     private void addRequirement(AnalysisWorkItem job, Map<String, Object> summary) {
         if (job.requirementVersionId() == null) return;
         requirements.assertVersionBelongsToProject(job.requirementVersionId(), job.projectId(), job.requestedBy());

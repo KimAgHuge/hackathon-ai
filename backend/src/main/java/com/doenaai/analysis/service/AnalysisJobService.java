@@ -24,6 +24,11 @@ public class AnalysisJobService {
             gitRepositoryConnectionService;
     private final RequirementService requirementService;
 
+    /**
+     * Git 연결과 접근 권한을 확인한 뒤 분석 작업을 대기열에 등록한다.
+     * @param requirementVersionId null이면 전체 구조 분석, 값이 있으면 해당 변경 영향 분석
+     * @return 생성된 작업 ID와 초기 진행 상태
+     */
     public AnalysisJobResponse createProjectScan(
             UUID projectId,
             UUID requirementVersionId,
@@ -66,6 +71,7 @@ public class AnalysisJobService {
         );
     }
 
+    /** 작업 ID와 사용자 ID로 접근 권한을 확인하고 최신 진행 상태를 반환한다. */
     @Transactional(readOnly = true)
     public AnalysisJobResponse getAnalysisJob(
             UUID analysisJobId,

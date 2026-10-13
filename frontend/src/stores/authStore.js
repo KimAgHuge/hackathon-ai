@@ -76,6 +76,7 @@ export const useAuthStore = defineStore('auth', () => {
         return permissions.value.includes(permission)
     }
 
+    // 세션의 사용자로 Backend 프로필(실 API) 또는 데모 프로필을 불러와 반환한다.
     const loadCurrentUser = async () => {
         if (!session.value) {
             currentUser.value = null
@@ -137,6 +138,7 @@ export const useAuthStore = defineStore('auth', () => {
         authSubscription = listener.subscription
     }
 
+    // 앱 시작 시 저장된 세션을 한 번 복원하고 중복 초기화 요청을 합친다.
     const initialize = async () => {
         if (initialized.value) return
         if (initializePromise) return initializePromise
@@ -186,6 +188,7 @@ export const useAuthStore = defineStore('auth', () => {
         await loadCurrentUser()
     }
 
+    // email/password로 선택된 인증 모드에 로그인하고 사용자 프로필을 반환한다.
     const login = async (email, password) => {
         loading.value = true
         errorMessage.value = ''

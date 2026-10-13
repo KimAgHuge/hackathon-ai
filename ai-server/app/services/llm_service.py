@@ -77,6 +77,8 @@ Do not write executable SQL in conditionalPaths. Do not request or expose creden
 
 
 class LlmService:
+    """Ollama 호출과 응답 검증을 담당하며 원본 DB에는 접속하지 않는다."""
+
     def __init__(self, settings: Settings, client: Optional[AsyncClient] = None):
         self._settings = settings
         self._client = client or AsyncClient(
@@ -85,6 +87,7 @@ class LlmService:
         )
 
     async def health(self) -> ModelHealthResponse:
+        """설정된 Ollama 모델의 설치 여부를 확인해 상태·모델명을 반환한다."""
         try:
             response = await self._client.list()
         except httpx.TimeoutException as exc:
@@ -117,6 +120,13 @@ class LlmService:
         self,
         request: ProjectAnalysisRequest,
     ) -> ProjectAnalysisResponse:
+        """수집 근거를 분석한다; 요구사항이 있으면 DB 관련성에 따라 추가 분석을 분기한다.
+
+        Args:
+            request: Backend가 보낸 소스·DB 구조·관계와 선택적 변경 요구사항.
+        Returns:
+            공통 영향 분석과 databaseImpact를 합친 검증된 응답.
+        """
         payload = request.model_dump(mode="json", by_alias=True)
         requirement = request.source_summary.get("changeRequirement")
         requirement_header = (
@@ -178,6 +188,7 @@ class LlmService:
     def _validate_database_relevance(
         requirement: dict[str, Any], result: RequirementGeneralAnalysisResponse
     ) -> None:
+        """요구사항에 DB 변경이 명시됐는데 무관하다고 분류한 응답을 거부한다."""
         if result.database_relevance != DatabaseRelevance.UNRELATED:
             return
         requirement_text = " ".join(
@@ -191,6 +202,7 @@ class LlmService:
     async def _analyze_database_impact(
         self, request: ProjectAnalysisRequest, requirement: dict[str, Any]
     ) -> DatabaseImpact:
+        """request의 DB 구조와 requirement를 별도 모델 호출에 전달해 DatabaseImpact를 받는다."""
         tables = request.database_summary.get("tables", [])
         compact_tables = []
         for table in tables if isinstance(tables, list) else []:
@@ -220,6 +232,10 @@ class LlmService:
         )
 
     async def _generate(self, messages: list[dict[str, str]], response_type: type, validate=None):
+        """messages를 response_type 스키마로 생성·검증하고 해당 형식의 객체를 반환한다.
+
+        validate 콜백이 추가 일관성 검사를 하며, 실패하면 설정된 횟수만큼 재요청한다.
+        """
         validation_error: ValidationError | json.JSONDecodeError | ValueError | None = None
         attempts = self._settings.ai_max_validation_retries + 1
         for attempt in range(1, attempts + 1):
@@ -285,6 +301,7 @@ class LlmService:
 
     @staticmethod
     def _validate_database_impact(request: ProjectAnalysisRequest, impact: DatabaseImpact) -> None:
+        """DB 답변의 업무 용어·한국어 문장·실제 수집 테이블/컬럼 근거를 확인한다."""
         requirement = request.source_summary.get("changeRequirement")
         if isinstance(requirement, dict):
             if impact.status == DatabaseImpactStatus.NOT_APPLICABLE:

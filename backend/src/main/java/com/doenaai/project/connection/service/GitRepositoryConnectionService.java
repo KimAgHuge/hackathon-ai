@@ -104,6 +104,7 @@ public class GitRepositoryConnectionService {
                 connectionTimeoutSeconds;
     }
 
+    /** projectId·userId 권한과 request의 Git 주소/인증을 시험해 커밋 정보를 반환한다. */
     @Transactional(readOnly = true)
     public GitRepositoryConnectionResponse testConnection(
             UUID projectId,
@@ -126,6 +127,7 @@ public class GitRepositoryConnectionService {
         );
     }
 
+    /** 시험에 성공한 Git 연결을 저장하고 인증정보는 암호화된 형태로 보관한다. */
     @Transactional
     public ProjectRepositoryConnectionResponse saveConnection(
             UUID projectId,
@@ -211,6 +213,7 @@ public class GitRepositoryConnectionService {
         );
     }
 
+    /** 저장된 프로젝트 Git 설정을 다시 확인해 분석에 사용할 커밋 SHA를 반환한다. */
     @Transactional(readOnly = true)
     public GitRepositoryConnectionResponse verifySavedProject(
             UUID projectId,
@@ -378,7 +381,14 @@ public class GitRepositoryConnectionService {
         }
     }
 
-    /** Fetch a validated snapshot without running checkout filters, hooks or repository scripts. */
+    /**
+     * @param projectId 저장소가 속한 프로젝트
+     * @param userId 접근 권한을 확인할 사용자
+     * @param repositoryUrl 검증된 저장소 주소
+     * @param branch 분석할 기본 브랜치
+     * @param commitSha 분석 시점에 고정한 커밋
+     * @return 훅·필터·저장소 스크립트를 실행하지 않고 받은 임시 스냅샷; 사용 후 닫아 정리한다.
+     */
     public GitSnapshot checkoutSnapshot(UUID projectId, UUID userId, String repositoryUrl,
                                         String branch, String commitSha) throws IOException, GitAPIException {
         projectService.assertCanManage(projectId, userId);
@@ -622,6 +632,7 @@ public class GitRepositoryConnectionService {
         }
     }
 
+    /** request의 저장소 URL·브랜치·호스트 정책을 검사해 안전한 접속 대상을 반환한다. */
     private RepositoryTarget validateTarget(
             GitRepositoryConnectionRequest request
     ) {
@@ -820,6 +831,7 @@ public class GitRepositoryConnectionService {
         return requestedProvider;
     }
 
+    /** Git 프로토콜과 인증 방식이 맞고 필수 자격증명이 있는지 확인한다. */
     private void validateAuthentication(
             GitRepositoryConnectionRequest request,
             RepositoryTarget target,

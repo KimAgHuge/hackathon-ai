@@ -24,6 +24,7 @@ FORBIDDEN_SECRET_KEYS = {
 
 
 def find_forbidden_key(value: Any, path: str = "") -> Optional[str]:
+    """중첩된 입력에서 비밀정보 필드명을 찾아 위치를 반환한다; 없으면 None."""
     if isinstance(value, dict):
         for key, nested_value in value.items():
             normalized_key = re.sub(r"[^a-z0-9]", "", str(key).lower())
@@ -42,6 +43,7 @@ def find_forbidden_key(value: Any, path: str = "") -> Optional[str]:
 
 
 class ProjectAnalysisRequest(ApiModel):
+    """Backend가 전달하는 분석 입력; 값이 아닌 필드명 기준으로 비밀정보를 차단한다."""
     project_id: UUID
     source_summary: Dict[str, Any]
     database_summary: Dict[str, Any]
@@ -120,6 +122,7 @@ class DatabaseConditionalPath(ApiModel):
 
 
 class DatabaseImpact(ApiModel):
+    """DB 변경 판단, 근거 테이블, 확정 변경안 또는 확인 질문을 담는다."""
     status: DatabaseImpactStatus
     explanation: str = Field(min_length=1)
     observed_tables: List[str]
@@ -162,6 +165,7 @@ class RequirementGeneralAnalysisResponse(GeneralAnalysisResponse):
 
 
 class ProjectAnalysisResponse(GeneralAnalysisResponse):
+    """구조 분석과 요구사항 분석 모두에 적용되는 최종 API 응답 형식."""
     database_impact: DatabaseImpact
 
 

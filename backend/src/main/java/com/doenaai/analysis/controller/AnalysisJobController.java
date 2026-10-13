@@ -18,6 +18,7 @@ public class AnalysisJobController {
 
     private final AnalysisJobService analysisJobService;
 
+    /** projectId와 선택적 requirementVersionId를 받아 대기 작업을 생성한다. */
     @PreAuthorize(
             "@permissionChecker.has(authentication, 'PROJECT_UPDATE')"
     )
@@ -40,6 +41,7 @@ public class AnalysisJobController {
         );
     }
 
+    /** analysisJobId의 현재 상태·진행률을 인증된 사용자에게 반환한다. */
     @PreAuthorize(
             "@permissionChecker.has(authentication, 'ANALYSIS_READ')"
     )

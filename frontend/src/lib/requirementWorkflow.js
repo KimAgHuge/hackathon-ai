@@ -1,3 +1,7 @@
+/**
+ * @param {object} form 변경요청 입력 폼 상태
+ * @returns {object} 공백을 정리하고 인수 조건을 줄별 배열로 바꾼 생성 API 본문
+ */
 export const buildRequirementPayload = (form) => {
     const title = form.title.trim()
     const originalContent = form.originalContent.trim()
@@ -25,4 +29,5 @@ export const buildRequirementPayload = (form) => {
     }
 }
 
+/** 버전 ID가 있을 때만 분석 API 본문에 담는다; 없으면 전체 구조 분석용 undefined. */
 export const buildAnalysisJobPayload = (requirementVersionId) => (requirementVersionId ? { requirementVersionId } : undefined)

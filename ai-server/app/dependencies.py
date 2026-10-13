@@ -12,6 +12,7 @@ def require_internal_api_key(
     api_key: Optional[str] = Header(default=None, alias="X-Internal-Api-Key"),
     settings: Settings = Depends(get_settings),
 ) -> None:
+    """요청 헤더의 내부 키를 설정값과 비교하고 불일치하면 401을 반환한다."""
     expected_key = settings.ai_internal_api_key.get_secret_value()
     if not api_key or not secrets.compare_digest(api_key, expected_key):
         raise HTTPException(
@@ -25,4 +26,5 @@ def require_internal_api_key(
 
 @lru_cache
 def get_llm_service() -> LlmService:
+    """설정에 연결된 Ollama 클라이언트를 프로세스 내에서 재사용한다."""
     return LlmService(get_settings())

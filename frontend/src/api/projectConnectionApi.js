@@ -12,6 +12,8 @@ const mockDelay = async (data, delay = 250) => {
  * Git 저장소와 브랜치 연결 테스트
  *
  * POST /api/projects/{projectId}/repository-connection/test
+ * @param {object} payload Git URL·브랜치·인증 방식/자격증명
+ * @returns {Promise<object>} 연결 성공 여부와 확인된 커밋 SHA
  */
 export const testGitRepositoryConnection = async (projectId, payload) => {
     if (useMock) {
@@ -35,6 +37,9 @@ export const testGitRepositoryConnection = async (projectId, payload) => {
  * 검증이 끝난 Git 인증정보 저장
  *
  * PUT /api/projects/{projectId}/repository-connection
+ * @param {string} projectId 설정을 저장할 프로젝트 ID
+ * @param {object} payload 검증할 저장소·인증정보
+ * @returns {Promise<object>} 자격증명 원문을 제외한 저장된 Git 연결 상태
  */
 export const saveGitRepositoryConnection = async (projectId, payload) => {
     if (useMock) {
@@ -65,6 +70,8 @@ export const saveGitRepositoryConnection = async (projectId, payload) => {
  * 데이터베이스 연결 테스트
  *
  * POST /api/projects/{projectId}/database-connection/test
+ * @param {object} payload 읽기 전용 DB 호스트·스키마·계정 정보
+ * @returns {Promise<object>} 연결 성공 여부와 DB 제품 정보
  */
 export const testDatabaseConnection = async (projectId, payload) => {
     if (useMock) {
@@ -85,6 +92,9 @@ export const testDatabaseConnection = async (projectId, payload) => {
  * 프로젝트 DB 연결정보 저장
  *
  * PUT /api/projects/{projectId}/database-connection
+ * @param {string} projectId 설정을 저장할 프로젝트 ID
+ * @param {object} payload 읽기 전용 DB 연결정보
+ * @returns {Promise<object>} 비밀번호를 제외한 저장된 DB 연결 상태
  */
 export const saveProjectConnection = async (projectId, payload) => {
     if (useMock) {

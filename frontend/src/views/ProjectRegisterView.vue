@@ -164,6 +164,7 @@ const buildProjectPayload = () => ({
     defaultBranch: project.sourceType === 'GIT' ? project.defaultBranch.trim() : 'main',
 })
 
+// 현재 폼으로 프로젝트를 생성/수정하고 저장된 프로젝트 ID를 wizard에 보관한다.
 const ensureProject = async () => {
     const payload = buildProjectPayload()
     let savedProject
@@ -207,6 +208,7 @@ const handleSave = async () => {
     }
 }
 
+// 입력된 읽기 전용 DB 계정으로 연결 가능 여부를 시험하고 화면 상태를 갱신한다.
 const handleTestConnection = async () => {
     testingConnection.value = true
     notice.value = ''
@@ -230,6 +232,7 @@ const handleTestConnection = async () => {
     }
 }
 
+// 입력된 Git 주소·인증·브랜치를 시험해 커밋 SHA와 성공 여부를 표시한다.
 const handleTestRepository = async () => {
     testingRepository.value = true
     notice.value = ''
@@ -253,6 +256,7 @@ const handleTestRepository = async () => {
     }
 }
 
+// 두 연결 시험이 성공했을 때만 설정을 저장하고 전체 구조 분석 작업을 시작한다.
 const handleNext = async () => {
     if (repositoryStatus.value !== 'SUCCESS' || connectionStatus.value !== 'SUCCESS') {
         return

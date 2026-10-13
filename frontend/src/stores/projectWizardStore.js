@@ -9,6 +9,7 @@ const CONNECTION_STATUS = {
 }
 
 export const useProjectWizardStore = defineStore('projectWizard', () => {
+    // 등록 화면을 이동해도 프로젝트 ID·연결 시험 결과·분석 작업 ID를 유지한다.
     const currentStep = ref(1)
     const projectId = ref(null)
     const analysisJobId = ref(null)
