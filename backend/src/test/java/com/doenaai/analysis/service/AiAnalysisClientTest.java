@@ -14,6 +14,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -229,6 +230,105 @@ class AiAnalysisClientTest {
             assertThat(failure.get()).isInstanceOf(InterruptedException.class);
         } finally {
             caller.interrupt();
+            release.countDown();
+        }
+    }
+
+    @Test
+    void streamsAiServerPhaseBeforeTheFinalValidatedResult() throws Exception {
+        CountDownLatch progressReceived = new CountDownLatch(1);
+        CountDownLatch releaseResult = new CountDownLatch(1);
+        AtomicReference<Map<String, Object>> finalResult = new AtomicReference<>();
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        var events = new CopyOnWriteArrayList<AiAnalysisClient.ProgressEvent>();
+        server.createContext("/api/analysis/project/stream", exchange -> {
+            try (exchange) {
+                exchange.getRequestBody().readAllBytes();
+                exchange.getResponseHeaders().set("Content-Type", "application/x-ndjson");
+                exchange.sendResponseHeaders(200, 0);
+                exchange.getResponseBody().write("{\"type\":\"progress\",\"code\":\"GENERAL_STARTED\"}\n"
+                        .getBytes(StandardCharsets.UTF_8));
+                exchange.getResponseBody().flush();
+                try { releaseResult.await(3, TimeUnit.SECONDS); }
+                catch (InterruptedException exception) { Thread.currentThread().interrupt(); }
+                String compact = JsonMapper.builder().build().writeValueAsString(
+                        JsonMapper.builder().build().readTree(VALID_RESULT));
+                exchange.getResponseBody().write(("{\"type\":\"progress\",\"code\":\"GENERAL_COMPLETED\"}\n"
+                        + "{\"type\":\"result\",\"result\":" + compact + "}\n").getBytes(StandardCharsets.UTF_8));
+            }
+        });
+        server.start();
+        Thread caller = Thread.ofVirtual().start(() -> {
+            try {
+                finalResult.set(client(Duration.ofSeconds(5)).analyzeWithProgress(PAYLOAD, event -> {
+                    events.add(event);
+                    progressReceived.countDown();
+                }));
+            } catch (Throwable exception) {
+                failure.set(exception);
+            }
+        });
+        try {
+            assertThat(progressReceived.await(3, TimeUnit.SECONDS)).isTrue();
+            assertThat(finalResult.get()).isNull();
+            releaseResult.countDown();
+            caller.join(3000);
+            assertThat(failure.get()).isNull();
+            assertThat(finalResult.get()).containsEntry("summary", "테스트 분석 결과");
+            assertThat(events).extracting(AiAnalysisClient.ProgressEvent::code)
+                    .containsExactly("GENERAL_STARTED", "GENERAL_COMPLETED");
+        } finally {
+            releaseResult.countDown();
+            caller.interrupt();
+        }
+    }
+
+    @Test
+    void streamRejectsUnknownProgressWithoutExposingRemoteText() {
+        server.createContext("/api/analysis/project/stream", exchange -> respond(exchange, 200,
+                "{\"type\":\"progress\",\"code\":\"remote-body-secret-token\"}\n"));
+        server.start();
+        assertThatThrownBy(() -> client(Duration.ofSeconds(3)).analyzeWithProgress(PAYLOAD, event -> {}))
+                .isInstanceOf(IOException.class).hasMessage("Invalid AI progress event.")
+                .hasNoCause();
+    }
+
+    @Test
+    void streamUnauthorizedNeverFallsBackOrExposesRemoteBody() {
+        server.createContext("/api/analysis/project/stream", exchange ->
+                respond(exchange, 401, "remote-body-secret-token"));
+        server.createContext("/api/analysis/project", exchange -> respond(exchange, 200, VALID_RESULT));
+        server.start();
+        assertThatThrownBy(() -> client(Duration.ofSeconds(3)).analyzeWithProgress(PAYLOAD, event -> {}))
+                .isInstanceOf(IOException.class)
+                .hasMessage("AI server rejected analysis (HTTP 401).")
+                .hasNoCause();
+    }
+
+    @Test
+    void oldAiServerWithoutStreamFallsBackToTheExistingAnalysisApi() throws Exception {
+        server.createContext("/api/analysis/project/stream", exchange -> respond(exchange, 404, "not found"));
+        server.createContext("/api/analysis/project", exchange -> respond(exchange, 200, VALID_RESULT));
+        server.start();
+        assertThat(client(Duration.ofSeconds(3)).analyzeWithProgress(PAYLOAD, event -> {}))
+                .containsEntry("summary", "테스트 분석 결과");
+    }
+
+    @Test
+    void streamDeadlineAlsoCoversAStalledBody() {
+        CountDownLatch headersSent = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        server.createContext("/api/analysis/project/stream", stalledBody(headersSent, release));
+        server.start();
+        try {
+            assertTimeoutPreemptively(Duration.ofSeconds(3), () ->
+                    assertThatThrownBy(() -> client(Duration.ofMillis(500))
+                            .analyzeWithProgress(PAYLOAD, event -> {}))
+                            .isInstanceOf(IOException.class)
+                            .hasMessage("AI analysis request timed out.")
+                            .hasNoCause());
+            assertThat(headersSent.getCount()).isZero();
+        } finally {
             release.countDown();
         }
     }

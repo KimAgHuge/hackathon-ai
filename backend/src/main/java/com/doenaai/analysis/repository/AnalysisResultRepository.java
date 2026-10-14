@@ -28,7 +28,11 @@ public class AnalysisResultRepository {
         int changed = jdbcTemplate.update("""
                 update public.analysis_jobs set status = 'COMPLETED', source_progress = 100,
                     database_progress = 100, relation_progress = 100,
-                    completed_at = now(), updated_at = now(), error_message = null
+                    completed_at = now(), updated_at = now(), error_message = null,
+                    analysis_options = jsonb_set(analysis_options, '{activityLog}',
+                        coalesce(analysis_options -> 'activityLog', '[]'::jsonb)
+                        || jsonb_build_array(jsonb_build_object('at', now(), 'label',
+                            '분석 결과 저장', 'state', 'COMPLETED')), true)
                 where id = ? and status = 'RUNNING'
                 """, jobId);
         if (changed != 1) throw new IllegalStateException("Analysis job is no longer running.");

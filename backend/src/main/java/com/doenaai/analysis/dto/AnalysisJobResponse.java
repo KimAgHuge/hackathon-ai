@@ -1,6 +1,7 @@
 package com.doenaai.analysis.dto;
 
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.UUID;
 
 public record AnalysisJobResponse(
@@ -15,7 +16,8 @@ public record AnalysisJobResponse(
         OffsetDateTime createdAt,
         String errorMessage,
         OffsetDateTime startedAt,
-        OffsetDateTime completedAt
+        OffsetDateTime completedAt,
+        List<AnalysisActivityEvent> activityLog
 ) {
 
     public static AnalysisJobResponse of(
@@ -47,7 +49,8 @@ public record AnalysisJobResponse(
                 createdAt,
                 null,
                 null,
-                null
+                null,
+                List.of()
         );
     }
 }
