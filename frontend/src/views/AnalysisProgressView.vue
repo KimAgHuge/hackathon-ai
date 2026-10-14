@@ -5,7 +5,7 @@ import PageTitle from '@/components/common/PageTitle.vue'
 import { cancelAnalysisJob, getAnalysisJob, getAnalysisResult, isAnalysisDemoMode } from '@/api/analysisApi'
 import { createAnalysisPoller } from '@/lib/analysisPolling'
 import { activeAnalysisStage, analysisActivity, analysisElapsedSeconds, formatAnalysisElapsed } from '@/lib/analysisProgress'
-import { shouldConfirmAnalysisExit } from '@/lib/analysisNavigation'
+import { shouldConfirmAnalysisExit, warnOnAnalysisUnload } from '@/lib/analysisNavigation'
 import { riskLevelLabel } from '@/lib/riskLevel'
 
 const route = useRoute()
@@ -32,9 +32,7 @@ onBeforeRouteUpdate((to) => (
 
 // 새로고침·탭/창 닫기에는 브라우저 기본 경고만 가능하며 비동기 취소 요청은 보장되지 않는다.
 const warnBeforeUnload = (event) => {
-    if (!shouldConfirmAnalysisExit(job.value?.status)) return
-    event.preventDefault()
-    event.returnValue = ''
+    warnOnAnalysisUnload(event, job.value?.status)
 }
 
 const statusLabels = { PENDING: '분석 대기', RUNNING: '분석 진행 중', COMPLETED: '분석 완료', FAILED: '분석 실패', CANCELLED: '분석 취소' }
