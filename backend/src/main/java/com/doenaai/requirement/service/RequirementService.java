@@ -194,6 +194,8 @@ public class RequirementService {
 
         try {
             versionRepository.lockRequirement(requirementId);
+            RequirementVersion parent = versionRepository.findCurrent(requirementId)
+                    .orElseThrow(() -> conflict("현재 요구사항 버전을 찾을 수 없습니다."));
             int nextVersion = versionRepository
                     .findNextVersionNumber(requirementId);
             versionRepository.markCurrentVersionHistorical(
@@ -203,7 +205,8 @@ public class RequirementService {
                     requirementId,
                     nextVersion,
                     request,
-                    userId
+                    userId,
+                    parent.id()
             );
 
             requirement.updateCurrentTitle(request.title());

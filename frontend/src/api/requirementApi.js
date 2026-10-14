@@ -24,3 +24,9 @@ export const createProjectRequirement = async (projectId, payload) => {
     const { data } = await httpClient.post(`/projects/${projectId}/requirements`, payload)
     return data
 }
+
+/** 완료된 분석의 확인 질문 답변/추가 질문을 요구사항의 새 버전으로 저장한다. */
+export const createRequirementFollowUp = async (requirementId, payload) => {
+    const { data } = await httpClient.post(`/requirements/${requirementId}/follow-ups`, payload)
+    return data
+}

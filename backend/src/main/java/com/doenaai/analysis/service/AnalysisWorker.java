@@ -15,7 +15,10 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.beans.factory.annotation.Value;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -31,6 +34,7 @@ import java.util.concurrent.TimeUnit;
 @RequiredArgsConstructor
 @ConditionalOnProperty(name = "doenaai.analysis.worker-enabled", havingValue = "true", matchIfMissing = true)
 public class AnalysisWorker {
+    private static final int MAX_CLARIFICATION_CONTEXT_CHARS = 12_000;
     private static final ScheduledExecutorService ACTIVITY_HEARTBEATS =
             Executors.newSingleThreadScheduledExecutor(task -> {
                 Thread thread = new Thread(task, "analysis-activity-heartbeat");
@@ -299,10 +303,38 @@ public class AnalysisWorker {
         var version = versions.findById(job.requirementVersionId())
                 .orElseThrow(() -> new IllegalStateException("Requirement version no longer exists."));
         Map<String, Object> requirement = new LinkedHashMap<>();
+        requirement.put("requirementId", version.requirementId().toString());
         requirement.put("versionId", version.id().toString());
         requirement.put("title", version.title());
         requirement.put("refinedContent", version.refinedContent() == null ? "" : version.refinedContent());
         requirement.put("acceptanceCriteria", version.acceptanceCriteria());
+        // 모든 확인 내용은 버전에 보존한다. 모델 입력에는 최근 내용을 한도 내에서만 전달한다.
+        List<Object> selectedClarifications = new ArrayList<>();
+        int selectedChars = 0;
+        List<Object> allClarifications = version.clarifications();
+        for (int index = allClarifications.size() - 1; index >= 0; index--) {
+            Object item = allClarifications.get(index);
+            int itemChars = item.toString().length();
+            if (selectedChars + itemChars > MAX_CLARIFICATION_CONTEXT_CHARS) break;
+            selectedClarifications.add(item);
+            selectedChars += itemChars;
+        }
+        Collections.reverse(selectedClarifications);
+        requirement.put("clarifications", selectedClarifications);
+        requirement.put("clarificationCoverage", Map.of(
+                "total", allClarifications.size(),
+                "included", selectedClarifications.size(),
+                "omitted", allClarifications.size() - selectedClarifications.size()));
+        if (version.sourceAnalysisJobId() != null) {
+            requirement.put("sourceAnalysisJobId", version.sourceAnalysisJobId().toString());
+            version.clarifications().stream()
+                    .filter(Map.class::isInstance)
+                    .map(Map.class::cast)
+                    .filter(item -> "USER_QUESTION".equals(item.get("kind"))
+                            && version.sourceAnalysisJobId().toString().equals(item.get("sourceAnalysisJobId")))
+                    .reduce((previous, latest) -> latest)
+                    .ifPresent(item -> requirement.put("latestFollowUpQuestion", item.get("question")));
+        }
         summary.put("changeRequirement", requirement);
     }
 }

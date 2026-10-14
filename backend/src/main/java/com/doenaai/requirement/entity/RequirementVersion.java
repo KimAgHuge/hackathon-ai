@@ -14,6 +14,9 @@ public record RequirementVersion(
         List<Object> acceptanceCriteria,
         List<Object> attachmentsMetadata,
         String changeNote,
+        List<Object> clarifications,
+        UUID sourceAnalysisJobId,
+        UUID parentVersionId,
         boolean current,
         UUID createdBy,
         OffsetDateTime createdAt

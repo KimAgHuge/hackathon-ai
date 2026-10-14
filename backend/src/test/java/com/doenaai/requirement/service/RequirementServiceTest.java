@@ -312,10 +312,13 @@ class RequirementServiceTest {
                 true,
                 userId
         );
+        RequirementVersion firstVersion = version(requirement.getId(), 1, true, userId);
 
         when(requirementRepository.findById(requirement.getId()))
                 .thenReturn(Optional.of(requirement));
         stubAccess(projectId, organizationId, userId, "PM");
+        when(versionRepository.findCurrent(requirement.getId()))
+                .thenReturn(Optional.of(firstVersion));
         when(versionRepository.findNextVersionNumber(
                 requirement.getId()
         )).thenReturn(2);
@@ -323,7 +326,8 @@ class RequirementServiceTest {
                 requirement.getId(),
                 2,
                 request,
-                userId
+                userId,
+                firstVersion.id()
         )).thenReturn(secondVersion);
         when(requirementRepository.saveAndFlush(requirement))
                 .thenReturn(requirement);
@@ -342,6 +346,8 @@ class RequirementServiceTest {
         order.verify(versionRepository)
                 .lockRequirement(requirement.getId());
         order.verify(versionRepository)
+                .findCurrent(requirement.getId());
+        order.verify(versionRepository)
                 .findNextVersionNumber(requirement.getId());
         order.verify(versionRepository)
                 .markCurrentVersionHistorical(requirement.getId());
@@ -349,7 +355,8 @@ class RequirementServiceTest {
                 requirement.getId(),
                 2,
                 request,
-                userId
+                userId,
+                firstVersion.id()
         );
     }
 
@@ -606,6 +613,9 @@ class RequirementServiceTest {
                 List.of("Login succeeds"),
                 List.of(Map.of("uri", "internal://request.txt")),
                 "Internal refinement note",
+                List.of(),
+                null,
+                null,
                 current,
                 createdBy,
                 OffsetDateTime.now(ZoneOffset.UTC)

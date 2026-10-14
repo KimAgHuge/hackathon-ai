@@ -1,8 +1,9 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { onBeforeRouteLeave, onBeforeRouteUpdate, RouterLink, useRoute } from 'vue-router'
+import { onBeforeRouteLeave, onBeforeRouteUpdate, RouterLink, useRoute, useRouter } from 'vue-router'
 import PageTitle from '@/components/common/PageTitle.vue'
-import { cancelAnalysisJob, getAnalysisJob, getAnalysisResult, isAnalysisDemoMode } from '@/api/analysisApi'
+import { cancelAnalysisJob, getAnalysisJob, getAnalysisResult, isAnalysisDemoMode, startProjectAnalysis } from '@/api/analysisApi'
+import { getAllRequirements, createRequirementFollowUp } from '@/api/requirementApi'
 import { createAnalysisPoller } from '@/lib/analysisPolling'
 import {
     activeActivityEvent,
@@ -13,9 +14,13 @@ import {
     formatAnalysisElapsed,
 } from '@/lib/analysisProgress'
 import { shouldConfirmAnalysisExit, warnOnAnalysisUnload } from '@/lib/analysisNavigation'
+import { buildFollowUpPayload } from '@/lib/followUpWorkflow'
 import { riskLevelLabel } from '@/lib/riskLevel'
+import { useAuthStore } from '@/stores/authStore'
 
 const route = useRoute()
+const router = useRouter()
+const authStore = useAuthStore()
 const job = ref(null)
 const analysis = ref(null)
 const loading = ref(false)
@@ -23,6 +28,11 @@ const retryScheduled = ref(false)
 const requestError = ref(null)
 const cancelBusy = ref(false)
 const cancelError = ref('')
+const followUpAnswers = ref([])
+const followUpQuestion = ref('')
+const followUpBusy = ref(false)
+const followUpError = ref('')
+const followUpSavedVersionId = ref('')
 const lastCheckedAt = ref(null)
 const clock = ref(Date.now())
 let elapsedTimer = null
@@ -111,6 +121,13 @@ watch(
     { immediate: true }
 )
 
+watch(analysis, () => {
+    followUpAnswers.value = []
+    followUpQuestion.value = ''
+    followUpError.value = ''
+    followUpSavedVersionId.value = ''
+})
+
 onMounted(() => {
     window.addEventListener('beforeunload', warnBeforeUnload)
     elapsedTimer = setInterval(() => {
@@ -159,6 +176,50 @@ const plainLanguageSummary = computed(() => {
     return typeof value === 'string' && value.trim() ? value.trim() : ''
 })
 const databaseImpact = computed(() => aiResult.value.databaseImpact || null)
+const followUpQuestions = computed(() => asList(databaseImpact.value?.openQuestions))
+const previousClarifications = computed(() => asList(source.value.changeRequirement?.clarifications))
+
+const beginFollowUpAnalysis = async (versionId) => {
+    const created = await startProjectAnalysis(route.params.projectId, versionId)
+    await router.push({
+        name: 'analysis-progress',
+        params: { projectId: route.params.projectId, analysisJobId: created.jobId },
+    })
+}
+
+const submitFollowUp = async () => {
+    followUpError.value = ''
+    let payload
+    try {
+        payload = buildFollowUpPayload(job.value?.jobId, job.value?.requirementVersionId, followUpAnswers.value, followUpQuestion.value)
+    } catch (error) {
+        followUpError.value = error.message
+        return
+    }
+    followUpBusy.value = true
+    try {
+        if (followUpSavedVersionId.value) {
+            await beginFollowUpAnalysis(followUpSavedVersionId.value)
+            return
+        }
+        const requirements = await getAllRequirements()
+        const requirementId = source.value.changeRequirement?.requirementId
+        const requirement = requirements.find((item) => item.id === requirementId || item.currentVersion?.id === job.value?.requirementVersionId)
+        if (!requirement || requirement.currentVersion?.id !== job.value?.requirementVersionId) {
+            throw new Error('현재 요구사항 버전이 변경됐거나 접근할 수 없습니다. 변경요청 관리에서 최신 버전을 확인해 주세요.')
+        }
+        const version = await createRequirementFollowUp(requirement.id, payload)
+        followUpSavedVersionId.value = version.id
+        await beginFollowUpAnalysis(version.id)
+    } catch (error) {
+        const detail = error.response?.data?.message || error.response?.data?.detail || error.message
+        followUpError.value = followUpSavedVersionId.value
+            ? `답변은 새 버전으로 저장됐지만 분석을 시작하지 못했습니다. 다시 시도해 주세요. ${detail}`
+            : `추가 질문을 저장하지 못했습니다. ${detail}`
+    } finally {
+        followUpBusy.value = false
+    }
+}
 const databaseImpactLabels = {
     CHANGE_REQUIRED: 'DB 변경 필요',
     NO_CHANGE: 'DB 변경 불필요',
@@ -486,6 +547,71 @@ const evidenceEntries = (evidence) => (evidence && typeof evidence === 'object' 
                 <p v-else class="empty-copy">
                     이 분석은 새 DB 영향 판단 형식 도입 전에 저장돼 세부 변경안을 제공하지 않습니다. 다시 분석하면 확인할 수 있습니다.
                 </p>
+            </section>
+
+            <section
+                v-if="isRequirementAnalysis && job?.status === 'COMPLETED' && !isAnalysisDemoMode && authStore.hasPermission('PROJECT_UPDATE')"
+                class="panel analysis-section"
+                aria-labelledby="follow-up-title"
+            >
+                <div class="panel-heading">
+                    <div>
+                        <h2 id="follow-up-title">답변·추가 질문으로 다시 분석</h2>
+                        <p>기존 결과는 보존하고, 답변을 담은 새 요구사항 버전으로 재분석합니다.</p>
+                    </div>
+                </div>
+                <div v-if="previousClarifications.length" class="mb-4 max-h-48 overflow-y-auto rounded-lg bg-slate-50 p-3 dark:bg-slate-800">
+                    <h3 class="text-sm font-semibold text-slate-800 dark:text-slate-100">이전에 남긴 확인 내용</h3>
+                    <ul class="mt-2 space-y-2 text-sm text-slate-700 dark:text-slate-300">
+                        <li v-for="item in previousClarifications" :key="item.id" class="break-words">
+                            <span class="font-medium">{{ item.question }}</span>
+                            <span v-if="item.answer"> → {{ item.answer }}</span>
+                        </li>
+                    </ul>
+                </div>
+                <p v-if="source.changeRequirement?.clarificationCoverage?.omitted > 0" class="mb-4 text-xs text-amber-800 dark:text-amber-300">
+                    이전 확인 내용 {{ source.changeRequirement.clarificationCoverage.omitted }}건은 이력에 보존돼 있지만 이번 AI 입력에서는 제외됐습니다. 오래된
+                    답변이 중요하다면 새 질문에 다시 적어 주세요.
+                </p>
+                <div v-if="followUpQuestions.length" class="space-y-4">
+                    <div v-for="(question, index) in followUpQuestions" :key="`${job.jobId}:${index}`" class="min-w-0">
+                        <label :for="`follow-up-answer-${index}`" class="mb-1 block break-words text-sm font-semibold text-slate-800 dark:text-slate-100">
+                            확인 질문 {{ index + 1 }} · {{ question }}
+                        </label>
+                        <textarea
+                            :id="`follow-up-answer-${index}`"
+                            v-model="followUpAnswers[index]"
+                            rows="2"
+                            maxlength="4000"
+                            class="w-full min-w-0 rounded-lg border border-slate-300 bg-white p-3 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+                            placeholder="답을 알고 있는 질문만 입력하세요. 답하지 않은 질문은 그대로 남습니다."
+                            :disabled="followUpBusy || Boolean(followUpSavedVersionId)"
+                        ></textarea>
+                    </div>
+                </div>
+                <div class="mt-4">
+                    <label for="follow-up-question" class="mb-1 block text-sm font-semibold text-slate-800 dark:text-slate-100"
+                        >새로 물어볼 질문 또는 추가 설명</label
+                    >
+                    <textarea
+                        id="follow-up-question"
+                        v-model="followUpQuestion"
+                        rows="3"
+                        maxlength="2000"
+                        class="w-full min-w-0 rounded-lg border border-slate-300 bg-white p-3 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+                        placeholder="예: 여기서 멤버는 조직 멤버입니다. 이 경우 기존 데이터와 권한에 어떤 영향이 있나요?"
+                        :disabled="followUpBusy || Boolean(followUpSavedVersionId)"
+                    ></textarea>
+                </div>
+                <p class="mt-2 text-xs text-slate-600 dark:text-slate-400">
+                    소스·DB는 최신 상태를 다시 확인합니다. 답변이 실제 DB 구조를 증명하는 것은 아닙니다.
+                </p>
+                <p v-if="followUpError" role="alert" class="mt-3 break-words text-sm text-rose-700 dark:text-rose-300">{{ followUpError }}</p>
+                <div class="mt-4 flex flex-col gap-2 sm:flex-row">
+                    <button type="button" class="button w-full sm:w-auto" :disabled="followUpBusy" @click="submitFollowUp">
+                        {{ followUpBusy ? '처리 중…' : followUpSavedVersionId ? '새 버전 분석 다시 시작' : '답변 저장하고 재분석' }}
+                    </button>
+                </div>
             </section>
 
             <div class="grid two-columns analysis-section">

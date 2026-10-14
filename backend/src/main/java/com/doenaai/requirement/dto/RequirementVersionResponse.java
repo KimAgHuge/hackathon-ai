@@ -16,6 +16,9 @@ public record RequirementVersionResponse(
         List<Object> acceptanceCriteria,
         List<Object> attachmentsMetadata,
         String changeNote,
+        List<Object> clarifications,
+        UUID sourceAnalysisJobId,
+        UUID parentVersionId,
         boolean current,
         UUID createdBy,
         OffsetDateTime createdAt
@@ -37,6 +40,9 @@ public record RequirementVersionResponse(
                         ? List.of()
                         : version.attachmentsMetadata(),
                 customerView ? null : version.changeNote(),
+                customerView ? List.of() : version.clarifications(),
+                customerView ? null : version.sourceAnalysisJobId(),
+                version.parentVersionId(),
                 version.current(),
                 customerView ? null : version.createdBy(),
                 version.createdAt()

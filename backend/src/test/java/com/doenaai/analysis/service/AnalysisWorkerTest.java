@@ -19,6 +19,7 @@ import tools.jackson.databind.json.JsonMapper;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -173,6 +174,7 @@ class AnalysisWorkerTest {
 
     @Test void includesValidatedRequirementVersionButNotRawOriginalOrAttachments() throws Exception {
         var versionId = UUID.randomUUID();
+        var previousJobId = UUID.randomUUID();
         var targeted = new AnalysisWorkItem(job.jobId(), job.projectId(), versionId, job.requestedBy(),
                 job.repositoryUrl(), job.branch(), job.commitSha());
         var db = Map.<String, Object>of("tables", List.of());
@@ -182,15 +184,59 @@ class AnalysisWorkerTest {
                 new com.doenaai.requirement.entity.RequirementVersion(versionId, UUID.randomUUID(), 2,
                         "이메일 컬럼 변경", "original-must-not-be-sent", "users.email 이름 변경 영향 분석",
                         List.of("기존 조회 기능 유지"), List.of("attachment-must-not-be-sent"), null,
+                        List.of(Map.of("kind", "AI_QUESTION_ANSWER", "sourceAnalysisJobId", previousJobId.toString(),
+                                        "question", "어느 테이블인가요?", "answer", "organization_members입니다."),
+                                Map.of("kind", "USER_QUESTION", "sourceAnalysisJobId", previousJobId.toString(),
+                                        "question", "다른 조직의 데이터에는 어떤 영향이 있나요?")), previousJobId, null,
                         true, job.requestedBy(), java.time.OffsetDateTime.now())));
         when(ai.analyzeWithProgress(anyMap(), any())).thenAnswer(call -> {
             String facts = call.getArgument(0).toString();
-            assertThat(facts).contains("REQUIREMENT_IMPACT", "users.email", versionId.toString())
+            assertThat(facts).contains("REQUIREMENT_IMPACT", "users.email", versionId.toString(),
+                            "organization_members입니다.", "다른 조직의 데이터에는 어떤 영향이 있나요?", "latestFollowUpQuestion")
                     .doesNotContain("original-must-not-be-sent", "attachment-must-not-be-sent");
             return Map.of("summary", "영향 분석", "riskLevel", "UNKNOWN", "riskScore", 0);
         });
         worker.process(targeted);
         verify(requirements).assertVersionBelongsToProject(versionId, job.projectId(), job.requestedBy());
+        verify(results).complete(eq(job.jobId()), anyMap(), anyMap());
+    }
+
+    @Test void keepsLongFollowUpHistoryStoredButBoundsModelContext() throws Exception {
+        var versionId = UUID.randomUUID();
+        var targeted = new AnalysisWorkItem(job.jobId(), job.projectId(), versionId, job.requestedBy(),
+                job.repositoryUrl(), job.branch(), job.commitSha());
+        var db = Map.<String, Object>of("tables", List.of());
+        when(database.collect(job.projectId())).thenReturn(db);
+        when(source.collect(checkout, db)).thenReturn(new SourceEvidenceCollector.ScanResult(Map.of(), List.of()));
+        List<Object> history = new ArrayList<>();
+        for (int index = 0; index < 60; index++) {
+            history.add(Map.of("kind", "USER_QUESTION", "question", "질문 " + index + " " + "가".repeat(300)));
+        }
+        when(versions.findById(versionId)).thenReturn(java.util.Optional.of(
+                new com.doenaai.requirement.entity.RequirementVersion(versionId, UUID.randomUUID(), 61,
+                        "변경", "원문", "영향 분석", List.of(), List.of(), null, history, null, null,
+                        true, job.requestedBy(), java.time.OffsetDateTime.now())));
+        when(ai.analyzeWithProgress(anyMap(), any())).thenAnswer(call -> {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> payload = call.getArgument(0);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> sourceSummary = (Map<String, Object>) payload.get("sourceSummary");
+            @SuppressWarnings("unchecked")
+            Map<String, Object> requirement = (Map<String, Object>) sourceSummary.get("changeRequirement");
+            @SuppressWarnings("unchecked")
+            List<Object> included = (List<Object>) requirement.get("clarifications");
+            @SuppressWarnings("unchecked")
+            Map<String, Object> coverage = (Map<String, Object>) requirement.get("clarificationCoverage");
+            assertThat(included).hasSizeLessThan(history.size());
+            assertThat(included.getLast()).isEqualTo(history.getLast());
+            assertThat(coverage).containsEntry("total", 60)
+                    .containsEntry("included", included.size())
+                    .containsEntry("omitted", 60 - included.size());
+            return Map.of("summary", "완료", "riskLevel", "UNKNOWN", "riskScore", 0);
+        });
+
+        worker.process(targeted);
+
         verify(results).complete(eq(job.jobId()), anyMap(), anyMap());
     }
 
@@ -210,7 +256,7 @@ class AnalysisWorkerTest {
         when(database.collect(job.projectId())).thenReturn(db);
         when(versions.findById(versionId)).thenReturn(java.util.Optional.of(
                 new com.doenaai.requirement.entity.RequirementVersion(versionId, UUID.randomUUID(), 2,
-                        "새 요구사항", "원문", "새 영향 분석", List.of(), List.of(), null,
+                        "새 요구사항", "원문", "새 영향 분석", List.of(), List.of(), null, List.of(), null, null,
                         true, job.requestedBy(), java.time.OffsetDateTime.now())));
         when(ai.analyzeWithProgress(anyMap(), any())).thenAnswer(call -> {
             String input = call.getArgument(0).toString();

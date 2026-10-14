@@ -73,6 +73,20 @@ public class RequirementVersionRepository {
             RequirementVersionCreateRequest request,
             UUID userId
     ) {
+        return insert(requirementId, versionNumber, request, userId, List.of(), null, null);
+    }
+
+    public RequirementVersion insert(
+            UUID requirementId, int versionNumber, RequirementVersionCreateRequest request,
+            UUID userId, UUID parentVersionId
+    ) {
+        return insert(requirementId, versionNumber, request, userId, List.of(), null, parentVersionId);
+    }
+
+    public RequirementVersion insert(
+            UUID requirementId, int versionNumber, RequirementVersionCreateRequest request,
+            UUID userId, List<Object> clarifications, UUID sourceAnalysisJobId, UUID parentVersionId
+    ) {
         return jdbcTemplate.queryForObject(
                 """
                 insert into public.requirement_versions (
@@ -84,6 +98,9 @@ public class RequirementVersionRepository {
                     acceptance_criteria,
                     attachments_metadata,
                     change_note,
+                    clarifications,
+                    source_analysis_job_id,
+                    parent_version_id,
                     is_current,
                     created_by
                 )
@@ -91,7 +108,7 @@ public class RequirementVersionRepository {
                     ?, ?, ?, ?, ?,
                     cast(? as jsonb),
                     cast(? as jsonb),
-                    ?, true, ?
+                    ?, cast(? as jsonb), ?, ?, true, ?
                 )
                 returning
                     id,
@@ -103,6 +120,9 @@ public class RequirementVersionRepository {
                     acceptance_criteria,
                     attachments_metadata,
                     change_note,
+                    clarifications,
+                    source_analysis_job_id,
+                    parent_version_id,
                     is_current,
                     created_by,
                     created_at
@@ -116,6 +136,9 @@ public class RequirementVersionRepository {
                 writeArray(request.acceptanceCriteria()),
                 writeArray(request.attachmentsMetadata()),
                 request.changeNote(),
+                writeArray(clarifications),
+                sourceAnalysisJobId,
+                parentVersionId,
                 userId
         );
     }
@@ -135,6 +158,9 @@ public class RequirementVersionRepository {
                     acceptance_criteria,
                     attachments_metadata,
                     change_note,
+                    clarifications,
+                    source_analysis_job_id,
+                    parent_version_id,
                     is_current,
                     created_by,
                     created_at
@@ -160,6 +186,9 @@ public class RequirementVersionRepository {
                     acceptance_criteria,
                     attachments_metadata,
                     change_note,
+                    clarifications,
+                    source_analysis_job_id,
+                    parent_version_id,
                     is_current,
                     created_by,
                     created_at
@@ -185,6 +214,9 @@ public class RequirementVersionRepository {
                 readArray(resultSet.getString("acceptance_criteria")),
                 readArray(resultSet.getString("attachments_metadata")),
                 resultSet.getString("change_note"),
+                readArray(resultSet.getString("clarifications")),
+                resultSet.getObject("source_analysis_job_id", UUID.class),
+                resultSet.getObject("parent_version_id", UUID.class),
                 resultSet.getBoolean("is_current"),
                 resultSet.getObject("created_by", UUID.class),
                 resultSet.getObject(
