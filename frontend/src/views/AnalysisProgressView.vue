@@ -1,9 +1,10 @@
 <script setup>
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import PageTitle from '@/components/common/PageTitle.vue'
 import { getAnalysisJob, getAnalysisResult, isAnalysisDemoMode } from '@/api/analysisApi'
 import { createAnalysisPoller } from '@/lib/analysisPolling'
+import { activeAnalysisStage, analysisActivity, analysisElapsedSeconds, formatAnalysisElapsed } from '@/lib/analysisProgress'
 
 const route = useRoute()
 const job = ref(null)
@@ -12,6 +13,8 @@ const loading = ref(false)
 const retryScheduled = ref(false)
 const requestError = ref(null)
 const lastCheckedAt = ref(null)
+const clock = ref(Date.now())
+let elapsedTimer = null
 
 const statusLabels = { PENDING: '분석 대기', RUNNING: '분석 진행 중', COMPLETED: '분석 완료', FAILED: '분석 실패', CANCELLED: '분석 취소' }
 const statusLabel = computed(() => statusLabels[job.value?.status] || job.value?.status || '작업 확인 중')
@@ -61,7 +64,15 @@ watch(
     { immediate: true }
 )
 
-onBeforeUnmount(() => poller.stop())
+onMounted(() => {
+    elapsedTimer = setInterval(() => {
+        if (job.value?.status === 'PENDING' || job.value?.status === 'RUNNING') clock.value = Date.now()
+    }, 1000)
+})
+onBeforeUnmount(() => {
+    poller.stop()
+    if (elapsedTimer !== null) clearInterval(elapsedTimer)
+})
 
 const asList = (value) => (Array.isArray(value) ? value : [])
 const displayValue = (value) => {
@@ -70,6 +81,9 @@ const displayValue = (value) => {
 }
 const percentage = (value) => (typeof value === 'number' && Number.isFinite(value) ? Math.min(100, Math.max(0, value)) : null)
 const progressText = (value) => (percentage(value) === null ? '진행률 미제공' : `${percentage(value)}%`)
+const activeStage = computed(() => activeAnalysisStage(job.value))
+const activityText = computed(() => analysisActivity(job.value))
+const elapsedText = computed(() => formatAnalysisElapsed(analysisElapsedSeconds(job.value, clock.value)))
 const formatDate = (value) => {
     if (!value) return '—'
     const date = new Date(value)
@@ -116,6 +130,7 @@ const stages = computed(() => [
         name: '소스코드 수집',
         icon: 'SRC',
         color: 'blue-bg',
+        active: activeStage.value === 'SRC',
         progress: job.value?.sourceProgress,
         metrics: [
             { label: '구성요소', value: count(source.value.components) },
@@ -127,6 +142,7 @@ const stages = computed(() => [
         icon: 'DB',
         color: 'purple-bg',
         fill: 'purple-fill',
+        active: activeStage.value === 'DB',
         progress: job.value?.databaseProgress,
         metrics: [
             { label: '테이블', value: count(database.value.tables) },
@@ -138,6 +154,7 @@ const stages = computed(() => [
         icon: 'AI',
         color: 'orange-bg',
         fill: 'orange-fill',
+        active: activeStage.value === 'AI',
         progress: job.value?.relationProgress,
         metrics: [{ label: '수집된 관계', value: count(analysis.value?.facts?.relations) }],
     },
@@ -199,6 +216,7 @@ const evidenceEntries = (evidence) => (evidence && typeof evidence === 'object' 
             </div>
             <div
                 class="progress-track large"
+                :class="{ 'is-active': job.status === 'PENDING' || job.status === 'RUNNING' }"
                 role="progressbar"
                 aria-label="전체 분석 진행률"
                 aria-valuemin="0"
@@ -207,6 +225,12 @@ const evidenceEntries = (evidence) => (evidence && typeof evidence === 'object' 
             >
                 <div class="progress-fill" :style="{ width: `${percentage(job.overallProgress) ?? 0}%` }"></div>
             </div>
+            <p v-if="activityText" class="analysis-activity">
+                <span class="activity-dot" aria-hidden="true"></span>
+                {{ activityText }} · 경과 {{ elapsedText }}
+                <span class="activity-hint">실제 진행률은 서버의 단계 완료 시 갱신됩니다.</span>
+            </p>
+            <p v-else-if="job.completedAt" class="analysis-activity completed-activity">총 소요 {{ elapsedText }}</p>
             <dl class="job-metadata">
                 <div>
                     <dt>작업 ID</dt>
@@ -236,11 +260,12 @@ const evidenceEntries = (evidence) => (evidence && typeof evidence === 'object' 
         </section>
 
         <div v-if="job" class="grid three-columns">
-            <section v-for="stage in stages" :key="stage.icon" class="panel progress-panel">
+            <section v-for="stage in stages" :key="stage.icon" class="panel progress-panel" :class="{ 'active-panel': stage.active }">
                 <div class="progress-panel-icon" :class="stage.color">{{ stage.icon }}</div>
                 <h3>{{ stage.name }}</h3>
                 <div
                     class="progress-track"
+                    :class="{ 'is-active': stage.active }"
                     role="progressbar"
                     :aria-label="stage.name"
                     aria-valuemin="0"
@@ -250,6 +275,7 @@ const evidenceEntries = (evidence) => (evidence && typeof evidence === 'object' 
                     <div class="progress-fill" :class="stage.fill" :style="{ width: `${percentage(stage.progress) ?? 0}%` }"></div>
                 </div>
                 <strong>{{ progressText(stage.progress) }}</strong>
+                <p v-if="stage.active" class="stage-activity">현재 진행 중</p>
                 <dl v-if="analysis" class="metric-list">
                     <div v-for="metric in stage.metrics" :key="metric.label">
                         <dt>{{ metric.label }}</dt>
@@ -467,6 +493,40 @@ const evidenceEntries = (evidence) => (evidence && typeof evidence === 'object' 
 }
 .analysis-section {
     margin-top: 20px;
+}
+.analysis-activity {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 7px;
+    margin: 12px 0 0;
+    color: #435273;
+    font-size: 13px;
+}
+.activity-dot {
+    width: 8px;
+    height: 8px;
+    flex: 0 0 auto;
+    border-radius: 50%;
+    background: #5373e9;
+    animation: activity-pulse 1.6s ease-in-out infinite;
+}
+.activity-hint {
+    color: #667188;
+}
+.completed-activity,
+.stage-activity {
+    color: #667188;
+}
+.stage-activity {
+    margin: -8px 0 14px;
+    font-size: 12px;
+}
+@keyframes activity-pulse {
+    50% { opacity: 0.35; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .activity-dot { animation: none; }
 }
 .database-impact-group {
     margin-top: 16px;
