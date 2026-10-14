@@ -21,6 +21,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Properties;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.springframework.http.HttpStatus.BAD_REQUEST;
@@ -36,6 +37,19 @@ public class DatabaseConnectionService {
     private final ProjectService projectService;
     private final ProjectDatabaseSourceRepository databaseSourceRepository;
     private final CredentialCipher credentialCipher;
+
+    /** 프로젝트 조회 권한을 확인한 뒤 비밀번호를 제외한 기본 DB 연결정보를 반환한다. */
+    @Transactional(readOnly = true)
+    public Optional<ProjectDatabaseSourceResponse> getConnection(
+            UUID projectId,
+            UUID userId
+    ) {
+        projectService.getProject(projectId, userId);
+
+        return databaseSourceRepository
+                .findByProjectIdAndPrimaryConnectionTrue(projectId)
+                .map(ProjectDatabaseSourceResponse::from);
+    }
 
     /** projectId 관리 권한을 확인한 뒤 request의 접속정보를 시험하고 성공 여부를 반환한다. */
     @Transactional(readOnly = true)

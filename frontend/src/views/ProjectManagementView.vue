@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
+import { RouterLink, useRouter } from 'vue-router'
 import { deleteProject, getProjects, restoreProject } from '@/api/appApi'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseInput from '@/components/base/BaseInput.vue'
@@ -12,6 +13,7 @@ import { useClientTable } from '@/composables/useClientTable'
 import { useAuthStore } from '@/stores/authStore'
 
 const authStore = useAuthStore()
+const router = useRouter()
 const projects = ref([])
 const keyword = ref('')
 const loading = ref(false)
@@ -155,11 +157,11 @@ const recoverProject = async (project) => {
 }
 
 const openProject = (project) => {
-    console.log('프로젝트 상세', project)
+    if (!showDeleted.value) router.push({ name: 'project-detail', params: { projectId: project.id } })
 }
 
 const editProject = (project) => {
-    console.log('프로젝트 수정', project)
+    if (!showDeleted.value) router.push({ name: 'project-edit', params: { projectId: project.id } })
 }
 
 watch(keyword, resetPage)
@@ -182,13 +184,19 @@ onMounted(fetchProjects)
         </ViewHeading>
 
         <div class="mb-4 flex flex-col gap-3 md:flex-row md:items-end md:justify-between md:gap-4">
-            <BaseInput v-model="keyword" class="w-full md:max-w-md md:flex-1" label="프로젝트 검색" placeholder="프로젝트명, 코드, 기술 스택 검색" />
+            <BaseInput
+                v-model="keyword"
+                wrapper-class="w-full md:max-w-md md:flex-1"
+                label="프로젝트 검색"
+                placeholder="프로젝트명·코드 검색"
+                hint="프로젝트명, 코드, 기술 스택으로 검색할 수 있습니다."
+            />
 
             <div class="flex flex-col gap-3 sm:flex-row sm:items-end">
                 <BaseButton class="w-full sm:w-auto" variant="secondary" :disabled="loading || Boolean(busyProjectId)" @click="showDeleted = !showDeleted">
                     {{ showDeleted ? '일반 프로젝트 보기' : '삭제된 프로젝트 보기' }}
                 </BaseButton>
-                <BaseSelect v-model="pageSize" class="w-full sm:w-32" label="표시 개수" :options="pageSizeOptions" />
+                <BaseSelect v-model="pageSize" wrapper-class="w-full sm:w-32" label="표시 개수" :options="pageSizeOptions" />
             </div>
         </div>
 
@@ -201,7 +209,12 @@ onMounted(fetchProjects)
                 요구사항과 분석 이력은 보존되며, 복구 전에는 새 작업을 시작할 수 없습니다. 확인하려면 프로젝트 이름을 입력하세요.
             </p>
             <div class="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-end">
-                <BaseInput v-model="confirmationName" class="min-w-0 flex-1 sm:min-w-64" label="프로젝트 이름 확인" :placeholder="projectToDelete.name" />
+                <BaseInput
+                    v-model="confirmationName"
+                    wrapper-class="min-w-0 flex-1 sm:min-w-64"
+                    label="프로젝트 이름 확인"
+                    placeholder="프로젝트명을 그대로 입력"
+                />
                 <BaseButton
                     class="w-full sm:w-auto"
                     variant="danger"
@@ -222,7 +235,7 @@ onMounted(fetchProjects)
             :sort-key="sortKey"
             :sort-direction="sortDirection"
             selectable
-            clickable
+            :clickable="!showDeleted"
             sticky-header
             max-height="620px"
             :empty-text="showDeleted ? '삭제된 프로젝트가 없습니다.' : '조건에 맞는 프로젝트가 없습니다.'"
@@ -231,9 +244,14 @@ onMounted(fetchProjects)
         >
             <template #cell-name="{ row }">
                 <div>
-                    <div class="font-extrabold text-slate-900 dark:text-slate-100">
+                    <RouterLink
+                        v-if="!showDeleted"
+                        class="font-extrabold text-slate-900 hover:text-blue-700 hover:underline focus-visible:rounded focus-visible:outline-2 focus-visible:outline-blue-600 dark:text-slate-100 dark:hover:text-blue-300"
+                        :to="{ name: 'project-detail', params: { projectId: row.id } }"
+                    >
                         {{ row.name }}
-                    </div>
+                    </RouterLink>
+                    <div v-else class="font-extrabold text-slate-900 dark:text-slate-100">{{ row.name }}</div>
                     <div class="mt-1 text-xs text-slate-500 dark:text-slate-400">{{ row.id }}</div>
                 </div>
             </template>

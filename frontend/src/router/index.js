@@ -3,6 +3,8 @@ import AdminLayout from '@/layouts/AdminLayout.vue'
 import AuthLayout from '@/layouts/AuthLayout.vue'
 import DashboardView from '@/views/DashboardView.vue'
 import ProjectManagementView from '@/views/ProjectManagementView.vue'
+import ProjectDetailView from '@/views/ProjectDetailView.vue'
+import ProjectEditView from '@/views/ProjectEditView.vue'
 import ProjectRegisterView from '@/views/ProjectRegisterView.vue'
 import ChangeRequestManagementView from '@/views/ChangeRequestManagementView.vue'
 import AnalysisHistoryView from '@/views/AnalysisHistoryView.vue'
@@ -72,6 +74,26 @@ const routes = [
                     title: '프로젝트 등록 및 분석',
                     breadcrumb: '프로젝트 관리 > 프로젝트 등록',
                     permission: 'PROJECT_CREATE',
+                },
+            },
+            {
+                path: 'projects/:projectId/edit',
+                name: 'project-edit',
+                component: ProjectEditView,
+                meta: {
+                    title: '프로젝트 수정',
+                    breadcrumb: '프로젝트 관리 > 프로젝트 수정',
+                    permission: 'PROJECT_UPDATE',
+                },
+            },
+            {
+                path: 'projects/:projectId',
+                name: 'project-detail',
+                component: ProjectDetailView,
+                meta: {
+                    title: '프로젝트 상세',
+                    breadcrumb: '프로젝트 관리 > 프로젝트 상세',
+                    permission: 'PROJECT_READ',
                 },
             },
             {

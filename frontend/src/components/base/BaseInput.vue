@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, useId } from 'vue'
 
 defineOptions({
     inheritAttrs: false,
@@ -34,15 +34,20 @@ const props = defineProps({
         type: Boolean,
         default: false,
     },
+    wrapperClass: {
+        type: String,
+        default: '',
+    },
 })
 
 const emit = defineEmits(['update:modelValue'])
 
-const controlId = computed(() => props.id || props.name || undefined)
+const generatedId = useId()
+const controlId = computed(() => props.id || props.name || generatedId)
 </script>
 
 <template>
-    <div class="grid gap-2">
+    <div class="grid min-w-0 gap-2" :class="wrapperClass">
         <label v-if="label" :for="controlId" class="ui-label">
             {{ label }}
             <span v-if="required" class="text-rose-500">*</span>

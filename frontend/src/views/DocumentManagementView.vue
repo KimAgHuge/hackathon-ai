@@ -62,7 +62,13 @@ onMounted(fetchDocuments)
             </template>
         </ViewHeading>
 
-        <BaseInput v-model="keyword" class="mb-4 max-w-md" label="문서 검색" placeholder="문서명, 프로젝트, 분류 검색" />
+        <BaseInput
+            v-model="keyword"
+            wrapper-class="mb-4 max-w-md"
+            label="문서 검색"
+            placeholder="문서명 등 검색"
+            hint="문서명, 프로젝트, 분류로 검색할 수 있습니다."
+        />
 
         <BaseTable :columns="columns" :rows="pagedRows" :loading="loading" :sort-key="sortKey" :sort-direction="sortDirection" @sort-change="handleSort">
             <template #cell-name="{ row }">

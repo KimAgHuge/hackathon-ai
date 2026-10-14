@@ -328,9 +328,10 @@ onMounted(() => {
                 <BaseInput
                     v-model="searchKeyword"
                     id="requirement-search"
-                    class="min-w-0 flex-1"
+                    wrapper-class="min-w-0 flex-1"
                     label="변경요청 검색"
-                    placeholder="프로젝트명, 요청 키, 제목, 내용 검색"
+                    placeholder="제목·요청 키 검색"
+                    hint="프로젝트명, 요청 키, 제목, 내용으로 검색할 수 있습니다."
                 />
                 <span class="shrink-0 text-sm text-slate-500 dark:text-slate-400 sm:pb-3">검색 결과 {{ totalCount.toLocaleString() }}건</span>
             </div>
@@ -361,7 +362,14 @@ onMounted(() => {
         >
             <h2 class="text-lg font-bold">변경요청 등록</h2>
             <p class="text-sm text-slate-500 dark:text-slate-400">접속정보·비밀번호·토큰은 요구사항에 입력하지 마세요.</p>
-            <BaseSelect v-model="selectedProjectId" id="requirement-project" label="등록할 프로젝트" :options="projectOptions" class="max-w-xl" required>
+            <BaseSelect
+                v-model="selectedProjectId"
+                id="requirement-project"
+                label="등록할 프로젝트"
+                :options="projectOptions"
+                wrapper-class="max-w-xl"
+                required
+            >
                 <template #before-options><option value="">프로젝트를 선택하세요</option></template>
             </BaseSelect>
             <p v-if="selectedProject" class="text-xs text-slate-500 dark:text-slate-400">{{ selectedProject.name }}에 변경요청을 저장합니다.</p>

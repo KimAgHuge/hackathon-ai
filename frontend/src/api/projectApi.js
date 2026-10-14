@@ -1,5 +1,6 @@
 import { httpClient } from '@/api/httpClient'
 import { projectMock, analysisProgressMock, architectureMock, impactAnalysisMock } from '@/mocks/projectMock'
+import { projectsMock } from '@/mocks/appMock'
 
 const useMock = import.meta.env.VITE_USE_MOCK !== 'false'
 
@@ -55,18 +56,23 @@ export const getProjects = async () => {
  */
 export const getProjectById = async (projectId) => {
     if (useMock) {
+        const listedProject = projectsMock.find((project) => project.id === projectId)
+        if (!listedProject && projectId !== projectMock.id) {
+            throw new Error('프로젝트를 찾을 수 없습니다.')
+        }
         return mockDelay({
             id: projectId,
             organizationId: projectMock.organizationId || '00000000-0000-0000-0000-000000000100',
-            name: projectMock.name || 'doenaai-demo',
-            description: projectMock.description || 'AI 기반 소프트웨어 변경 영향도 분석 프로젝트',
-            repositoryUrl: projectMock.repositoryUrl || 'https://github.com/example/doenaai-demo.git',
-            defaultBranch: projectMock.defaultBranch || 'main',
-            sourceType: projectMock.sourceType || 'GIT',
-            status: projectMock.status || 'ACTIVE',
+            name: listedProject?.name || projectMock.name || 'doenaai-demo',
+            description: listedProject ? null : projectMock.description || 'AI 기반 소프트웨어 변경 영향도 분석 프로젝트',
+            repositoryUrl: listedProject?.source === 'ZIP' ? null : projectMock.repositoryUrl || 'https://github.com/example/doenaai-demo.git',
+            defaultBranch: listedProject?.branch || projectMock.defaultBranch || 'main',
+            sourceType: listedProject?.source === 'ZIP' ? 'ZIP' : 'GIT',
+            sourceFileName: null,
+            status: 'ACTIVE',
             createdBy: null,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
+            createdAt: listedProject?.updatedAt || new Date().toISOString(),
+            updatedAt: listedProject?.updatedAt || new Date().toISOString(),
         })
     }
 

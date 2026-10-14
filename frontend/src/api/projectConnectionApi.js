@@ -66,6 +66,19 @@ export const saveGitRepositoryConnection = async (projectId, payload) => {
     return data
 }
 
+/** 저장된 Git 연결 상태를 조회한다. 연결이 없으면 null을 반환하며 인증 비밀값은 받지 않는다. */
+export const getGitRepositoryConnection = async (projectId) => {
+    if (useMock) return mockDelay(null)
+
+    try {
+        const { data } = await httpClient.get(`/projects/${projectId}/repository-connection`)
+        return data
+    } catch (error) {
+        if (error.response?.status === 404) return null
+        throw error
+    }
+}
+
 /**
  * 데이터베이스 연결 테스트
  *
@@ -117,4 +130,12 @@ export const saveProjectConnection = async (projectId, payload) => {
     const { data } = await httpClient.put(`/projects/${projectId}/database-connection`, payload.databaseSource || payload)
 
     return data
+}
+
+/** 저장된 읽기 전용 DB 연결의 공개 메타데이터를 조회한다. 미설정이면 null이다. */
+export const getDatabaseConnection = async (projectId) => {
+    if (useMock) return mockDelay(null)
+
+    const { data } = await httpClient.get(`/projects/${projectId}/database-connection`)
+    return data || null
 }

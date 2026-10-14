@@ -121,7 +121,12 @@ onMounted(() => {
         </ViewHeading>
 
         <section class="mb-4 rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-900">
-            <BaseInput v-model="keyword" label="변경요청 검색" placeholder="프로젝트명, 요청번호, 제목, 요청부서 검색" />
+            <BaseInput
+                v-model="keyword"
+                label="변경요청 검색"
+                placeholder="제목·요청번호 검색"
+                hint="프로젝트명, 요청번호, 제목, 요청부서로 검색할 수 있습니다."
+            />
             <div class="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 <BaseSelect v-model="selectedProject" id="demo-filter-project" label="프로젝트" :options="projectOptions" />
                 <BaseSelect v-model="selectedPriority" id="demo-filter-priority" label="우선순위" :options="priorityOptions" />

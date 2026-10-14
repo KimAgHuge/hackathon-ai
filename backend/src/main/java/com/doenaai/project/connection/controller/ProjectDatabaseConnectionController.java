@@ -6,6 +6,7 @@ import com.doenaai.project.connection.dto.ProjectDatabaseSourceResponse;
 import com.doenaai.project.connection.service.DatabaseConnectionService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
@@ -21,6 +22,19 @@ import java.util.UUID;
 public class ProjectDatabaseConnectionController {
 
     private final DatabaseConnectionService databaseConnectionService;
+
+    @PreAuthorize(
+            "@permissionChecker.has(authentication, 'PROJECT_READ')"
+    )
+    @GetMapping
+    public ResponseEntity<ProjectDatabaseSourceResponse> getConnection(
+            @PathVariable UUID projectId,
+            @AuthenticationPrincipal Jwt jwt
+    ) {
+        return databaseConnectionService.getConnection(projectId, getUserId(jwt))
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.noContent().build());
+    }
 
     @PreAuthorize(
             "@permissionChecker.has(authentication, 'PROJECT_UPDATE')"

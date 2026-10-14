@@ -234,7 +234,8 @@ const createOrganization = () => {
                     :model-value="modelValue.repositoryUrl"
                     name="repositoryUrl"
                     label="저장소 URL"
-                    placeholder="https://github.com/example/doenaai-demo.git"
+                    placeholder="https://github.com/조직/저장소.git"
+                    hint="Git 저장소의 전체 HTTPS 또는 SSH 주소를 입력하세요."
                     required
                     @update:model-value="updateValue({ repositoryUrl: $event })"
                 />
