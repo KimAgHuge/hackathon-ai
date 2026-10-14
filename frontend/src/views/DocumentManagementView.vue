@@ -68,7 +68,7 @@ onMounted(fetchDocuments)
     <div>
         <ViewHeading title="문서 관리" description="요구사항, 인터페이스 정의서, 업무절차 등 RAG 분석 문서를 관리합니다.">
             <template #actions>
-                <BaseButton v-if="authStore.hasPermission('DOCUMENT_UPLOAD')">
+                <BaseButton v-if="authStore.hasPermission('DOCUMENT_UPLOAD')" class="w-full lg:w-auto">
                     + 문서 업로드
                 </BaseButton>
             </template>
@@ -91,7 +91,7 @@ onMounted(fetchDocuments)
         >
             <template #cell-name="{ row }">
                 <div class="font-extrabold text-slate-900 dark:text-slate-100">{{ row.name }}</div>
-                <div class="mt-1 text-xs text-slate-400">{{ row.id }}</div>
+                <div class="mt-1 text-xs text-slate-500 dark:text-slate-400">{{ row.id }}</div>
             </template>
 
             <template #cell-type="{ value }">

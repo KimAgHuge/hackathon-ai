@@ -3,6 +3,7 @@ import { onMounted } from 'vue'
 import PageTitle from '@/components/common/PageTitle.vue'
 import StepHeader from '@/components/common/StepHeader.vue'
 import { useProjectStore } from '@/stores/projectStore'
+import { riskLevelLabel } from '@/lib/riskLevel'
 
 const store = useProjectStore()
 
@@ -34,7 +35,7 @@ onMounted(() => {
             <div class="grid result-grid">
                 <section class="panel risk-card">
                     <span>종합 위험도</span>
-                    <strong>{{ store.impact.riskLevel }}</strong>
+                    <strong>{{ riskLevelLabel(store.impact.riskLevel) }}</strong>
                     <div class="risk-score">{{ store.impact.riskScore }}</div>
                     <p>외부 연계 및 DB 저장 구조 변경이 포함되어 통합 테스트가 필요합니다.</p>
                 </section>

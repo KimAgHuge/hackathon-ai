@@ -1,5 +1,11 @@
 import { httpClient } from '@/api/httpClient'
 
+/** 접근 가능한 모든 활성 프로젝트의 변경요청을 조회한다. */
+export const getAllRequirements = async () => {
+    const { data } = await httpClient.get('/requirements')
+    return data
+}
+
 /**
  * @param {string} projectId 요구사항이 속한 프로젝트 ID
  * @returns {Promise<object[]>} 현재 사용자가 볼 수 있는 요구사항 목록

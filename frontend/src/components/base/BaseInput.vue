@@ -62,7 +62,7 @@ const controlId = computed(() => props.id || props.name || undefined)
         <p v-if="error" class="text-xs font-medium text-rose-600 dark:text-rose-400">
             {{ error }}
         </p>
-        <p v-else-if="hint" class="text-xs text-slate-400">
+        <p v-else-if="hint" class="text-xs text-slate-500 dark:text-slate-400">
             {{ hint }}
         </p>
     </div>

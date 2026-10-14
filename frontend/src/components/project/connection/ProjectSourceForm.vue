@@ -147,7 +147,7 @@ const createOrganization = () => {
                 </BaseSelect>
 
                 <div v-if="canCreateOrganization && organizationOptions.length" class="flex justify-end">
-                    <BaseButton variant="secondary" size="small" :disabled="organizationsLoading" @click="showOrganizationForm = !showOrganizationForm">
+                    <BaseButton class="w-full sm:w-auto" variant="secondary" size="small" :disabled="organizationsLoading" @click="showOrganizationForm = !showOrganizationForm">
                         {{ organizationFormVisible ? '조직 생성 닫기' : '새 조직 생성' }}
                     </BaseButton>
                 </div>
@@ -180,7 +180,7 @@ const createOrganization = () => {
                         {{ organizationCreateError }}
                     </p>
                     <div class="flex justify-end">
-                        <BaseButton :loading="creatingOrganization" :disabled="!organizationFormValid" @click="createOrganization">
+                        <BaseButton class="w-full sm:w-auto" :loading="creatingOrganization" :disabled="!organizationFormValid" @click="createOrganization">
                             조직 생성 및 선택
                         </BaseButton>
                     </div>
@@ -320,7 +320,7 @@ const createOrganization = () => {
                 </p>
 
                 <div class="flex justify-end">
-                    <BaseButton variant="secondary" :loading="testingRepository" :disabled="repositoryTestDisabled" @click="emit('test-repository')">
+                    <BaseButton class="w-full sm:w-auto" variant="secondary" :loading="testingRepository" :disabled="repositoryTestDisabled" @click="emit('test-repository')">
                         저장소 확인
                     </BaseButton>
                 </div>

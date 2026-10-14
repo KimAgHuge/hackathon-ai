@@ -183,7 +183,7 @@ const handleSort = (column) => {
                             ]"
                             :style="{
                                 width: column.width,
-                                minWidth: column.minWidth,
+                                minWidth: column.minWidth || column.width,
                                 maxWidth: column.maxWidth,
                             }"
                         >
@@ -221,7 +221,7 @@ const handleSort = (column) => {
                     </tr>
 
                     <tr v-else-if="rows.length === 0">
-                        <td :colspan="columnCount" class="px-5 py-16 text-center text-sm text-slate-400">
+                        <td :colspan="columnCount" class="px-5 py-16 text-center text-sm text-slate-500 dark:text-slate-400">
                             <slot name="empty">
                                 {{ emptyText }}
                             </slot>

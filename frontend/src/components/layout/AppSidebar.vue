@@ -4,6 +4,15 @@ import { useRouter } from 'vue-router'
 import BaseButton from '@/components/base/BaseButton.vue'
 import { useAuthStore } from '@/stores/authStore'
 
+defineProps({
+    open: {
+        type: Boolean,
+        default: false,
+    },
+})
+
+const emit = defineEmits(['close'])
+
 const router = useRouter()
 const authStore = useAuthStore()
 
@@ -67,7 +76,17 @@ const handleLogout = async () => {
 </script>
 
 <template>
-    <aside class="fixed inset-y-0 left-0 z-30 flex w-64 flex-col border-r border-slate-800 bg-[#071a38] px-4 py-5 text-white">
+    <button
+        v-if="open"
+        type="button"
+        class="fixed inset-0 z-30 bg-slate-950/50 lg:hidden"
+        aria-label="메뉴 닫기"
+        @click="emit('close')"
+    ></button>
+    <aside
+        class="fixed inset-y-0 left-0 z-40 flex w-64 max-w-[85vw] flex-col overflow-y-auto border-r border-slate-800 bg-[#071a38] px-4 py-5 text-white transition-transform lg:z-30 lg:translate-x-0"
+        :class="open ? 'translate-x-0' : '-translate-x-full'"
+    >
         <div class="flex items-center gap-3 px-2 pb-7">
             <div class="grid h-11 w-11 place-items-center rounded-xl bg-gradient-to-br from-cyan-400 to-blue-600 shadow-lg shadow-blue-950/40">
                 <svg class="h-7 w-7" viewBox="0 0 24 24" fill="none">
@@ -75,10 +94,11 @@ const handleLogout = async () => {
                     <path d="m8 15 3-7 2 5 3-2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
                 </svg>
             </div>
-            <div>
+            <div class="min-w-0 flex-1">
                 <div class="text-lg font-extrabold tracking-tight">doenaai</div>
                 <div class="mt-0.5 text-[11px] text-slate-400">변경 영향도 분석 시스템</div>
             </div>
+            <button type="button" class="rounded p-1 text-slate-300 lg:hidden" aria-label="메뉴 닫기" @click="emit('close')">✕</button>
         </div>
 
         <nav class="space-y-1">
@@ -88,6 +108,7 @@ const handleLogout = async () => {
                 :to="menu.path"
                 class="group flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-semibold text-slate-300 transition hover:bg-white/8 hover:text-white"
                 active-class="bg-blue-600 text-white shadow-lg shadow-blue-950/30"
+                @click="emit('close')"
             >
                 <svg class="h-[18px] w-[18px] shrink-0" viewBox="0 0 24 24" fill="none">
                     <path

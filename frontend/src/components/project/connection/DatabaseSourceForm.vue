@@ -148,7 +148,7 @@ const updateDatabaseType = (dbType) => {
             />
 
             <div class="flex justify-end">
-                <BaseButton type="button" variant="secondary" :loading="testingConnection" :disabled="testDisabled" @click="emit('test-connection')">
+                <BaseButton class="w-full sm:w-auto" type="button" variant="secondary" :loading="testingConnection" :disabled="testDisabled" @click="emit('test-connection')">
                     연결 테스트
                 </BaseButton>
             </div>

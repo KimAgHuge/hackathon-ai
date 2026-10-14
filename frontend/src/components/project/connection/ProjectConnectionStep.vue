@@ -197,8 +197,9 @@ const updateRepositoryConnection = (repositoryConnection) => {
             </div>
         </div>
 
-        <div class="mt-6 flex flex-wrap justify-end gap-3">
+        <div class="mt-6 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:justify-end">
             <BaseButton
+                class="w-full sm:w-auto"
                 variant="secondary"
                 :loading="saving"
                 :disabled="!projectValid || testingRepository || testingConnection || startingAnalysis"
@@ -207,6 +208,7 @@ const updateRepositoryConnection = (repositoryConnection) => {
                 프로젝트 임시 저장
             </BaseButton>
             <BaseButton
+                class="w-full sm:w-auto"
                 :loading="startingAnalysis"
                 :disabled="repositoryStatus !== 'SUCCESS' || connectionStatus !== 'SUCCESS' || saving || testingRepository || testingConnection"
                 @click="emit('next')"

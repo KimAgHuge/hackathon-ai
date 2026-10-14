@@ -36,12 +36,12 @@ const move = (nextPage) => {
 </script>
 
 <template>
-    <div class="flex items-center justify-between gap-4">
+    <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
         <div class="text-xs text-slate-500 dark:text-slate-400">
             총 {{ totalCount.toLocaleString() }}건
         </div>
 
-        <div class="flex items-center gap-2">
+        <div class="flex flex-wrap items-center gap-2">
             <BaseButton
                 size="small"
                 variant="secondary"

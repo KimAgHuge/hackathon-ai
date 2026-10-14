@@ -15,7 +15,7 @@ const mockDelay = async (data, delay = 250) => {
  * @param {string|null} requirementVersionId 변경 영향 분석 대상 버전; null이면 전체 구조 분석
  * @returns {Promise<object>} 생성된 작업 ID와 초기 상태
  */
-export const startProjectAnalysis = async (projectId, requirementVersionId = null) => {
+export const startProjectAnalysis = async (projectId, requirementVersionId = null, reuseFromJobId = null) => {
     if (useMock) {
         return mockDelay({
             jobId: crypto.randomUUID(),
@@ -30,7 +30,7 @@ export const startProjectAnalysis = async (projectId, requirementVersionId = nul
         })
     }
 
-    const { data } = await httpClient.post(`/projects/${projectId}/analysis-jobs`, buildAnalysisJobPayload(requirementVersionId))
+    const { data } = await httpClient.post(`/projects/${projectId}/analysis-jobs`, buildAnalysisJobPayload(requirementVersionId, reuseFromJobId))
 
     return data
 }
@@ -59,6 +59,13 @@ export const getAnalysisJob = async (analysisJobId, options = {}) => {
 
     const { data } = await httpClient.get(`/analysis-jobs/${analysisJobId}`, options)
 
+    return data
+}
+
+/** PENDING/RUNNING 작업의 서버 실행을 취소한다. 화면을 떠나는 동작과는 다르다. */
+export const cancelAnalysisJob = async (analysisJobId) => {
+    if (useMock) return mockDelay({ jobId: analysisJobId, status: 'CANCELLED' })
+    const { data } = await httpClient.post(`/analysis-jobs/${analysisJobId}/cancel`)
     return data
 }
 

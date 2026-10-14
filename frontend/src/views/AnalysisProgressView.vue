@@ -1,10 +1,11 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { RouterLink, useRoute } from 'vue-router'
 import PageTitle from '@/components/common/PageTitle.vue'
-import { getAnalysisJob, getAnalysisResult, isAnalysisDemoMode } from '@/api/analysisApi'
+import { cancelAnalysisJob, getAnalysisJob, getAnalysisResult, isAnalysisDemoMode } from '@/api/analysisApi'
 import { createAnalysisPoller } from '@/lib/analysisPolling'
 import { activeAnalysisStage, analysisActivity, analysisElapsedSeconds, formatAnalysisElapsed } from '@/lib/analysisProgress'
+import { riskLevelLabel } from '@/lib/riskLevel'
 
 const route = useRoute()
 const job = ref(null)
@@ -12,6 +13,8 @@ const analysis = ref(null)
 const loading = ref(false)
 const retryScheduled = ref(false)
 const requestError = ref(null)
+const cancelBusy = ref(false)
+const cancelError = ref('')
 const lastCheckedAt = ref(null)
 const clock = ref(Date.now())
 let elapsedTimer = null
@@ -31,6 +34,27 @@ const errorMessage = computed(() => {
     const error = requestError.value?.error
     return error?.response?.data?.message || error?.response?.data?.detail || error?.message || '요청을 처리하지 못했습니다.'
 })
+
+const cancelJob = async () => {
+    if (!window.confirm('분석 작업을 취소할까요? 화면에서만 나가려면 “이력으로 나가기”를 선택하세요.')) return
+    cancelBusy.value = true
+    cancelError.value = ''
+    try {
+        const updated = await cancelAnalysisJob(route.params.analysisJobId)
+        job.value = updated
+        if (updated.status === 'CANCELLED') {
+            poller.stop()
+            loading.value = false
+            retryScheduled.value = false
+        } else {
+            poller.refresh()
+        }
+    } catch (error) {
+        cancelError.value = error.response?.data?.message || error.message || '분석을 취소하지 못했습니다.'
+    } finally {
+        cancelBusy.value = false
+    }
+}
 
 // 작업 상태를 자동 조회하고 COMPLETED일 때만 저장된 결과를 한 번 읽는다.
 const poller = createAnalysisPoller({
@@ -120,7 +144,6 @@ const sourceTechnologies = computed(() =>
 )
 const riskLevel = computed(() => analysis.value?.riskLevel ?? aiResult.value.riskLevel ?? 'UNKNOWN')
 const riskScore = computed(() => analysis.value?.riskScore ?? aiResult.value.riskScore)
-const riskLabels = { LOW: '낮음', MEDIUM: '보통', HIGH: '높음', CRITICAL: '매우 높음', UNKNOWN: '판단 불가' }
 const databaseColumnCount = computed(() => {
     if (!Array.isArray(database.value.tables) || database.value.tables.some((table) => !Array.isArray(table.columns))) return '정보 없음'
     return `${database.value.tables.reduce((total, table) => total + table.columns.length, 0).toLocaleString('ko-KR')}개`
@@ -185,7 +208,18 @@ const evidenceEntries = (evidence) => (evidence && typeof evidence === 'object' 
 
         <p v-if="isAnalysisDemoMode" class="analysis-notice">데모 모드: 아래 상태와 결과는 화면 확인용 샘플이며 실제 분석 결과가 아닙니다.</p>
 
-        <div class="analysis-toolbar">
+        <div class="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center">
+            <RouterLink class="button secondary w-full text-center sm:w-auto" :to="{ name: 'analysis-history', query: { projectId: route.params.projectId } }">
+                이력으로 나가기
+            </RouterLink>
+            <button v-if="job && ['PENDING', 'RUNNING'].includes(job.status)" type="button" class="button secondary w-full sm:w-auto" :disabled="cancelBusy" @click="cancelJob">
+                {{ cancelBusy ? '취소 요청 중…' : '분석 작업 취소' }}
+            </button>
+            <span v-if="job && ['PENDING', 'RUNNING'].includes(job.status)" class="text-xs text-slate-600 dark:text-slate-400">화면을 떠나도 서버 분석은 계속되며 이력에서 다시 볼 수 있습니다.</span>
+        </div>
+        <p v-if="cancelError" role="alert" class="analysis-notice error-notice">{{ cancelError }}</p>
+
+        <div class="analysis-toolbar flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <p role="status" aria-live="polite">
                 <template v-if="loading">{{ job?.status === 'COMPLETED' ? '저장된 분석 결과를 불러오는 중…' : '작업 상태를 확인하는 중…' }}</template>
                 <template v-else-if="retryScheduled">{{
@@ -194,7 +228,7 @@ const evidenceEntries = (evidence) => (evidence && typeof evidence === 'object' 
                 <template v-else>자동 조회가 중지되었습니다.</template>
                 <span v-if="lastCheckedAt"> · 마지막 확인 {{ formatDate(lastCheckedAt) }}</span>
             </p>
-            <button class="button secondary" :disabled="loading" @click="poller.refresh()">
+            <button class="button secondary w-full shrink-0 sm:w-auto" :disabled="loading" @click="poller.refresh()">
                 {{ requestError?.phase === 'result' ? '결과 다시 불러오기' : '상태 다시 확인' }}
             </button>
         </div>
@@ -294,7 +328,7 @@ const evidenceEntries = (evidence) => (evidence && typeof evidence === 'object' 
                         <p>결과 저장 시각: {{ formatDate(analysis.createdAt) }}</p>
                     </div>
                     <span class="badge" :class="['HIGH', 'CRITICAL'].includes(riskLevel) ? 'orange' : 'blue'">
-                        위험도 {{ riskLabels[riskLevel] || riskLevel }}{{ typeof riskScore === 'number' ? ` · ${riskScore}/100` : '' }}
+                        위험도 {{ riskLevelLabel(riskLevel) }}{{ typeof riskScore === 'number' ? ` · ${riskScore}/100` : '' }}
                     </span>
                 </div>
                 <p class="result-text">{{ analysis.summary || aiResult.summary || '제공된 요약이 없습니다.' }}</p>

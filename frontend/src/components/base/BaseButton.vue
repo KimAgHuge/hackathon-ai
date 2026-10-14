@@ -74,7 +74,7 @@ const sizeClass = computed(() => {
         :href="href || undefined"
         :type="componentType === 'button' ? type : undefined"
         :disabled="componentType === 'button' ? disabled || loading : undefined"
-        class="ui-button"
+        class="ui-button max-w-full whitespace-nowrap text-center"
         :class="[
             variantClass,
             sizeClass,

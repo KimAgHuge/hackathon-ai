@@ -23,6 +23,8 @@ const columns = computed(() => [
         label: '관리',
         align: 'center',
         width: '120px',
+        headerClass: 'sticky right-0 z-20 border-l border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800',
+        cellClass: 'sticky right-0 z-10 border-l border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900',
         visible: authStore.hasPermission('MODEL_DEPLOY'),
     },
 ])
@@ -48,31 +50,34 @@ onMounted(fetchModels)
     <div>
         <ViewHeading title="AI 모델 관리" description="모델 버전, LoRA 어댑터, 평가 결과와 배포 상태를 관리합니다.">
             <template #actions>
-                <BaseButton
-                    v-if="authStore.hasPermission('MODEL_TRAIN')"
-                    variant="secondary"
-                >
-                    학습 작업 생성
-                </BaseButton>
-                <BaseButton
-                    v-if="authStore.hasPermission('MODEL_DEPLOY')"
-                    class="ml-2"
-                >
-                    새 모델 등록
-                </BaseButton>
+                <div class="flex flex-col gap-2 sm:flex-row">
+                    <BaseButton
+                        v-if="authStore.hasPermission('MODEL_TRAIN')"
+                        class="w-full sm:w-auto"
+                        variant="secondary"
+                    >
+                        학습 작업 생성
+                    </BaseButton>
+                    <BaseButton
+                        v-if="authStore.hasPermission('MODEL_DEPLOY')"
+                        class="w-full sm:w-auto"
+                    >
+                        새 모델 등록
+                    </BaseButton>
+                </div>
             </template>
         </ViewHeading>
 
         <template v-if="models">
             <section class="overflow-hidden rounded-xl border border-blue-200 bg-gradient-to-r from-[#071a38] to-[#0f4ca3] text-white shadow-lg shadow-blue-950/10">
-                <div class="grid grid-cols-[1.25fr_0.75fr]">
+                <div class="grid lg:grid-cols-[1.25fr_0.75fr]">
                     <div class="p-6">
                         <div class="text-[11px] font-extrabold tracking-[0.14em] text-blue-200">CURRENT ACTIVE MODEL</div>
-                        <div class="mt-3 flex items-center gap-3">
+                        <div class="mt-3 flex flex-wrap items-center gap-3">
                             <h2 class="text-2xl font-extrabold">{{ models.active.name }}</h2>
                             <StatusBadge :status="models.active.status" />
                         </div>
-                        <div class="mt-5 grid grid-cols-2 gap-x-8 gap-y-4 text-xs">
+                        <div class="mt-5 grid gap-x-8 gap-y-4 text-xs sm:grid-cols-2">
                             <div>
                                 <div class="text-blue-200">기반 모델</div>
                                 <div class="mt-1 font-bold">{{ models.active.baseModel }}</div>
@@ -103,7 +108,7 @@ onMounted(fetchModels)
                 </div>
             </section>
 
-            <div class="mt-5 grid grid-cols-4 gap-4">
+            <div class="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
                 <section
                     v-for="item in models.evaluations"
                     :key="item.label"

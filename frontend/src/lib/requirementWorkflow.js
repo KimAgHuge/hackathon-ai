@@ -29,5 +29,10 @@ export const buildRequirementPayload = (form) => {
     }
 }
 
-/** 버전 ID가 있을 때만 분석 API 본문에 담는다; 없으면 전체 구조 분석용 undefined. */
-export const buildAnalysisJobPayload = (requirementVersionId) => (requirementVersionId ? { requirementVersionId } : undefined)
+/** 기본 분석은 최신 Git/DB를 확인하고, 저장 근거를 선택한 경우에만 해당 작업 ID를 보낸다. */
+export const buildAnalysisJobPayload = (requirementVersionId, reuseFromJobId = null) => (
+    requirementVersionId || reuseFromJobId
+        ? { ...(requirementVersionId ? { requirementVersionId } : {}),
+            ...(reuseFromJobId ? { reuseFromJobId, confirmedUnchanged: true } : {}) }
+        : undefined
+)

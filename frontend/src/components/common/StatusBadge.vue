@@ -11,6 +11,8 @@ const styles = {
     ACTIVE: 'border-emerald-200 bg-emerald-50 text-emerald-700',
     READY: 'border-blue-200 bg-blue-50 text-blue-700',
     COMPLETED: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+    RUNNING: 'border-violet-200 bg-violet-50 text-violet-700',
+    FAILED: 'border-rose-200 bg-rose-50 text-rose-700',
     APPROVED: 'border-emerald-200 bg-emerald-50 text-emerald-700',
     ANALYZED: 'border-blue-200 bg-blue-50 text-blue-700',
     REVIEW: 'border-amber-200 bg-amber-50 text-amber-700',
@@ -36,6 +38,8 @@ const labels = {
     ACTIVE: '활성',
     READY: '준비됨',
     COMPLETED: '완료',
+    RUNNING: '진행 중',
+    FAILED: '실패',
     APPROVED: '승인',
     ANALYZED: '분석완료',
     REVIEW: '검토중',
@@ -59,10 +63,10 @@ const labels = {
 
 <template>
     <span
-        class="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-bold"
+        class="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-1 text-[11px] font-bold"
         :class="styles[props.status] || 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/70 text-slate-600'"
     >
-        <span class="h-1.5 w-1.5 rounded-full bg-current"></span>
+        <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-current"></span>
         {{ labels[props.status] || props.status }}
     </span>
 </template>

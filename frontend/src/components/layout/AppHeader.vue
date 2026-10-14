@@ -4,6 +4,8 @@ import { useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/authStore'
 import { useThemeStore } from '@/stores/themeStore'
 
+defineEmits(['toggle-navigation'])
+
 const route = useRoute()
 const authStore = useAuthStore()
 const themeStore = useThemeStore()
@@ -14,13 +16,25 @@ const roleLabel = computed(() => authStore.roles.join(', ') || 'USER')
 </script>
 
 <template>
-    <header class="sticky top-0 z-20 flex h-16 items-center justify-between border-b border-slate-200 bg-white/95 px-8 backdrop-blur dark:border-slate-800 dark:bg-slate-950/92">
-        <div>
-            <div class="text-xs font-medium text-slate-500 dark:text-slate-400">{{ breadcrumb }}</div>
-            <div class="mt-1 text-[10px] font-bold tracking-wide text-slate-400">{{ roleLabel }}</div>
+    <header class="sticky top-0 z-20 flex h-16 items-center justify-between gap-3 border-b border-slate-200 bg-white/95 px-4 backdrop-blur sm:px-6 lg:px-8 dark:border-slate-800 dark:bg-slate-950/92">
+        <div class="flex min-w-0 items-center gap-3">
+            <button
+                type="button"
+                class="hidden h-9 w-9 shrink-0 place-items-center rounded-lg border border-slate-200 text-slate-600 max-lg:grid dark:border-slate-700 dark:text-slate-300"
+                aria-label="메뉴 열기"
+                @click="$emit('toggle-navigation')"
+            >
+                <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+                    <path d="M4 6h16M4 12h16M4 18h16" />
+                </svg>
+            </button>
+            <div class="min-w-0">
+                <div class="truncate text-xs font-medium text-slate-500 dark:text-slate-400">{{ breadcrumb }}</div>
+                <div class="mt-1 truncate text-[10px] font-bold tracking-wide text-slate-500 dark:text-slate-400">{{ roleLabel }}</div>
+            </div>
         </div>
 
-        <div class="flex items-center gap-3">
+        <div class="flex shrink-0 items-center gap-3">
             <div class="hidden items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 xl:flex">
                 <span class="h-2 w-2 rounded-full bg-emerald-500"></span>
                 AI 서버 정상
