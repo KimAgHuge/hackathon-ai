@@ -1,0 +1,5 @@
+{
+  "train": ["project-a"],
+  "valid": ["project-b"],
+  "test": ["project-c"]
+}

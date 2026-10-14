@@ -7,13 +7,13 @@
 | 기반 모델 | `Qwen/Qwen3.8-27B` (접미사 -Instruct 없음), Apache-2.0. 공식 post-trained 모델이며 thinking 기본 활성화. 정확한 revision과 학습·평가 시 thinking 설정은 고정 필요 | 공개 모델 카드 확인 |
 | 운영 Qwen | 사용자 전달: `qwen3.8:27b`, 27.3B, Q4_K_M, Ollama ID `22130167c4c2` | Mac Studio 전달 정보, 이 맥에서 원격 재확인하지 않음 |
 | 학습 목적 | 우선순위: ① DB 판단 정확도·위험한 변경 방지 ② 소스 범위·근거 정확도 ③ 확인 질문·위험 설명 ④ 한국어 JSON 준수. 근거 없는 UNIQUE, 기존 데이터 삭제, 팀/조직 임의 동일시를 줄임 | 사용자 전달 우선순위 반영 |
-| 학습 장비 | Apple M4 Max, 통합 메모리 64 GiB, macOS 26.6.2, arm64. 현재 디스크 여유 약 232 GiB | 로컬 확인 |
-| 학습 환경 | Python 3.12.15, MLX 0.32.3, MLX-LM 0.32.0, datasets 5.1.0, transformers 5.19.0. `training/.venv` 사용 | 설치 완료, Metal 연산·미분 및 CLI 검증 완료 |
+| 학습 장비 | Apple M4 Max, 통합 메모리 64 GiB, macOS 26.6.2, arm64. 모델 다운로드 후 디스크 여유 약 217 GiB | 로컬 확인 |
+| 학습 환경 | Python 3.12.15, MLX 0.32.3, MLX-LM 0.32.0, datasets 5.1.0, transformers 5.19.0, Pydantic 2.13.4. `training/.venv` 사용 | 설치 완료, Metal 연산·미분 및 CLI 검증 완료 |
 | 학습 방식 | `mlx-community/Qwen3.8-27B-4bit` QLoRA. revision `10c35caafbb80f7dc6a7a432cdd11af10a6d4818`로 로딩·단문 추론·4층 rank 4의 2회 업데이트·adapter 저장/재로딩 통과. 시험 peak 16.25 GiB. 상세는 `QWEN_COMPATIBILITY.md` | 짧은 실행 검증 완료, 업무 학습·긴 입력 미검증 |
 | 학습 입력 | 전체 분석: `sourceSummary`(요구사항 `changeRequirement` 포함), `databaseSummary`, `relations`. DB 전용 분석: `changeRequirement`, `databaseType`, 테이블·컬럼·PK/FK·인덱스, `promptCoverage` | 코드로 확인 |
-| 학습 데이터 | 모델 가중치 다운로드 완료. 업무 학습 JSONL은 없음. 승인 결과 추출 스크립트는 placeholder. 원격 승인 데이터 건수·품질은 미확인. 새 커밋의 baseline은 `humanApproved=false`인 평가 원본 | 승인 데이터 확보 필요 |
+| 학습 데이터 | 업무 학습 JSONL은 없음. 승인 로컬 사례 검사·프로젝트 분리·JSONL 변환 도구 구현 완료. 원격 승인 데이터 건수·품질은 미확인. baseline은 `humanApproved=false`인 평가 원본 | 승인 데이터 확보 필요 |
 | 응답 형식 | 전체 단계: `RequirementGeneralAnalysisResponse`; DB 단계: `DatabaseImpact`. 최종 API 응답은 `ProjectAnalysisResponse`로 조합 | 코드로 확인 |
-| 평가 기준 | DB 관련성 및 상태 판단, 근거에 없는 객체 생성 여부, 잘못된 UNIQUE/삭제 제안, 불확실한 요구사항의 확인 질문, JSON 계약 준수, 한국어 품질, 입력 누락 인지. 호출 시간·메모리·재시도도 기록 | 항목 도출, 정답 세트·합격 수치는 미정 |
+| 평가 기준 | 고정 시험 세트의 두 단계 답변 생성·JSON/라벨/정적 근거 검사 및 동일 조건 비교 도구 구현. UNIQUE/삭제 표현과 한국어·핵심 질문 누락은 사람의 검토 표시로 제공. 상세는 DATA_WORKFLOW.md | 도구 구현, 정답 세트·품질 합격 기준 미정 |
 | 배포 대상 | Mac Studio M1 Max·64GB, FastAPI → Ollama. 운영 Qwen 정보는 사용자 전달값 사용. MLX adapter의 직접 적용은 가정하지 않으며 병합·변환·재양자화 및 재평가 경로는 미확정 | 전달값 반영, 배포 호환성 미검증 |
 
 ## 출력 계약 주의사항

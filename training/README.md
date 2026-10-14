@@ -73,8 +73,11 @@ mlx_lm.lora \
 실제 학습 후 고정 시험 세트로 DB 판단 정확도, 잘못된 변경 제안, 한국어 품질과 지연시간을 비교합니다.
 Mac Studio/Ollama 배포에는 모델별 변환·호환성 검증이 추가로 필요합니다.
 
-`export_dataset.py`, `train_lora.py`는 여전히 placeholder입니다.
-현재 환경에서는 공식 `mlx_lm.lora` 명령으로 학습하며, 승인 데이터 추출·평가 자동화는 다음 구현 단계입니다.
+`export_dataset.py`는 승인된 로컬 사례를 검사해 JSONL로 변환합니다.
+`evaluate_model.py`는 같은 시험 세트의 원본 모델·학습 어댑터 답변을 생성하고 비교합니다.
+전달 양식과 명령은 [데이터·평가 안내](DATA_WORKFLOW.md)를 참고합니다.
+원격 DB의 승인 API/추출과 `train_lora.py` 자동화는 아직 구현하지 않았습니다.
+실제 학습은 공식 `mlx_lm.lora` 명령을 사용합니다.
 모델, 데이터셋, 캐시, adapter, 체크포인트는 Git에서 제외합니다.
 비밀키나 고객 원문은 소스·문서·학습 데이터에 넣지 않습니다.
 

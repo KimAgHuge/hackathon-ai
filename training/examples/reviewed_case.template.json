@@ -1,0 +1,51 @@
+{
+  "caseId": "case-001",
+  "projectGroup": "project-a",
+  "humanApproved": false,
+  "sanitized": false,
+  "approval": {
+    "reviewerId": "reviewer-001",
+    "approvedAt": "2026-10-14T10:00:00+09:00",
+    "note": "양식 예시입니다. 실제 검토·수정 이유를 작성해야 합니다."
+  },
+  "snapshot": {
+    "sourceRevision": "0000000000000000000000000000000000000000",
+    "requirementVersionId": "requirement-version-001",
+    "databaseCapturedAt": "2026-10-14T09:00:00+09:00"
+  },
+  "request": {
+    "projectId": "00000000-0000-0000-0000-000000000000",
+    "sourceSummary": {
+      "analysisScope": "REQUIREMENT_IMPACT",
+      "changeRequirement": {
+        "title": "실제 요구사항 제목 작성",
+        "refinedContent": "비식별화한 요구사항 내용을 작성합니다."
+      },
+      "components": [],
+      "promptCoverage": {"truncated": false}
+    },
+    "databaseSummary": {"type": "POSTGRESQL", "tables": []},
+    "relations": []
+  },
+  "answers": {
+    "general": {
+      "summary": "실제 검토한 전체 분석 정답을 작성합니다.",
+      "frameworks": [],
+      "riskLevel": "UNKNOWN",
+      "riskScore": 0,
+      "impactAreas": [],
+      "evidences": [],
+      "recommendations": [],
+      "databaseRelevance": "UNCERTAIN",
+      "databaseRelevanceReason": "실제 DB 관련성 판단 근거를 작성합니다."
+    },
+    "database": {
+      "status": "UNKNOWN",
+      "explanation": "실제 검토한 DB 분석 정답을 작성합니다.",
+      "observedTables": [],
+      "proposedChanges": [],
+      "conditionalPaths": [],
+      "openQuestions": []
+    }
+  }
+}

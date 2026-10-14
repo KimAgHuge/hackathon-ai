@@ -10,7 +10,7 @@
 | Ollama 모델 | `qwen3.8:27b`, 로컬 ID `22130167c4c2`, 설치 크기 약 17GB |
 | 모델 메타데이터 | 27.3B, `qwen35` 내부 아키텍처, `Q4_K_M` 양자화, 최대 컨텍스트 262144토큰, text/vision/tools/thinking 지원 (`ollama show qwen3.8:27b`) |
 | 학습 원본 계열 | [Qwen/Qwen3.8-27B](https://huggingface.co/Qwen/Qwen3.8-27B). 운영용 Ollama GGUF 파일과 별도이다. |
-| MLX 4비트 후보 | [mlx-community/Qwen3.8-27B-4bit](https://huggingface.co/mlx-community/Qwen3.8-27B-4bit). MacBook의 MLX-LM 0.32.0에서 실제 역전파·LoRA 학습 성공 여부는 아직 검증하지 않았다. |
+| MLX 4비트 후보 | [mlx-community/Qwen3.8-27B-4bit](https://huggingface.co/mlx-community/Qwen3.8-27B-4bit). MacBook MLX-LM 0.32.0에서 짧은 QLoRA 역전파·업데이트·어댑터 재로딩을 확인했다. 긴 업무 입력·품질·Ollama 배포는 미검증. [MacBook 최신 결과](12_2026-10-14_MacBook_학습_도구_진행상황.md) |
 | AI 서버 모델 설정 | 로컬 `ai-server/.env`와 [설정 기본값](../ai-server/app/config.py)은 `qwen3.8:27b` |
 | 추론 방식 | [호출 코드](../ai-server/app/services/llm_service.py)는 `think`를 **명시하지 않는다**. Qwen/Ollama의 기본 thinking 동작을 사용한다. 짧은 직접 호출에서 thinking 필드가 생성되는 것을 확인했다. 이전 비교에서는 이를 ‘추론 켬’으로 기록했다. |
 | 컨텍스트 | 모델 지원 최대 262144토큰. AI 서버는 `num_ctx`를 지정하지 않는다. 실제 로드 시 값은 `ollama ps`로 재확인해야 한다. |
@@ -47,7 +47,7 @@ PARAMETER temperature 1
 
 ## 3. 사람이 승인한 학습 사례의 현재 상태
 
-- 저장소에는 **JSONL 학습 데이터가 없고**, `training/export_dataset.py`와 `training/train_lora.py`는 placeholder다.
+- 실제 승인 업무 JSONL은 아직 확보되지 않았다. `training/export_dataset.py`는 로컬 승인 사례 검사·프로젝트 분리·JSONL 변환 도구로 구현했고 `training/evaluate_model.py`는 동일 조건 평가·비교를 제공한다. `training/train_lora.py`와 원격 승인/DB 자동 추출은 미구현이다. [전달 양식·실행 안내](../training/DATA_WORKFLOW.md)를 사용한다.
 - DB 스키마의 `public.analysis_results`에는 `original_result`, `corrected_result`, `approved`, `approved_by`, `approved_at`, `review_note`, `inference_metadata` 필드가 있다. 현재 Backend는 원본 응답과 실제 전달 근거(`inference_metadata.facts`)를 저장하지만, 저장소 코드에서는 사람이 수정·승인하는 API/화면을 확인하지 못했다. [결과 저장 코드](../backend/src/main/java/com/doenaai/analysis/repository/AnalysisResultRepository.java), [DB 스키마](../supabase/migrations/002_projects_analysis.sql) 참조.
 - 따라서 **승인된 사례 건수·승인 정답·수정 이유·프로젝트/요구사항 버전의 학습용 묶음은 아직 전달할 수 없다.** 원격 DB의 승인 건수는 조회하지 않았다. 단순 모델 출력을 승인 정답으로 표시하거나 임시 데이터를 정답처럼 학습시켜서는 안 된다.
 - 다음 데이터 작업은 승인 기준·검토 책임자를 정하고, 입력 당시의 요구사항 버전·소스 커밋·실제 전달 facts·원본 응답·수정 정답·수정 이유를 연결해 비밀정보를 제거한 뒤 학습/검증/시험으로 분리하는 것이다.
@@ -62,6 +62,6 @@ DB 분석은 ‘팀=기존 조직’과 ‘팀=별도 엔티티’ 경로를 분
 
 ## 5. MacBook 쪽에 남은 확인 사항
 
-1. `Qwen/Qwen3.8-27B` 또는 MLX 4비트 후보를 **다운로드·로딩**하고, 설치된 MLX-LM 버전에서 아주 짧은 text-only 역전파 시험으로 LoRA/QLoRA 호환성을 확인한다. Ollama의 `Q4_K_M` GGUF를 MLX 학습 파일로 직접 사용하지 않는다.
+1. MLX 4비트 모델 다운로드·로딩과 짧은 text-only QLoRA·어댑터 재로딩은 완료했다. 실제 업무 입력 길이·학습층 범위에서 메모리와 안정성을 추가 검증한다. Ollama의 `Q4_K_M` GGUF를 MLX 학습 파일로 직접 사용하지 않는다.
 2. 승인된 사례의 존재·권한·비식별화 기준을 확인한다. 현재 확보된 정답 데이터가 없으므로 운영 출력만으로 학습을 시작하지 않는다.
 3. 동일한 입력과 응답 스키마로 학습 전후의 DB 판단 정확도·위험한 변경 제안·근거·한국어 JSON·시간·메모리를 비교한다. MLX 어댑터를 Mac Studio Ollama에 적용하는 배포·재양자화 경로는 별도 검증이 필요하다.
