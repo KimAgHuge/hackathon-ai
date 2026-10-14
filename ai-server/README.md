@@ -135,7 +135,7 @@ $env:DOENAAI_AI_INTERNAL_API_KEY='doenaai_생성된_동일한_난수값'
 
 ```bash
 export DOENAAI_OLLAMA_URL=http://127.0.0.1:11434
-export DOENAAI_AI_MODEL=devstral
+export DOENAAI_AI_MODEL=qwen3.8:27b
 export DOENAAI_AI_INTERNAL_API_KEY='위에서 한 번 생성한 실제 값'
 export DOENAAI_AI_REQUEST_TIMEOUT_SECONDS=300
 export DOENAAI_AI_KEEP_ALIVE=30m

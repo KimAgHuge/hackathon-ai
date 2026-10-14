@@ -1,0 +1,80 @@
+{
+  "recordType": "unapproved_model_baseline",
+  "capturedAt": "2026-10-14",
+  "model": "qwen3.8:27b",
+  "modelLocalId": "22130167c4c2",
+  "testPath": "LlmService.analyze direct, not frontend/backend end-to-end",
+  "repositoryRevision": null,
+  "humanApproved": false,
+  "timingSeconds": {
+    "requirementGeneralAnalysis": 144.26,
+    "databaseImpact": 204.69,
+    "total": 348.95
+  },
+  "validationRetries": null,
+  "request": {
+    "projectId": "00000000-0000-0000-0000-000000000000",
+    "sourceSummary": {
+      "analysisScope": "REQUIREMENT_IMPACT",
+      "changeRequirement": {
+        "title": "한 팀만 프로젝트를 관리",
+        "refinedContent": "프로젝트 관리를 하나의 팀으로 제한한다. 이 변경에 필요한 소스 및 DB 변경 부분과 기존 프로젝트에 대한 위험을 알려줘."
+      },
+      "languages": ["Java", "SQL", "TypeScript"],
+      "frameworks": [{"name": "Spring Boot"}, {"name": "Vue"}],
+      "components": [
+        {"path": "backend/src/main/java/com/doenaai/project/entity/Project.java", "language": "Java", "type": "ENTITY", "line": 14},
+        {"path": "backend/src/main/java/com/doenaai/project/repository/ProjectAccessRepository.java", "language": "Java", "type": "REPOSITORY", "line": 1},
+        {"path": "supabase/migrations/007_organization_requirement_estimate.sql", "language": "SQL", "type": "MIGRATION", "line": 101}
+      ],
+      "promptCoverage": {
+        "collectedTables": 4,
+        "includedTables": 4,
+        "collectedRelations": 2,
+        "includedRelations": 2,
+        "collectedComponents": 3,
+        "includedComponents": 3,
+        "truncated": false,
+        "notice": "저장소의 관련 구조만 발췌한 재현 테스트이며 실제 DB 조회와 전체 소스 스캔은 수행하지 않았습니다."
+      },
+      "limitations": ["정적 선언과 마이그레이션에서 확인된 구조이며 실제 DB의 현재 데이터는 확인하지 않았습니다."]
+    },
+    "databaseSummary": {
+      "type": "POSTGRESQL",
+      "tables": [
+        {"schema": "public", "name": "organizations", "type": "TABLE", "columns": [{"name": "id", "type": "uuid", "nullable": false}, {"name": "name", "type": "varchar", "nullable": false}], "primaryKey": ["id"], "foreignKeys": [], "indexes": []},
+        {"schema": "public", "name": "projects", "type": "TABLE", "columns": [{"name": "id", "type": "uuid", "nullable": false}, {"name": "organization_id", "type": "uuid", "nullable": true}, {"name": "name", "type": "varchar", "nullable": false}], "primaryKey": ["id"], "foreignKeys": [{"column": "organization_id", "referencedSchema": "public", "referencedTable": "organizations", "referencedColumn": "id"}], "indexes": [{"name": "idx_projects_organization_id", "columns": ["organization_id"], "unique": false}, {"name": "uq_projects_id_organization_id", "columns": ["id", "organization_id"], "unique": true}]},
+        {"schema": "public", "name": "organization_members", "type": "TABLE", "columns": [{"name": "organization_id", "type": "uuid", "nullable": false}, {"name": "user_id", "type": "uuid", "nullable": false}], "primaryKey": ["organization_id", "user_id"], "foreignKeys": [{"column": "organization_id", "referencedSchema": "public", "referencedTable": "organizations", "referencedColumn": "id"}], "indexes": []},
+        {"schema": "public", "name": "project_members", "type": "TABLE", "columns": [{"name": "project_id", "type": "uuid", "nullable": false}, {"name": "user_id", "type": "uuid", "nullable": false}, {"name": "member_role", "type": "varchar", "nullable": false}], "primaryKey": ["project_id", "user_id"], "foreignKeys": [{"column": "project_id", "referencedSchema": "public", "referencedTable": "projects", "referencedColumn": "id"}], "indexes": []}
+      ]
+    },
+    "relations": [
+      {"schema": "public", "table": "projects", "file": "backend/src/main/java/com/doenaai/project/entity/Project.java", "line": 14, "kind": "ORM_ENTITY", "confidence": 0.95, "tentative": false, "ambiguous": false, "evidenceType": "STATIC_EXPLICIT"},
+      {"schema": "public", "table": "projects", "file": "supabase/migrations/007_organization_requirement_estimate.sql", "line": 102, "kind": "SQL", "confidence": 0.95, "tentative": false, "ambiguous": false, "evidenceType": "STATIC_EXPLICIT"}
+    ]
+  },
+  "response": {
+    "summary": "프로젝트 관리를 하나의 팀(organization)으로 제한하는 변경은 현재 projects 테이블의 organization_id가 NULL 허용 상태이고, project_members 테이블을 통해 조직 경유 없이 사용자를 프로젝트에 직접 연결할 수 있는 구조를 변경해야 합니다. 기존 프로젝트 중 organization_id가 NULL인 데이터가 존재할 수 있어 마이그레이션 시 데이터 정합성 위험이 있습니다.",
+    "frameworks": ["Spring Boot", "Vue"],
+    "riskLevel": "HIGH",
+    "riskScore": 78,
+    "impactAreas": ["DB 스키마: projects.organization_id NOT NULL 제약 추가 및 기존 NULL 데이터 처리", "DB 스키마: project_members 테이블의 역할 재정의 또는 organization_members 경유 접근 제어 강화", "소스: Project.java 엔티티의 organizationId 필드 nullable 제거", "소스: ProjectAccessRepository.java의 접근 권한 로직을 organization_members 기반으로 재구성", "마이그레이션: 기존 프로젝트의 organization_id 백필 또는 데이터 정합성 검증", "프론트엔드(Vue): 프로젝트 생성/관리 화면에서 팀 선택 필수화"],
+    "evidences": [
+      {"file": "backend/src/main/java/com/doenaai/project/entity/Project.java", "line": 14, "description": "Project 엔티티가 projects 테이블을 매핑하며, organization_id 컬럼이 nullable=true로 정의되어 있어 현재 프로젝트가 조직 없이 존재할 수 있는 구조임", "confidence": 0.95, "tentative": false},
+      {"file": "backend/src/main/java/com/doenaai/project/repository/ProjectAccessRepository.java", "line": 1, "description": "프로젝트 접근 권한을 처리하는 리포지토리로, 현재 project_members 기반 직접 멤버십을 사용할 가능성이 있으며 한 팀 제한 시 organization_members 경유 로직으로 변경 필요", "confidence": 0.8, "tentative": true},
+      {"file": "supabase/migrations/007_organization_requirement_estimate.sql", "line": 101, "description": "organization 관련 마이그레이션이 이미 존재하며, projects 테이블에 organization_id FK와 idx_projects_organization_id, uq_projects_id_organization_id 인덱스가 정의되어 있음", "confidence": 0.95, "tentative": false}
+    ],
+    "recommendations": ["기존 projects 테이블에서 organization_id IS NULL인 행을 사전에 조회하여 백필 전략(기본 조직 할당 또는 삭제)을 수립", "project_members 테이블을 유지하되, INSERT/UPDATE 시 해당 user_id가 해당 project의 organization_members에 포함되어 있는지 CHECK 제약 또는 트리거로 강제", "ProjectAccessRepository에서 접근 판정을 organization_members → projects.organization_id 경유로 통일하고, project_members 직접 멤버십을 비활성화하거나 제거", "마이그레이션은 2단계로 진행: 1) organization_id NOT NULL 제약 추가 전 NULL 데이터 백필, 2) 제약 추가 및 project_members 접근 경로 변경", "기존 프로젝트에 여러 조직의 멤버가 project_members에 등록된 경우를 사전 감사하여 충돌 데이터 식별", "프론트엔드에서 프로젝트 생성 시 organization 선택을 필수로 변경하고, 기존 프로젝트 관리 화면에서 팀 외 멤버 표시 로직 제거"],
+    "databaseImpact": {
+      "status": "NEEDS_CLARIFICATION",
+      "explanation": "요구사항에서 '팀'이라는 비즈니스 엔티티가 등장하지만, 관찰된 스키마에는 `public.organizations`만 존재하고 `teams` 테이블이 없습니다. '팀'이 기존 `public.organizations`을 가리키는 것인지, 아니면 조직과 별개의 새 엔티티인지에 따라 필요한 DB 변경이 완전히 달라집니다. 또한 `public.projects.organization_id`는 현재 nullable이므로, '한 팀이 반드시 관리'라는 규칙이 아직 강제되지 않습니다. `public.project_members`는 사용자를 프로젝트에 직접 연결할 뿐 조직(또는 팀) 경유를 강제하지 않아, '관리'의 범위가 어느 테이블까지인지도 확인이 필요합니다.",
+      "observedTables": ["public.organizations", "public.projects", "public.organization_members", "public.project_members"],
+      "proposedChanges": [],
+      "conditionalPaths": [
+        {"condition": "'팀'이 기존 `public.organizations`을 의미하는 경우 (기존 엔티티 해석)", "databaseEffect": "현재 `public.projects.organization_id`는 nullable이므로 프로젝트가 조직 없이 존재할 수 있습니다. '한 팀이 반드시 관리'를 강제하려면 `public.projects.organization_id`에 NOT NULL 제약이 필요합니다. 단일 FK 컬럼이 이미 '프로젝트 1행 → 조직 1개'를 보장하므로, 여러 팀이 같은 프로젝트를 관리하는 상황은 스키마상 불가능합니다. 다만 `public.project_members`는 `public.organization_members`와 무관하게 사용자를 프로젝트에 직접 연결하므로, '관리'를 `public.project_members`의 멤버로 한정한다면 조직 소속 외 사용자가 프로젝트에 참여할 수 있는 구멍이 남아 있습니다. 기존 `organization_id`가 NULL인 프로젝트 행이 있으면 NOT NULL 적용 시 데이터 정리가 선행되어야 합니다. `public.projects`의 `uq_projects_id_organization_id` 인덱스는 (id, organization_id) 조합의 유일성을 보장할 뿐, organization_id 단독 유일성은 아닙니다. 즉 한 조직이 여러 프로젝트를 가질 수 있는 현재 구조는 유지됩니다."},
+        {"condition": "'팀'이 `public.organizations`과 별개의 새 엔티티(예: 조직 내 소그룹)를 의미하는 경우 (새 엔티티 해석)", "databaseEffect": "관찰된 스키마에 `teams` 테이블이 없으므로, 새 테이블(예: `public.teams`)과 `public.projects` → `public.teams` FK 컬럼(예: `team_id`)이 필요합니다. 기존 `public.projects.organization_id`는 조직 소속이라는 별개 개념으로 유지되며, '한 팀이 관리'는 새 `team_id` FK로 표현됩니다. 이 경우 `public.project_members`와 `public.organization_members`의 관계도 재정의가 필요할 수 있습니다. 기존 프로젝트 행에는 `team_id`가 NULL이 되므로, NOT NULL을 걸기 전에 기존 프로젝트에 팀을 배정하는 데이터 마이그레이션이 선행되어야 합니다. `public.organizations`과 새 `public.teams`의 1:N 또는 N:M 관계도 정의가 필요합니다."}
+      ],
+      "openQuestions": ["요구사항의 '팀'은 기존 `public.organizations` 테이블을 가리키는 것인지, 아니면 조직과 별개의 새 엔티티(예: 조직 내 소그룹)를 의미하는 것인지 확인이 필요합니다.", "'프로젝트 관리'의 범위가 `public.projects.organization_id`(또는 새 team FK)의 소속 관계만으로 한정되는지, `public.project_members`에 등록된 사용자까지 포함하는지 확인이 필요합니다.", "기존 `public.projects` 중 `organization_id`가 NULL인 행이 존재하는지, 그리고 해당 행을 어떻게 처리할지(삭제, 기본 조직 배정, 예외 허용) 확인이 필요합니다."]
+    }
+  }
+}
