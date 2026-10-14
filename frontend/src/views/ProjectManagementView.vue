@@ -1,7 +1,9 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
-import { deleteProject, getProjects, restoreProject } from '@/api/appApi'
+import { deleteProject, getProjects, isProjectDemoMode, restoreProject } from '@/api/projectApi'
+import { filterProjects, formatProjectDate, sourceTypeLabel } from '@/lib/projectManagement'
+import { createProjectRequestScope } from '@/lib/projectRequests'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseInput from '@/components/base/BaseInput.vue'
 import BasePagination from '@/components/base/BasePagination.vue'
@@ -25,6 +27,7 @@ const busyProjectId = ref('')
 const errorMessage = ref('')
 const notice = ref('')
 let fetchRequestId = 0
+const requests = createProjectRequestScope()
 
 const columns = computed(() => [
     {
@@ -34,8 +37,8 @@ const columns = computed(() => [
         sortable: true,
     },
     {
-        key: 'stack',
-        label: '기술 스택',
+        key: 'description',
+        label: '설명',
         minWidth: '240px',
     },
     {
@@ -68,15 +71,7 @@ const columns = computed(() => [
     },
 ])
 
-const filteredProjects = computed(() => {
-    const value = keyword.value.trim().toLowerCase()
-
-    if (!value) return projects.value
-
-    return projects.value.filter((project) => {
-        return [project.id, project.name, project.stack, project.source, project.branch].some((item) => String(item).toLowerCase().includes(value))
-    })
-})
+const filteredProjects = computed(() => filterProjects(projects.value, keyword.value))
 
 const { page, pageSize, sortKey, sortDirection, totalCount, pagedRows, handleSort, resetPage } = useClientTable({
     rows: filteredProjects,
@@ -93,11 +88,13 @@ const pageSizeOptions = [
 
 const fetchProjects = async () => {
     const requestId = ++fetchRequestId
+    const ticket = requests.open(String(showDeleted.value))
+    if (!ticket) return
     loading.value = true
     errorMessage.value = ''
 
     try {
-        const rows = await getProjects({ deleted: showDeleted.value })
+        const rows = await getProjects({ deleted: showDeleted.value, ...ticket.options })
         if (requestId !== fetchRequestId) return
         projects.value = rows
         selectedProjectIds.value = []
@@ -173,6 +170,10 @@ watch(showDeleted, () => {
 })
 
 onMounted(fetchProjects)
+onBeforeUnmount(() => {
+    fetchRequestId += 1
+    requests.dispose()
+})
 </script>
 
 <template>
@@ -189,7 +190,7 @@ onMounted(fetchProjects)
                 wrapper-class="w-full md:max-w-md md:flex-1"
                 label="프로젝트 검색"
                 placeholder="프로젝트명·코드 검색"
-                hint="프로젝트명, 코드, 기술 스택으로 검색할 수 있습니다."
+                hint="프로젝트명, 식별자, 설명, 저장소 주소, 브랜치로 검색할 수 있습니다."
             />
 
             <div class="flex flex-col gap-3 sm:flex-row sm:items-end">
@@ -200,6 +201,10 @@ onMounted(fetchProjects)
             </div>
         </div>
 
+        <p v-if="isProjectDemoMode" role="status" class="mb-4 rounded-lg bg-blue-50 p-3 text-sm text-blue-800">
+            데모 모드입니다. 기본정보 수정과 삭제·복구는 이 브라우저에만 저장됩니다.
+        </p>
+        <BaseButton v-if="errorMessage" class="mb-3" variant="secondary" :disabled="loading" @click="fetchProjects">다시 불러오기</BaseButton>
         <p v-if="errorMessage" role="alert" class="mb-4 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">{{ errorMessage }}</p>
         <p v-if="notice" role="status" class="mb-4 rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm text-blue-800">{{ notice }}</p>
 
@@ -256,13 +261,13 @@ onMounted(fetchProjects)
                 </div>
             </template>
 
-            <template #cell-stack="{ value }">
+            <template #cell-description="{ value }">
                 <span class="text-xs text-slate-600 dark:text-slate-400">{{ value }}</span>
             </template>
 
             <template #cell-source="{ row }">
-                <div class="font-semibold text-slate-700 dark:text-slate-300">{{ row.source || row.sourceType || '—' }}</div>
-                <div class="mt-1 text-xs text-slate-500 dark:text-slate-400">{{ row.branch || row.defaultBranch || '—' }}</div>
+                <div class="font-semibold text-slate-700 dark:text-slate-300">{{ sourceTypeLabel(row.sourceType) }}</div>
+                <div class="mt-1 text-xs text-slate-500 dark:text-slate-400">{{ row.defaultBranch || '—' }}</div>
             </template>
 
             <template #cell-status="{ value }">
@@ -271,7 +276,7 @@ onMounted(fetchProjects)
             </template>
 
             <template #cell-updatedAt="{ value }">
-                <span class="text-xs text-slate-500 dark:text-slate-400">{{ value }}</span>
+                <span class="text-xs text-slate-500 dark:text-slate-400">{{ formatProjectDate(value) }}</span>
             </template>
 
             <template #cell-actions="{ row }">

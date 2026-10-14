@@ -9,6 +9,7 @@ const props = defineProps({
 const styles = {
     ONLINE: 'border-emerald-200 bg-emerald-50 text-emerald-700',
     ACTIVE: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+    INACTIVE: 'border-slate-200 dark:border-slate-700 bg-slate-100 text-slate-600',
     READY: 'border-blue-200 bg-blue-50 text-blue-700',
     COMPLETED: 'border-emerald-200 bg-emerald-50 text-emerald-700',
     RUNNING: 'border-violet-200 bg-violet-50 text-violet-700',
@@ -36,6 +37,7 @@ const styles = {
 const labels = {
     ONLINE: '정상',
     ACTIVE: '활성',
+    INACTIVE: '비활성',
     READY: '준비됨',
     COMPLETED: '완료',
     RUNNING: '진행 중',
