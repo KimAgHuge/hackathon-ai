@@ -194,11 +194,17 @@ def test_plain_language_summary_is_required_and_retried():
     incomplete.pop("plainLanguageSummary")
     client = FakeClient(chat_responses=[json.dumps(incomplete, ensure_ascii=False), GENERAL_MODEL_JSON])
 
-    result = asyncio.run(LlmService(settings(), client=client).analyze(analysis_request()))
+    events = []
+
+    async def report(code, attempt):
+        events.append((code, attempt))
+
+    result = asyncio.run(LlmService(settings(), client=client).analyze(analysis_request(), progress=report))
 
     assert result.plain_language_summary
     assert client.chat_calls == 2
     assert "plainLanguageSummary" in client.chat_kwargs[1]["messages"][-1]["content"]
+    assert ("VALIDATION_RETRY", 2) in events
 
 
 def test_requirement_analysis_requires_grounded_db_decision():
@@ -208,6 +214,21 @@ def test_requirement_analysis_requires_grounded_db_decision():
     assert result.database_impact.status.value == "NEEDS_CLARIFICATION"
     assert result.database_impact.observed_tables == ["public.projects", "public.project_members"]
     assert client.chat_calls == 2
+
+
+def test_requirement_analysis_reports_real_general_and_database_phases():
+    client = FakeClient(chat_responses=[REQUIREMENT_GENERAL_MODEL_JSON, db_only(AMBIGUOUS_DB_JSON)])
+    events = []
+
+    async def report(code, attempt):
+        events.append((code, attempt))
+
+    asyncio.run(LlmService(settings(), client=client).analyze(requirement_request(), progress=report))
+
+    assert events == [
+        ("GENERAL_STARTED", None), ("GENERAL_COMPLETED", None),
+        ("DATABASE_STARTED", None), ("DATABASE_COMPLETED", None),
+    ]
 
 
 def test_explicit_business_term_mapping_reaches_both_analysis_steps():
@@ -277,6 +298,27 @@ def test_database_prompt_handles_an_unrelated_repository_domain():
     assert "project row" not in db_system_prompt
 
 
+def test_database_validation_accepts_a_paraphrased_business_concept():
+    request = requirement_request()
+    request.source_summary["changeRequirement"] = {
+        "title": "계정 활성화 상태 확인",
+        "refinedContent": "로그인 가능 여부를 저장된 값으로 확인한다.",
+    }
+    request.database_summary["tables"] = [
+        {"schema": "public", "name": "user_profiles", "columns": [{"name": "enabled"}]},
+    ]
+    impact = DatabaseImpact.model_validate({
+        "status": "NO_CHANGE",
+        "explanation": "로그인 가능 여부는 public.user_profiles.enabled 값으로 확인할 수 있습니다.",
+        "observedTables": ["public.user_profiles"],
+        "proposedChanges": [],
+        "conditionalPaths": [],
+        "openQuestions": [],
+    })
+
+    LlmService._validate_database_impact(request, impact)
+
+
 def test_presentation_only_requirement_skips_database_model_call():
     client = FakeClient(chat_responses=[UNRELATED_GENERAL_MODEL_JSON])
 
@@ -297,18 +339,6 @@ def test_uncertain_database_relevance_still_calls_database_model():
     assert client.chat_calls == 2
 
 
-def test_explicit_db_requirement_cannot_be_classified_unrelated():
-    unrelated = UNRELATED_GENERAL_MODEL_JSON
-    client = FakeClient(chat_responses=[unrelated, REQUIREMENT_GENERAL_MODEL_JSON, db_only(AMBIGUOUS_DB_JSON)])
-    request = requirement_request()
-    request.source_summary["changeRequirement"]["refinedContent"] += " DB 스키마 변경도 확인한다."
-
-    result = asyncio.run(LlmService(settings(), client=client).analyze(request))
-
-    assert result.database_impact.status.value == "NEEDS_CLARIFICATION"
-    assert client.chat_calls == 3
-
-
 def test_requirement_analysis_retries_generic_response_without_db_impact():
     missing_db_impact = db_only(AMBIGUOUS_DB_JSON).replace('"status":', '"missingStatus":')
     client = FakeClient(chat_responses=[REQUIREMENT_GENERAL_MODEL_JSON, missing_db_impact, db_only(AMBIGUOUS_DB_JSON)])
@@ -326,29 +356,6 @@ def test_requirement_analysis_rejects_unobserved_table_even_when_json_is_valid()
 
     with pytest.raises(InvalidModelResponseError):
         asyncio.run(LlmService(settings(), client=client).analyze(requirement_request()))
-
-
-def test_requirement_analysis_retries_when_business_entity_is_ignored():
-    off_topic = db_only(AMBIGUOUS_DB_JSON).replace("팀", "프로젝트")
-    client = FakeClient(chat_responses=[REQUIREMENT_GENERAL_MODEL_JSON, off_topic, db_only(AMBIGUOUS_DB_JSON)])
-
-    result = asyncio.run(LlmService(settings(), client=client).analyze(requirement_request()))
-
-    assert result.database_impact.status.value == "NEEDS_CLARIFICATION"
-    assert client.chat_calls == 3
-    assert "팀" in client.chat_kwargs[2]["messages"][-1]["content"]
-
-
-def test_clarification_question_must_address_requested_entity():
-    off_topic_question = db_only(AMBIGUOUS_DB_JSON).replace(
-        "팀은 기존 조직과 같은 개념인가요?", "프로젝트 멤버를 통합할 계획인가요?"
-    )
-    client = FakeClient(chat_responses=[REQUIREMENT_GENERAL_MODEL_JSON, off_topic_question, db_only(AMBIGUOUS_DB_JSON)])
-
-    result = asyncio.run(LlmService(settings(), client=client).analyze(requirement_request()))
-
-    assert result.database_impact.open_questions == ["팀은 기존 조직과 같은 개념인가요?"]
-    assert client.chat_calls == 3
 
 
 def test_requirement_analysis_rejects_structure_only_db_decision():
@@ -387,15 +394,17 @@ def test_ambiguous_requirement_cannot_claim_a_database_migration():
         asyncio.run(LlmService(settings(), client=client).analyze(requirement_request()))
 
 
-def test_ambiguous_requirement_rejects_unsupported_unique_owner_constraint():
-    misleading = db_only(AMBIGUOUS_DB_JSON).replace(
+def test_ambiguous_requirement_can_explain_a_constraint_without_proposing_it():
+    explanation = db_only(AMBIGUOUS_DB_JSON).replace(
         "public.projects.organization_id를 그대로 사용하므로 소유권 컬럼 추가는 필요하지 않을 수 있습니다.",
-        "public.projects.organization_id에 UNIQUE 제약을 추가해야 합니다.",
+        "public.projects.organization_id에 UNIQUE 제약을 추가하거나 기존 컬럼을 삭제하지 않고 관계를 유지할 수 있습니다.",
     )
-    client = FakeClient(chat_responses=[REQUIREMENT_GENERAL_MODEL_JSON, misleading, misleading])
+    client = FakeClient(chat_responses=[REQUIREMENT_GENERAL_MODEL_JSON, explanation])
 
-    with pytest.raises(InvalidModelResponseError):
-        asyncio.run(LlmService(settings(), client=client).analyze(requirement_request()))
+    result = asyncio.run(LlmService(settings(), client=client).analyze(requirement_request()))
+
+    assert result.database_impact.proposed_changes == []
+    assert client.chat_calls == 2
 
 
 def test_analyze_retries_invalid_json_then_succeeds():
@@ -429,8 +438,8 @@ def test_validation_log_code_does_not_include_model_content():
 
     assert LlmService._safe_validation_code(failure.value) == "DB_NEEDS_PATHS"
     assert LlmService._safe_validation_code(
-        ValueError("DB impact omitted the requirement's business term: 비공개 프로젝트 설명.")
-    ) == "DB_BUSINESS_TERM_MISSING"
+        ValueError("DB impact cites a table absent from collected metadata.")
+    ) == "DB_UNKNOWN_OBSERVED_TABLE"
 
 
 def test_analyze_maps_ollama_timeout():

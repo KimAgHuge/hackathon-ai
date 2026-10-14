@@ -1,3 +1,5 @@
+import json
+
 from tests.conftest import TEST_API_KEY
 from app.services.llm_service import (
     InvalidModelResponseError,
@@ -106,3 +108,30 @@ def test_analysis_maps_invalid_model_response_to_502(client, fake_llm_service):
 
     assert response.status_code == 502
     assert response.json()["detail"]["code"] == "INVALID_MODEL_RESPONSE"
+
+
+def test_stream_requires_key_and_emits_only_safe_progress_and_final_result(client, fake_llm_service):
+    assert client.post("/api/analysis/project/stream", json=VALID_REQUEST).status_code == 401
+    response = client.post(
+        "/api/analysis/project/stream", json=VALID_REQUEST,
+        headers={"X-Internal-Api-Key": TEST_API_KEY},
+    )
+    events = [json.loads(line) for line in response.text.splitlines()]
+    assert response.status_code == 200
+    assert [event["code"] for event in events[:-1]] == [
+        "GENERAL_STARTED", "GENERAL_COMPLETED", "DATABASE_SKIPPED",
+    ]
+    assert events[-1]["type"] == "result"
+    assert events[-1]["result"]["plainLanguageSummary"]
+    assert "test-internal-api-key" not in response.text
+
+
+def test_stream_emits_safe_error_code_without_exception_message(client, fake_llm_service):
+    fake_llm_service.analysis_exception = ModelUnavailableError("token=must-not-leak")
+    response = client.post(
+        "/api/analysis/project/stream", json=VALID_REQUEST,
+        headers={"X-Internal-Api-Key": TEST_API_KEY},
+    )
+    events = [json.loads(line) for line in response.text.splitlines()]
+    assert events[-1] == {"type": "error", "code": "MODEL_UNAVAILABLE"}
+    assert "must-not-leak" not in response.text
