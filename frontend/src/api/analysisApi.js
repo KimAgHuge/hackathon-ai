@@ -42,6 +42,7 @@ export const startProjectAnalysis = async (projectId, requirementVersionId = nul
  */
 export const getAnalysisJob = async (analysisJobId, options = {}) => {
     if (useMock) {
+        const finishedAt = Date.now()
         return mockDelay({
             jobId: analysisJobId,
             projectId: 'project-demo-001',
@@ -50,10 +51,19 @@ export const getAnalysisJob = async (analysisJobId, options = {}) => {
             databaseProgress: 100,
             relationProgress: 100,
             overallProgress: 100,
+            activityLog: [
+                { label: 'Git 소스코드 수집', state: 'COMPLETED', at: new Date(finishedAt - 50000).toISOString() },
+                { label: '데이터베이스 구조 수집', state: 'COMPLETED', at: new Date(finishedAt - 30000).toISOString() },
+                { label: 'AI 일반 영향 분석', state: 'STARTED', at: new Date(finishedAt - 25000).toISOString() },
+                { label: 'AI 일반 영향 분석', state: 'COMPLETED', at: new Date(finishedAt - 15000).toISOString() },
+                { label: '추가 DB 분석 대상 아님', state: 'COMPLETED', at: new Date(finishedAt - 12000).toISOString() },
+                { label: 'AI 모델의 분석 응답 대기', state: 'COMPLETED', at: new Date(finishedAt - 10000).toISOString() },
+                { label: '분석 결과 저장', state: 'COMPLETED', at: new Date(finishedAt).toISOString() },
+            ],
             errorMessage: null,
-            createdAt: new Date().toISOString(),
-            startedAt: new Date().toISOString(),
-            completedAt: new Date().toISOString(),
+            createdAt: new Date(finishedAt - 60000).toISOString(),
+            startedAt: new Date(finishedAt - 60000).toISOString(),
+            completedAt: new Date(finishedAt).toISOString(),
         })
     }
 

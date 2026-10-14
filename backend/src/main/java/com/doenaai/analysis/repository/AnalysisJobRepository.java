@@ -1,14 +1,18 @@
 package com.doenaai.analysis.repository;
 
 import com.doenaai.analysis.dto.AnalysisJobResponse;
+import com.doenaai.analysis.dto.AnalysisActivityEvent;
 import com.doenaai.analysis.dto.AnalysisWorkItem;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.ObjectMapper;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -17,6 +21,8 @@ import java.util.UUID;
 public class AnalysisJobRepository {
 
     private final JdbcTemplate jdbcTemplate;
+    private final ObjectMapper objectMapper;
+    private static final TypeReference<List<AnalysisActivityEvent>> ACTIVITY_LOG = new TypeReference<>() {};
 
     /** 프로젝트·요구사항 버전·Git 커밋을 고정한 PENDING 작업을 생성해 반환한다. */
     public AnalysisJobResponse createProjectScan(
@@ -58,7 +64,8 @@ public class AnalysisJobRepository {
                     source_progress,
                     database_progress,
                     relation_progress,
-                    created_at, error_message, started_at, completed_at
+                    created_at, error_message, started_at, completed_at,
+                    analysis_options -> 'activityLog' as activity_log
                 """,
                 this::mapRow,
                 projectId,
@@ -86,7 +93,8 @@ public class AnalysisJobRepository {
                 where j.id = ? and j.project_id = ? and j.status = 'COMPLETED'
                 returning id, project_id, requirement_version_id, status,
                     source_progress, database_progress, relation_progress,
-                    created_at, error_message, started_at, completed_at
+                    created_at, error_message, started_at, completed_at,
+                    analysis_options -> 'activityLog' as activity_log
                 """, this::mapRow, requirementVersionId, requestedBy, sourceJobId, projectId);
     }
 
@@ -103,7 +111,8 @@ public class AnalysisJobRepository {
                     source_progress,
                     database_progress,
                     relation_progress,
-                    created_at, error_message, started_at, completed_at
+                    created_at, error_message, started_at, completed_at,
+                    analysis_options -> 'activityLog' as activity_log
                 from public.analysis_jobs
                 where id = ?
                 """,
@@ -141,7 +150,9 @@ public class AnalysisJobRepository {
                 ),
                 resultSet.getString("error_message"),
                 resultSet.getObject("started_at", java.time.OffsetDateTime.class),
-                resultSet.getObject("completed_at", java.time.OffsetDateTime.class)
+                resultSet.getObject("completed_at", java.time.OffsetDateTime.class),
+                resultSet.getString("activity_log") == null
+                        ? List.of() : objectMapper.readValue(resultSet.getString("activity_log"), ACTIVITY_LOG)
         );
     }
 
@@ -182,6 +193,18 @@ public class AnalysisJobRepository {
         if (changed != 1) throw new IllegalStateException("Analysis job is no longer running.");
     }
 
+    /** analysis_options에 고정된 공개용 단계 문구만 추가한다. 기존 DB 구조 변경은 필요하지 않다. */
+    public void appendActivity(UUID jobId, String label, String state) {
+        jdbcTemplate.update("""
+                update public.analysis_jobs
+                set analysis_options = jsonb_set(analysis_options, '{activityLog}',
+                    coalesce(analysis_options -> 'activityLog', '[]'::jsonb)
+                    || jsonb_build_array(jsonb_build_object('at', now(), 'label', ?, 'state', ?)), true),
+                    updated_at = now()
+                where id = ? and status = 'RUNNING'
+                """, label, state, jobId);
+    }
+
     /** 재사용한 근거의 출처를 남겨 새 분석 결과의 계보를 추적한다. */
     public void markEvidenceReused(UUID jobId, UUID sourceJobId) {
         int changed = jdbcTemplate.update("""
@@ -197,7 +220,11 @@ public class AnalysisJobRepository {
     public void fail(UUID jobId, String safeMessage) {
         jdbcTemplate.update("""
                 update public.analysis_jobs set status = 'FAILED', error_message = ?,
-                    completed_at = now(), updated_at = now()
+                    completed_at = now(), updated_at = now(),
+                    analysis_options = jsonb_set(analysis_options, '{activityLog}',
+                        coalesce(analysis_options -> 'activityLog', '[]'::jsonb)
+                        || jsonb_build_array(jsonb_build_object('at', now(), 'label',
+                            '분석을 완료하지 못했습니다.', 'state', 'FAILED')), true)
                 where id = ? and status = 'RUNNING'
                 """, safeMessage, jobId);
     }
@@ -206,7 +233,11 @@ public class AnalysisJobRepository {
     public boolean cancel(UUID jobId) {
         return jdbcTemplate.update("""
                 update public.analysis_jobs set status = 'CANCELLED',
-                    error_message = null, completed_at = now(), updated_at = now()
+                    error_message = null, completed_at = now(), updated_at = now(),
+                    analysis_options = jsonb_set(analysis_options, '{activityLog}',
+                        coalesce(analysis_options -> 'activityLog', '[]'::jsonb)
+                        || jsonb_build_array(jsonb_build_object('at', now(), 'label',
+                            '분석이 취소되었습니다.', 'state', 'CANCELLED')), true)
                 where id = ? and status in ('PENDING', 'RUNNING')
                 """, jobId) == 1;
     }
@@ -222,7 +253,11 @@ public class AnalysisJobRepository {
         jdbcTemplate.update("""
                 update public.analysis_jobs set status = 'FAILED',
                     error_message = '분석 처리 시간이 초과되었거나 서버가 중단되었습니다. 새 분석을 시작하세요.',
-                    completed_at = now(), updated_at = now()
+                    completed_at = now(), updated_at = now(),
+                    analysis_options = jsonb_set(analysis_options, '{activityLog}',
+                        coalesce(analysis_options -> 'activityLog', '[]'::jsonb)
+                        || jsonb_build_array(jsonb_build_object('at', now(), 'label',
+                            '분석 처리 시간이 초과되었거나 서버가 중단되었습니다.', 'state', 'FAILED')), true)
                 where status = 'RUNNING' and analysis_type = 'PROJECT_SCAN'
                   and updated_at < now() - (? * interval '1 second')
                 """, timeoutSeconds);

@@ -26,10 +26,15 @@ class FakeLlmService:
             available=True,
         )
 
-    async def analyze(self, request):
+    async def analyze(self, request, progress=None):
         self.analysis_calls += 1
+        if progress is not None:
+            await progress("GENERAL_STARTED", None)
         if self.analysis_exception:
             raise self.analysis_exception
+        if progress is not None:
+            await progress("GENERAL_COMPLETED", None)
+            await progress("DATABASE_SKIPPED", None)
         return ProjectAnalysisResponse(
             summary="Vue와 Spring Boot로 구성된 프로젝트입니다.",
             plain_language_summary="시스템의 현재 구성을 살펴본 결과이며, 아직 변경 작업을 확정한 것은 아닙니다.",

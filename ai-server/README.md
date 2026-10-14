@@ -185,6 +185,14 @@ curl http://127.0.0.1:8000/api/analysis/project \
   }'
 ```
 
+Backend가 진행 중인 AI 단계도 표시할 때는 같은 요청 본문을
+`POST /api/analysis/project/stream`으로 보낸다. 이 내부 키 보호 경로는
+`application/x-ndjson`으로 일반 영향 분석·DB 영향 분석의 시작/완료, 응답 형식
+재시도, 최종 결과 또는 안전한 오류 코드를 순서대로 반환한다. 원본 프롬프트,
+모델의 부분 답변, 자격증명, 원본 콘솔 로그는 중간 이벤트에 포함하지 않는다.
+Ollama 호출은 여전히 `stream=False`이므로 생성 토큰별 진행률은 알 수 없다.
+기존 `/api/analysis/project` JSON 계약은 유지한다.
+
 ## 테스트
 
 Ollama를 mock하는 단위 테스트:
@@ -193,7 +201,7 @@ Ollama를 mock하는 단위 테스트:
 pytest
 ```
 
-현재 자동화 테스트는 25개가 통과한다. Ollama 응답은 자동화 테스트에서 mock하며,
+Ollama 응답은 자동화 테스트에서 mock하며,
 실제 모델 통합은 아래 절차로 별도 확인한다.
 
 ## 실제 Devstral 통합 검증

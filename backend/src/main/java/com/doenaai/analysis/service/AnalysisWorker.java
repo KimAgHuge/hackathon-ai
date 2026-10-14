@@ -21,6 +21,8 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CancellationException;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 /** 대기 작업을 가져와 Git·DB 근거 수집, AI 호출, 결과 저장까지 순서대로 처리한다. */
@@ -29,6 +31,26 @@ import java.util.concurrent.TimeUnit;
 @RequiredArgsConstructor
 @ConditionalOnProperty(name = "doenaai.analysis.worker-enabled", havingValue = "true", matchIfMissing = true)
 public class AnalysisWorker {
+    private static final ScheduledExecutorService ACTIVITY_HEARTBEATS =
+            Executors.newSingleThreadScheduledExecutor(task -> {
+                Thread thread = new Thread(task, "analysis-activity-heartbeat");
+                thread.setDaemon(true);
+                return thread;
+            });
+    // 화면에는 고정된 안전 문구만 노출한다. 예외 메시지·접속 정보·원본 서버 로그는 전달하지 않는다.
+    private static final Map<String, String> PUBLIC_STAGES = Map.ofEntries(
+            Map.entry("프로젝트 접근 권한 확인", "프로젝트 접근 권한 확인"),
+            Map.entry("선택한 저장 근거 확인", "선택한 이전 분석 근거 확인"),
+            Map.entry("기존 소스·DB 근거 재사용 가능 여부 확인", "이전 분석 근거 재사용 가능 여부 확인"),
+            Map.entry("읽기 전용 DB 구조 수집 (저장된 연결·권한·스키마 확인)", "데이터베이스 구조 수집"),
+            Map.entry("저장된 근거에 현재 요구사항 적용", "저장된 근거에 현재 요구사항 반영"),
+            Map.entry("Git 커밋 소스 수집 (저장소 설정·인증·커밋과 파일 크기 제한 확인)", "Git 소스코드 수집"),
+            Map.entry("소스와 DB 참조 분석", "소스코드와 데이터베이스 관계 조사"),
+            Map.entry("요구사항 버전 확인", "분석할 요구사항 확인"),
+            Map.entry("AI 입력 준비 (분석 범위·민감 필드 확인)", "AI 분석 자료 준비"),
+            Map.entry("AI 분석 요청 (AI 서버·내부 API 키·모델·시간 제한 확인)", "AI 모델의 분석 응답 대기"),
+            Map.entry("분석 결과 저장", "분석 결과 저장")
+    );
     private final AnalysisJobRepository jobs;
     private final AnalysisResultRepository results;
     private final ProjectService projects;
@@ -158,7 +180,16 @@ public class AnalysisWorker {
             stage = "AI 분석 요청 (AI 서버·내부 API 키·모델·시간 제한 확인)";
             stageStartedNanos = startStage(jobId, stage);
             if (jobs.isCancelled(jobId)) throw new CancellationException("Analysis cancelled.");
-            var result = ai.analyze(payload);
+            // 모델 내부 완료율을 추정하지 않고, 긴 HTTP 대기 중 백엔드의 대기 상태만 알린다.
+            var waiting = ACTIVITY_HEARTBEATS.scheduleAtFixedRate(
+                    () -> recordPublicActivity(jobId, "AI 분석 요청 (AI 서버·내부 API 키·모델·시간 제한 확인)", "WAITING"),
+                    30, 30, TimeUnit.SECONDS);
+            Map<String, Object> result;
+            try {
+                result = ai.analyzeWithProgress(payload, event -> recordAiProgress(jobId, event));
+            } finally {
+                waiting.cancel(false);
+            }
             completeStage(jobId, stage, stageStartedNanos);
             stage = "AI 분석 진행률 기록";
             jobs.progress(job.jobId(), 100, 100, 90);
@@ -208,12 +239,57 @@ public class AnalysisWorker {
 
     private long startStage(UUID jobId, String stage) {
         log.info("Analysis stage started: jobId={}, stage={}", jobId, stage);
+        recordPublicActivity(jobId, stage, "STARTED");
         return System.nanoTime();
     }
 
     private void completeStage(UUID jobId, String stage, long startedNanos) {
         log.info("Analysis stage completed: jobId={}, stage={}, duration_ms={}",
                 jobId, stage, TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedNanos));
+        // 결과 저장 완료 내역은 상태/결과와 원자적으로 저장되어야 최종 조회에서 누락되지 않는다.
+        if (!"분석 결과 저장".equals(stage)) recordPublicActivity(jobId, stage, "COMPLETED");
+    }
+
+    private void recordPublicActivity(UUID jobId, String stage, String state) {
+        String label = PUBLIC_STAGES.get(stage);
+        if (label == null) return;
+        try {
+            jobs.appendActivity(jobId, label, state);
+        } catch (RuntimeException exception) {
+            // 표시용 내역 기록 장애 때문에 실제 분석을 실패시키지 않는다.
+            log.warn("Analysis activity update failed: jobId={}, exception={}",
+                    jobId, exception.getClass().getSimpleName());
+        }
+    }
+
+    private void recordAiProgress(UUID jobId, AiAnalysisClient.ProgressEvent event) {
+        String label;
+        String state;
+        switch (event.code()) {
+            case "GENERAL_STARTED", "GENERAL_COMPLETED" -> {
+                label = "AI 일반 영향 분석";
+                state = event.code().endsWith("STARTED") ? "STARTED" : "COMPLETED";
+            }
+            case "DATABASE_STARTED", "DATABASE_COMPLETED" -> {
+                label = "AI 데이터베이스 영향 분석";
+                state = event.code().endsWith("STARTED") ? "STARTED" : "COMPLETED";
+            }
+            case "DATABASE_SKIPPED" -> {
+                label = "추가 DB 분석 대상 아님";
+                state = "COMPLETED";
+            }
+            case "VALIDATION_RETRY" -> {
+                label = "AI 응답 형식 재검증" + (event.attempt() == null ? "" : " (" + event.attempt() + "번째 시도)");
+                state = "STARTED";
+            }
+            default -> { return; }
+        }
+        try {
+            jobs.appendActivity(jobId, label, state);
+        } catch (RuntimeException exception) {
+            log.warn("Analysis AI activity update failed: jobId={}, exception={}",
+                    jobId, exception.getClass().getSimpleName());
+        }
     }
 
     /** 요구사항 버전이 있으면 소유 프로젝트를 검증하고 AI 입력에 변경 내용을 추가한다. */

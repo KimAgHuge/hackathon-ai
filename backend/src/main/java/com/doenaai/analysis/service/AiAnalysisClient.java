@@ -7,7 +7,11 @@ import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
 
 import java.io.ByteArrayOutputStream;
+import java.io.BufferedReader;
+import java.io.FilterInputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -25,12 +29,14 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Flow;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.function.Consumer;
 
 @Service
 public class AiAnalysisClient {
     static final int MAX_RESPONSE_BYTES = 1_000_000;
     private final ObjectMapper mapper;
     private final URI endpoint;
+    private final URI streamEndpoint;
     private final String apiKey;
     private final Duration timeout;
     private final HttpClient client;
@@ -46,6 +52,7 @@ public class AiAnalysisClient {
     AiAnalysisClient(ObjectMapper mapper, String baseUrl, String apiKey, Duration timeout) {
         this.mapper = mapper;
         this.endpoint = endpointFor(baseUrl);
+        this.streamEndpoint = URI.create(endpoint + "/stream");
         if (timeout == null || timeout.isZero() || timeout.isNegative()) {
             throw new IllegalArgumentException("AI timeout must be positive.");
         }
@@ -101,6 +108,154 @@ public class AiAnalysisClient {
         }
         validate(result, payload);
         return result;
+    }
+
+    /** AI 서버의 검증된 단계 이벤트를 받으면서 최종 결과를 기다린다. 구버전 서버의 404는 기존 API로 처리한다. */
+    public Map<String, Object> analyzeWithProgress(Map<String, Object> payload,
+                                                    Consumer<ProgressEvent> onProgress)
+            throws IOException, InterruptedException {
+        if (apiKey == null || apiKey.length() < 32) throw new IOException("Internal AI key is not configured.");
+        long started = System.nanoTime();
+        CompletableFuture<HttpResponse<InputStream>> exchange;
+        try {
+            var request = HttpRequest.newBuilder(streamEndpoint).timeout(timeout)
+                    .header("Content-Type", "application/json")
+                    .header("Accept", "application/x-ndjson")
+                    .header("X-Internal-Api-Key", apiKey)
+                    .POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(payload)))
+                    .build();
+            exchange = client.sendAsync(request, HttpResponse.BodyHandlers.ofInputStream());
+        } catch (RuntimeException exception) {
+            throw new IOException("Could not prepare AI analysis request.");
+        }
+        HttpResponse<InputStream> response;
+        try {
+            response = exchange.get(timeout.toNanos(), TimeUnit.NANOSECONDS);
+        } catch (TimeoutException exception) {
+            exchange.cancel(true);
+            throw new IOException("AI analysis request timed out.");
+        } catch (InterruptedException exception) {
+            exchange.cancel(true);
+            throw exception;
+        } catch (ExecutionException exception) {
+            throw safeFailure(exception);
+        }
+        if (response.statusCode() == 404) {
+            response.body().close();
+            return analyze(payload);
+        }
+        if (response.statusCode() != 200) {
+            response.body().close();
+            throw new IOException("AI server rejected analysis (HTTP " + response.statusCode() + ").");
+        }
+        CompletableFuture<Map<String, Object>> parsed = new CompletableFuture<>();
+        Thread reader = Thread.ofVirtual().name("ai-analysis-stream-reader").start(() -> {
+            try (InputStream body = response.body()) {
+                parsed.complete(readStream(body, payload, onProgress));
+            } catch (IOException exception) {
+                parsed.completeExceptionally(exception);
+            } catch (RuntimeException exception) {
+                parsed.completeExceptionally(new IOException("Invalid AI progress stream."));
+            }
+        });
+        try {
+            long remaining = Math.max(1, timeout.toNanos() - (System.nanoTime() - started));
+            return parsed.get(remaining, TimeUnit.NANOSECONDS);
+        } catch (TimeoutException exception) {
+            reader.interrupt();
+            response.body().close();
+            throw new IOException("AI analysis request timed out.");
+        } catch (InterruptedException exception) {
+            reader.interrupt();
+            response.body().close();
+            throw exception;
+        } catch (ExecutionException exception) {
+            Throwable cause = exception.getCause();
+            if (cause instanceof IOException safe) throw safe;
+            throw new IOException("AI analysis request failed.");
+        }
+    }
+
+    public record ProgressEvent(String code, Integer attempt) {}
+
+    private Map<String, Object> readStream(InputStream body, Map<String, Object> payload,
+                                           Consumer<ProgressEvent> onProgress) throws IOException {
+        try (var lines = new BufferedReader(new InputStreamReader(new BoundedInputStream(body), StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = lines.readLine()) != null) {
+                Map<String, Object> event;
+                try {
+                    event = mapper.readValue(line, new TypeReference<>() {});
+                } catch (RuntimeException exception) {
+                    throw new IOException("Invalid AI progress stream.");
+                }
+                if (event == null) throw new IOException("Invalid AI progress stream.");
+                if ("heartbeat".equals(event.get("type"))) continue;
+                if ("progress".equals(event.get("type"))) {
+                    if (!(event.get("code") instanceof String code)
+                            || !Set.of("GENERAL_STARTED", "GENERAL_COMPLETED", "DATABASE_STARTED",
+                                    "DATABASE_COMPLETED", "DATABASE_SKIPPED", "VALIDATION_RETRY").contains(code)
+                            || (event.containsKey("attempt") && (!(event.get("attempt") instanceof Number attempt)
+                                || attempt.doubleValue() != attempt.intValue()
+                                || attempt.intValue() < 1 || attempt.intValue() > 10))) {
+                        throw new IOException("Invalid AI progress event.");
+                    }
+                    if (onProgress != null) {
+                        try {
+                            onProgress.accept(new ProgressEvent(code,
+                                    event.get("attempt") instanceof Number number ? number.intValue() : null));
+                        } catch (RuntimeException ignored) {
+                            // 표시용 이벤트 기록 오류가 최종 분석 결과를 버리게 하지 않는다.
+                        }
+                    }
+                    continue;
+                }
+                if ("error".equals(event.get("type"))) {
+                    throw new IOException(switch (event.get("code") instanceof String code ? code : "") {
+                        case "MODEL_TIMEOUT" -> "Ollama inference timed out.";
+                        case "MODEL_UNAVAILABLE" -> "Ollama is unavailable.";
+                        case "INVALID_MODEL_RESPONSE" -> "The model response did not match the required schema.";
+                        default -> "AI analysis failed.";
+                    });
+                }
+                if ("result".equals(event.get("type"))) {
+                    if (!(event.get("result") instanceof Map<?, ?> raw)) {
+                        throw new IOException("Invalid AI result JSON.");
+                    }
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> result = (Map<String, Object>) raw;
+                    validate(result, payload);
+                    return result;
+                }
+                throw new IOException("Invalid AI progress stream.");
+            }
+        } catch (SafeResponseException exception) {
+            throw exception;
+        } catch (IOException exception) {
+            if (Set.of("Invalid AI progress stream.", "Invalid AI progress event.",
+                    "Invalid AI result JSON.", "Invalid AI result contract.", "Invalid AI plain-language summary.",
+                    "Invalid AI database impact contract.", "Invalid AI database impact decision.",
+                    "Ollama inference timed out.", "Ollama is unavailable.",
+                    "The model response did not match the required schema.", "AI analysis failed.")
+                    .contains(exception.getMessage())) throw exception;
+            throw new IOException("AI response body could not be read.");
+        }
+        throw new IOException("AI response ended without result.");
+    }
+
+    private static final class BoundedInputStream extends FilterInputStream {
+        private int count;
+        private BoundedInputStream(InputStream input) { super(input); }
+        @Override public int read() throws IOException {
+            int value = super.read();
+            if (value != -1 && ++count > MAX_RESPONSE_BYTES) throw new SafeResponseException("AI response exceeds size limit.");
+            return value;
+        }
+        @Override public int read(byte[] bytes, int offset, int length) throws IOException {
+            int size = super.read(bytes, offset, length);
+            if (size > 0 && (count += size) > MAX_RESPONSE_BYTES) throw new SafeResponseException("AI response exceeds size limit.");
+            return size;
+        }
     }
 
     /** 결과 필드와 분석 종류별 DB 판단 규칙을 확인하고, 맞지 않으면 거부한다. */

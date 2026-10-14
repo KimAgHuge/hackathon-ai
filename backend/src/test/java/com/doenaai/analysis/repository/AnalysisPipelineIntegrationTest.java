@@ -84,7 +84,8 @@ class AnalysisPipelineIntegrationTest {
 
         var transactionManager = new DataSourceTransactionManager(dataSource);
         transactions = new TransactionTemplate(transactionManager);
-        jobs = transactional(new AnalysisJobRepository(jdbc), AnalysisJobRepository.class, transactionManager);
+        jobs = transactional(new AnalysisJobRepository(jdbc, JsonMapper.builder().build()),
+                AnalysisJobRepository.class, transactionManager);
         results = transactional(new AnalysisResultRepository(jdbc, JsonMapper.builder().build()),
                 AnalysisResultRepository.class, transactionManager);
 
@@ -243,6 +244,28 @@ class AnalysisPipelineIntegrationTest {
     }
 
     @Test
+    void safeActivityEventsSurvivePollingAndFailureWithoutExposingFailureDetails() {
+        var pending = newJob();
+        assertThat(pending.activityLog()).isEmpty();
+        jobs.claimNext().orElseThrow();
+        jobs.appendActivity(pending.jobId(), "Git 소스코드 수집", "STARTED");
+        jobs.appendActivity(pending.jobId(), "Git 소스코드 수집", "COMPLETED");
+        var running = jobs.findById(pending.jobId()).orElseThrow();
+        assertThat(running.activityLog()).hasSize(2);
+        assertThat(running.activityLog().get(0).label()).isEqualTo("Git 소스코드 수집");
+        assertThat(running.activityLog().get(0).state()).isEqualTo("STARTED");
+        assertThat(running.activityLog().get(0).at()).isNotBlank();
+
+        jobs.fail(pending.jobId(), "token=private-fixture");
+        var failed = jobs.findById(pending.jobId()).orElseThrow();
+        assertThat(failed.activityLog()).hasSize(3);
+        assertThat(failed.activityLog().get(2).state()).isEqualTo("FAILED");
+        assertThat(failed.activityLog().toString()).doesNotContain("private-fixture");
+        jobs.appendActivity(pending.jobId(), "늦은 내역", "COMPLETED");
+        assertThat(jobs.findById(pending.jobId()).orElseThrow().activityLog()).hasSize(3);
+    }
+
+    @Test
     void staleRecoveryFailsOnlyProjectScansWithoutRecentProgress() {
         var stale = newJob();
         var recent = newJob();
@@ -303,6 +326,9 @@ class AnalysisPipelineIntegrationTest {
         assertThat(completed.errorMessage()).isNull();
         assertThat(completed.startedAt()).isNotNull();
         assertThat(completed.completedAt()).isNotNull();
+        assertThat(completed.activityLog()).hasSize(1);
+        assertThat(completed.activityLog().get(0).label()).isEqualTo("분석 결과 저장");
+        assertThat(completed.activityLog().get(0).state()).isEqualTo("COMPLETED");
 
         var saved = results.findByJobId(pending.jobId()).orElseThrow();
         assertThat(saved.jobId()).isEqualTo(pending.jobId());

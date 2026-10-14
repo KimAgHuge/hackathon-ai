@@ -58,11 +58,16 @@ class AnalysisWorkerTest {
         when(source.collect(checkout, db)).thenReturn(new SourceEvidenceCollector.ScanResult(
                 Map.of("components", List.of(), "frameworks", List.of("Spring Boot")), List.of()));
         Map<String, Object> result = Map.of("summary", "분석 결과", "riskLevel", "UNKNOWN", "riskScore", 0);
-        when(ai.analyze(anyMap())).thenAnswer(call -> {
+        when(ai.analyzeWithProgress(anyMap(), any())).thenAnswer(call -> {
             assertThat(checkout).doesNotExist();
             var request = (Map<?, ?>) call.getArgument(0);
             assertThat(request.get("projectId")).isEqualTo(job.projectId().toString());
             assertThat(request.toString()).doesNotContain("repositoryUrl", "username", "password");
+            @SuppressWarnings("unchecked")
+            var progress = (java.util.function.Consumer<AiAnalysisClient.ProgressEvent>) call.getArgument(1);
+            progress.accept(new AiAnalysisClient.ProgressEvent("GENERAL_STARTED", null));
+            progress.accept(new AiAnalysisClient.ProgressEvent("GENERAL_COMPLETED", null));
+            progress.accept(new AiAnalysisClient.ProgressEvent("DATABASE_SKIPPED", null));
             return result;
         });
         worker.process(job);
@@ -72,6 +77,14 @@ class AnalysisWorkerTest {
         sequence.verify(jobs).progress(job.jobId(), 100, 100, 40);
         sequence.verify(jobs).progress(job.jobId(), 100, 100, 90);
         sequence.verify(results).complete(eq(job.jobId()), eq(result), anyMap());
+        verify(jobs).appendActivity(job.jobId(), "Git 소스코드 수집", "STARTED");
+        verify(jobs).appendActivity(job.jobId(), "Git 소스코드 수집", "COMPLETED");
+        verify(jobs).appendActivity(job.jobId(), "AI 모델의 분석 응답 대기", "STARTED");
+        verify(jobs).appendActivity(job.jobId(), "AI 모델의 분석 응답 대기", "COMPLETED");
+        verify(jobs).appendActivity(job.jobId(), "AI 일반 영향 분석", "STARTED");
+        verify(jobs).appendActivity(job.jobId(), "AI 일반 영향 분석", "COMPLETED");
+        verify(jobs).appendActivity(job.jobId(), "추가 DB 분석 대상 아님", "COMPLETED");
+        verify(jobs).appendActivity(job.jobId(), "분석 결과 저장", "STARTED");
         verify(jobs, never()).fail(any(), anyString());
         assertThat(output.getAll()).contains("Analysis started: jobId=" + job.jobId(),
                 "Analysis stage started: jobId=" + job.jobId() + ", stage=Git 커밋 소스 수집",
@@ -86,8 +99,25 @@ class AnalysisWorkerTest {
         verify(jobs).fail(eq(job.jobId()), argThat(message -> message.contains("DB 구조 수집")
                 && !message.contains("unsafe-fixture")));
         verifyNoInteractions(ai, source);
+        verify(jobs, never()).appendActivity(any(), contains("unsafe-fixture"), anyString());
         verify(results, never()).complete(any(), anyMap(), anyMap());
         assertThat(checkout).doesNotExist();
+    }
+
+    @Test void activityStorageFailureDoesNotAbortAnalysisOrLeakDetails(CapturedOutput output) throws Exception {
+        var db = Map.<String, Object>of("tables", List.of());
+        when(database.collect(job.projectId())).thenReturn(db);
+        when(source.collect(checkout, db)).thenReturn(new SourceEvidenceCollector.ScanResult(Map.of(), List.of()));
+        when(ai.analyzeWithProgress(anyMap(), any())).thenReturn(Map.of("summary", "완료", "riskLevel", "UNKNOWN", "riskScore", 0));
+        doThrow(new IllegalStateException("token=unsafe-fixture"))
+                .when(jobs).appendActivity(any(), anyString(), anyString());
+
+        worker.process(job);
+
+        verify(results).complete(eq(job.jobId()), anyMap(), anyMap());
+        verify(jobs, never()).fail(any(), anyString());
+        assertThat(output.getAll()).contains("Analysis activity update failed: jobId=" + job.jobId())
+                .doesNotContain("unsafe-fixture");
     }
 
     @Test void gitFailureAtZeroProgressRecordsSafeStage(CapturedOutput output) throws Exception {
@@ -134,7 +164,7 @@ class AnalysisWorkerTest {
         var db = Map.<String, Object>of("tables", List.of());
         when(database.collect(job.projectId())).thenReturn(db);
         when(source.collect(checkout, db)).thenReturn(new SourceEvidenceCollector.ScanResult(Map.of(), List.of()));
-        when(ai.analyze(any())).thenThrow(new java.io.IOException("HTTP 504"));
+        when(ai.analyzeWithProgress(any(), any())).thenThrow(new java.io.IOException("HTTP 504"));
         worker.process(job);
         verify(jobs).fail(eq(job.jobId()), contains("AI 분석 요청"));
         verify(results, never()).complete(any(), anyMap(), anyMap());
@@ -153,7 +183,7 @@ class AnalysisWorkerTest {
                         "이메일 컬럼 변경", "original-must-not-be-sent", "users.email 이름 변경 영향 분석",
                         List.of("기존 조회 기능 유지"), List.of("attachment-must-not-be-sent"), null,
                         true, job.requestedBy(), java.time.OffsetDateTime.now())));
-        when(ai.analyze(anyMap())).thenAnswer(call -> {
+        when(ai.analyzeWithProgress(anyMap(), any())).thenAnswer(call -> {
             String facts = call.getArgument(0).toString();
             assertThat(facts).contains("REQUIREMENT_IMPACT", "users.email", versionId.toString())
                     .doesNotContain("original-must-not-be-sent", "attachment-must-not-be-sent");
@@ -182,7 +212,7 @@ class AnalysisWorkerTest {
                 new com.doenaai.requirement.entity.RequirementVersion(versionId, UUID.randomUUID(), 2,
                         "새 요구사항", "원문", "새 영향 분석", List.of(), List.of(), null,
                         true, job.requestedBy(), java.time.OffsetDateTime.now())));
-        when(ai.analyze(anyMap())).thenAnswer(call -> {
+        when(ai.analyzeWithProgress(anyMap(), any())).thenAnswer(call -> {
             String input = call.getArgument(0).toString();
             assertThat(input).contains("새 요구사항", "새 영향 분석").doesNotContain("이전 요구사항", "원문");
             return Map.of("summary", "재사용된 근거 분석", "riskLevel", "UNKNOWN", "riskScore", 0);
@@ -208,7 +238,7 @@ class AnalysisWorkerTest {
                         "scanMetrics", Map.of("truncated", false)), oldDb, List.of())));
         when(database.collect(job.projectId())).thenReturn(currentDb);
         when(source.collect(checkout, currentDb)).thenReturn(new SourceEvidenceCollector.ScanResult(Map.of(), List.of()));
-        when(ai.analyze(anyMap())).thenReturn(Map.of("summary", "새 수집", "riskLevel", "UNKNOWN", "riskScore", 0));
+        when(ai.analyzeWithProgress(anyMap(), any())).thenReturn(Map.of("summary", "새 수집", "riskLevel", "UNKNOWN", "riskScore", 0));
 
         worker.process(job);
 
@@ -228,12 +258,12 @@ class AnalysisWorkerTest {
                 "promptCoverage", Map.of("truncated", false), "scanMetrics", Map.of("truncated", false));
         when(results.findReusableEvidenceByJobId(job.projectId(), sourceJobId)).thenReturn(java.util.Optional.of(
                 new ReusableEvidence(sourceJobId, sourceFacts, db, List.of())));
-        when(ai.analyze(anyMap())).thenReturn(Map.of("summary", "새 질문의 답", "riskLevel", "UNKNOWN", "riskScore", 0));
+        when(ai.analyzeWithProgress(anyMap(), any())).thenReturn(Map.of("summary", "새 질문의 답", "riskLevel", "UNKNOWN", "riskScore", 0));
 
         worker.process(savedJob);
 
         verifyNoInteractions(git, database, source);
-        verify(ai).analyze(anyMap());
+        verify(ai).analyzeWithProgress(anyMap(), any());
         verify(results).complete(eq(job.jobId()), anyMap(), anyMap());
     }
 
