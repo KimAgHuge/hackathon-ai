@@ -1,6 +1,8 @@
+import asyncio
 import json
 
 from tests.conftest import TEST_API_KEY
+from app.routers import analysis as analysis_router
 from app.services.llm_service import (
     InvalidModelResponseError,
     ModelTimeoutError,
@@ -135,3 +137,23 @@ def test_stream_emits_safe_error_code_without_exception_message(client, fake_llm
     events = [json.loads(line) for line in response.text.splitlines()]
     assert events[-1] == {"type": "error", "code": "MODEL_UNAVAILABLE"}
     assert "must-not-leak" not in response.text
+
+
+def test_stream_keeps_connection_open_during_model_wait(client, fake_llm_service, monkeypatch):
+    monkeypatch.setattr(analysis_router, "STREAM_HEARTBEAT_SECONDS", 0.01)
+    original_analyze = fake_llm_service.analyze
+
+    async def delayed_analyze(request, progress=None):
+        await asyncio.sleep(0.04)
+        return await original_analyze(request, progress=progress)
+
+    monkeypatch.setattr(fake_llm_service, "analyze", delayed_analyze)
+    response = client.post(
+        "/api/analysis/project/stream", json=VALID_REQUEST,
+        headers={"X-Internal-Api-Key": TEST_API_KEY},
+    )
+
+    events = [json.loads(line) for line in response.text.splitlines()]
+    assert response.status_code == 200
+    assert any(event["type"] == "heartbeat" for event in events)
+    assert events[-1]["type"] == "result"

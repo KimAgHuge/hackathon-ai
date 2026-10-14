@@ -16,6 +16,8 @@ from app.services.llm_service import (
     ModelUnavailableError,
 )
 
+STREAM_HEARTBEAT_SECONDS = 15
+
 router = APIRouter(prefix="/api/analysis", tags=["analysis"])
 
 
@@ -70,8 +72,8 @@ async def analyze_project_stream(
         try:
             while not task.done() or not queue.empty():
                 try:
-                    event = await asyncio.wait_for(queue.get(), timeout=15)
-                except TimeoutError:
+                    event = await asyncio.wait_for(queue.get(), timeout=STREAM_HEARTBEAT_SECONDS)
+                except asyncio.TimeoutError:
                     if task.done():
                         break
                     event = {"type": "heartbeat"}
