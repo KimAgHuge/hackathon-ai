@@ -23,7 +23,7 @@ const pageSize = 10
 const totalCount = ref(0)
 let historyRequestId = 0
 
-const selectedProjectId = computed(() => typeof route.query.projectId === 'string' ? route.query.projectId : '')
+const selectedProjectId = computed(() => (typeof route.query.projectId === 'string' ? route.query.projectId : ''))
 const selectedProject = computed(() => projects.value.find((project) => project.id === selectedProjectId.value))
 const projectOptions = computed(() => [
     { value: '', label: '프로젝트를 선택하세요', disabled: true },
@@ -106,10 +106,13 @@ const selectProject = (projectId) => {
 }
 
 watch(page, fetchHistory)
-watch(() => route.query.projectId, () => {
-    if (page.value === 0) fetchHistory()
-    else page.value = 0
-})
+watch(
+    () => route.query.projectId,
+    () => {
+        if (page.value === 0) fetchHistory()
+        else page.value = 0
+    }
+)
 onMounted(loadProjects)
 </script>
 
@@ -130,17 +133,30 @@ onMounted(loadProjects)
             <button type="button" class="underline" @click="loadProjects">다시 시도</button>
         </p>
         <p v-else-if="projectsLoaded && !projects.length" class="mb-4 text-sm text-slate-500 dark:text-slate-400">조회할 수 있는 프로젝트가 없습니다.</p>
-        <p v-else-if="projectsLoaded && !selectedProject" role="alert" class="mb-4 text-sm text-red-700">선택한 프로젝트에 접근할 수 없습니다. 다른 프로젝트를 선택해 주세요.</p>
-        <p v-else-if="selectedProject" class="mb-4 text-sm text-slate-600 dark:text-slate-300">{{ selectedProject.name }} · 저장된 분석 {{ totalCount.toLocaleString() }}건</p>
+        <p v-else-if="projectsLoaded && !selectedProject" role="alert" class="mb-4 text-sm text-red-700">
+            선택한 프로젝트에 접근할 수 없습니다. 다른 프로젝트를 선택해 주세요.
+        </p>
+        <p v-else-if="selectedProject" class="mb-4 text-sm text-slate-600 dark:text-slate-300">
+            {{ selectedProject.name }} · 저장된 분석 {{ totalCount.toLocaleString() }}건
+        </p>
         <p v-if="error" role="alert" class="mb-4 text-sm text-red-700">
             {{ error }}
             <button type="button" class="underline" @click="fetchHistory">다시 시도</button>
         </p>
-        <BaseTable v-if="selectedProject" :columns="columns" :rows="history" row-key="jobId" :loading="loading" empty-text="이 프로젝트의 저장된 분석 작업이 없습니다.">
+        <BaseTable
+            v-if="selectedProject"
+            :columns="columns"
+            :rows="history"
+            row-key="jobId"
+            :loading="loading"
+            empty-text="이 프로젝트의 저장된 분석 작업이 없습니다."
+        >
             <template #cell-requirementTitle="{ row }">{{ row.requirementTitle || '프로젝트 구조 분석' }}</template>
             <template #cell-riskLevel="{ value }">{{ riskLevelLabel(value) }}</template>
             <template #cell-approved="{ row }">{{ row.status === 'COMPLETED' ? (row.approved ? '승인' : '미승인') : '—' }}</template>
-            <template #cell-evidenceReusedFromJobId="{ row }">{{ row.status === 'COMPLETED' ? (row.evidenceReusedFromJobId ? '재사용' : '새 수집') : '—' }}</template>
+            <template #cell-evidenceReusedFromJobId="{ row }">{{
+                row.status === 'COMPLETED' ? (row.evidenceReusedFromJobId ? '재사용' : '새 수집') : '—'
+            }}</template>
             <template #cell-createdAt="{ value }">{{ formatDate(value) }}</template>
             <template #cell-open="{ row }">
                 <BaseButton
@@ -148,7 +164,8 @@ onMounted(loadProjects)
                     size="small"
                     variant="secondary"
                     :to="{ name: 'analysis-progress', params: { projectId: row.projectId, analysisJobId: row.jobId } }"
-                >{{ row.status === 'COMPLETED' ? '결과 보기' : '상태 보기' }}</BaseButton>
+                    >{{ row.status === 'COMPLETED' ? '결과 보기' : '상태 보기' }}</BaseButton
+                >
             </template>
         </BaseTable>
         <div v-if="selectedProject" class="mt-4">

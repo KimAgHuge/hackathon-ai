@@ -57,11 +57,7 @@ const props = defineProps({
     },
 })
 
-const emit = defineEmits([
-    'row-click',
-    'sort-change',
-    'update:selectedKeys',
-])
+const emit = defineEmits(['row-click', 'sort-change', 'update:selectedKeys'])
 
 const visibleColumns = computed(() => {
     return props.columns.filter((column) => column.visible !== false)
@@ -106,9 +102,7 @@ const allRowsSelected = computed(() => {
 
 const toggleRow = (row) => {
     const key = getRowKey(row)
-    const nextKeys = isSelected(row)
-        ? props.selectedKeys.filter((item) => item !== key)
-        : [...props.selectedKeys, key]
+    const nextKeys = isSelected(row) ? props.selectedKeys.filter((item) => item !== key) : [...props.selectedKeys, key]
 
     emit('update:selectedKeys', nextKeys)
 }
@@ -139,9 +133,7 @@ const handleRowClick = (row, event) => {
 const handleSort = (column) => {
     if (!column.sortable) return
 
-    const nextDirection = props.sortKey === column.key && props.sortDirection === 'asc'
-        ? 'desc'
-        : 'asc'
+    const nextDirection = props.sortKey === column.key && props.sortDirection === 'asc' ? 'desc' : 'asc'
 
     emit('sort-change', {
         key: column.key,
@@ -152,15 +144,9 @@ const handleSort = (column) => {
 
 <template>
     <section class="ui-table-container">
-        <div
-            class="overflow-auto"
-            :style="maxHeight ? { maxHeight } : undefined"
-        >
+        <div class="overflow-auto" :style="maxHeight ? { maxHeight } : undefined">
             <table class="w-full border-collapse text-left">
-                <thead
-                    class="bg-slate-50 text-slate-500 dark:bg-slate-800/80 dark:text-slate-400"
-                    :class="{ 'sticky top-0 z-10': stickyHeader }"
-                >
+                <thead class="bg-slate-50 text-slate-500 dark:bg-slate-800/80 dark:text-slate-400" :class="{ 'sticky top-0 z-10': stickyHeader }">
                     <tr class="border-b border-slate-200 dark:border-slate-700">
                         <th v-if="selectable" class="w-12 px-4 py-3 text-center">
                             <input
@@ -177,20 +163,14 @@ const handleSort = (column) => {
                             v-for="column in visibleColumns"
                             :key="column.key"
                             class="whitespace-nowrap px-5 py-3 text-xs font-bold"
-                            :class="[
-                                getAlignmentClass(column.align),
-                                column.headerClass,
-                            ]"
+                            :class="[getAlignmentClass(column.align), column.headerClass]"
                             :style="{
                                 width: column.width,
                                 minWidth: column.minWidth || column.width,
                                 maxWidth: column.maxWidth,
                             }"
                         >
-                            <slot
-                                :name="`header-${column.key}`"
-                                :column="column"
-                            >
+                            <slot :name="`header-${column.key}`" :column="column">
                                 <button
                                     v-if="column.sortable"
                                     type="button"
@@ -256,17 +236,9 @@ const handleSort = (column) => {
                                 v-for="column in visibleColumns"
                                 :key="column.key"
                                 class="px-5 py-4 text-sm text-slate-700 dark:text-slate-300"
-                                :class="[
-                                    getAlignmentClass(column.align),
-                                    column.cellClass,
-                                ]"
+                                :class="[getAlignmentClass(column.align), column.cellClass]"
                             >
-                                <slot
-                                    :name="`cell-${column.key}`"
-                                    :row="row"
-                                    :column="column"
-                                    :value="getCellValue(row, column)"
-                                >
+                                <slot :name="`cell-${column.key}`" :row="row" :column="column" :value="getCellValue(row, column)">
                                     {{ getCellValue(row, column) }}
                                 </slot>
                             </td>
@@ -276,10 +248,7 @@ const handleSort = (column) => {
             </table>
         </div>
 
-        <footer
-            v-if="$slots.footer"
-            class="border-t border-slate-200 px-5 py-4 dark:border-slate-700"
-        >
+        <footer v-if="$slots.footer" class="border-t border-slate-200 px-5 py-4 dark:border-slate-700">
             <slot name="footer" />
         </footer>
     </section>

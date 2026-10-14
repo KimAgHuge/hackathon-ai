@@ -11,12 +11,14 @@ const authStore = useAuthStore()
 const themeStore = useThemeStore()
 
 const breadcrumb = computed(() => route.meta.breadcrumb || route.meta.title || '')
-const themeButtonLabel = computed(() => themeStore.isDark ? '라이트 모드로 전환' : '다크 모드로 전환')
+const themeButtonLabel = computed(() => (themeStore.isDark ? '라이트 모드로 전환' : '다크 모드로 전환'))
 const roleLabel = computed(() => authStore.roles.join(', ') || 'USER')
 </script>
 
 <template>
-    <header class="sticky top-0 z-20 flex h-16 items-center justify-between gap-3 border-b border-slate-200 bg-white/95 px-4 backdrop-blur sm:px-6 lg:px-8 dark:border-slate-800 dark:bg-slate-950/92">
+    <header
+        class="sticky top-0 z-20 flex h-16 items-center justify-between gap-3 border-b border-slate-200 bg-white/95 px-4 backdrop-blur sm:px-6 lg:px-8 dark:border-slate-800 dark:bg-slate-950/92"
+    >
         <div class="flex min-w-0 items-center gap-3">
             <button
                 type="button"
@@ -35,7 +37,9 @@ const roleLabel = computed(() => authStore.roles.join(', ') || 'USER')
         </div>
 
         <div class="flex shrink-0 items-center gap-3">
-            <div class="hidden items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 xl:flex">
+            <div
+                class="hidden items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 xl:flex"
+            >
                 <span class="h-2 w-2 rounded-full bg-emerald-500"></span>
                 AI 서버 정상
             </div>
@@ -49,7 +53,12 @@ const roleLabel = computed(() => authStore.roles.join(', ') || 'USER')
             >
                 <svg v-if="themeStore.isDark" class="h-[18px] w-[18px]" viewBox="0 0 24 24" fill="none">
                     <circle cx="12" cy="12" r="4" stroke="currentColor" stroke-width="1.8" />
-                    <path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.65 17.65l1.42 1.42M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.65 6.35l1.42-1.42" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+                    <path
+                        d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.65 17.65l1.42 1.42M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.65 6.35l1.42-1.42"
+                        stroke="currentColor"
+                        stroke-width="1.8"
+                        stroke-linecap="round"
+                    />
                 </svg>
 
                 <svg v-else class="h-[18px] w-[18px]" viewBox="0 0 24 24" fill="none">

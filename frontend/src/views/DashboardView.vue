@@ -58,27 +58,32 @@ onMounted(fetchDashboard)
         <ViewHeading title="대시보드" description="프로젝트와 변경요청, 저장된 분석 현황을 확인합니다.">
             <template #actions>
                 <BaseButton class="w-full sm:w-auto" variant="secondary" :loading="loading" @click="fetchDashboard">새로고침</BaseButton>
-                <BaseButton
-                    v-if="authStore.hasPermission('PROJECT_CREATE')"
-                    class="w-full sm:w-auto"
-                    to="/projects/new"
-                >
-                    새 프로젝트 분석
-                </BaseButton>
+                <BaseButton v-if="authStore.hasPermission('PROJECT_CREATE')" class="w-full sm:w-auto" to="/projects/new"> 새 프로젝트 분석 </BaseButton>
             </template>
         </ViewHeading>
 
-        <div v-if="loading && !dashboard" class="rounded-xl border border-slate-200 bg-white px-5 py-12 text-center text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400">
+        <div
+            v-if="loading && !dashboard"
+            class="rounded-xl border border-slate-200 bg-white px-5 py-12 text-center text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400"
+        >
             대시보드 데이터를 불러오고 있습니다.
         </div>
 
-        <div v-if="error" role="alert" class="mb-4 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-300">
+        <div
+            v-if="error"
+            role="alert"
+            class="mb-4 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-300"
+        >
             {{ error }}
             <BaseButton class="mt-3" size="small" variant="secondary" @click="fetchDashboard">다시 시도</BaseButton>
         </div>
 
         <template v-if="dashboard">
-            <div v-if="dashboard.warnings?.length" role="status" class="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300">
+            <div
+                v-if="dashboard.warnings?.length"
+                role="status"
+                class="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300"
+            >
                 일부 정보를 불러오지 못했습니다: {{ dashboard.warnings.join(' ') }} 새로고침으로 다시 시도할 수 있습니다.
             </div>
 
@@ -91,7 +96,9 @@ onMounted(fetchDashboard)
                     <div class="text-xs font-semibold text-slate-500 dark:text-slate-400">{{ metric.label }}</div>
                     <div class="mt-3 flex items-end justify-between gap-3">
                         <strong class="text-3xl font-extrabold tracking-tight text-slate-900 dark:text-slate-100">{{ metric.value }}</strong>
-                        <span class="max-w-[60%] rounded-lg px-2 py-1 text-right text-[11px] font-bold" :class="metricTone[metric.tone]">{{ metric.change }}</span>
+                        <span class="max-w-[60%] rounded-lg px-2 py-1 text-right text-[11px] font-bold" :class="metricTone[metric.tone]">{{
+                            metric.change
+                        }}</span>
                     </div>
                 </section>
             </div>
@@ -130,7 +137,11 @@ onMounted(fetchDashboard)
                         </template>
 
                         <template #cell-risk="{ row }">
-                            <span v-if="row.risk" class="rounded-md px-2 py-1 text-xs font-extrabold" :class="riskStyle[String(row.risk).toUpperCase()] || riskStyle.UNKNOWN">
+                            <span
+                                v-if="row.risk"
+                                class="rounded-md px-2 py-1 text-xs font-extrabold"
+                                :class="riskStyle[String(row.risk).toUpperCase()] || riskStyle.UNKNOWN"
+                            >
                                 {{ riskLevelLabel(row.risk) }}{{ row.score != null ? ` · ${row.score}` : '' }}
                             </span>
                             <span v-else class="text-xs text-slate-500 dark:text-slate-400">미산정</span>
@@ -143,8 +154,16 @@ onMounted(fetchDashboard)
                 </section>
 
                 <section class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm shadow-slate-900/3 dark:border-slate-700 dark:bg-slate-900">
-                    <h2 class="text-base font-extrabold text-slate-900 dark:text-slate-100">{{ dashboard.mode === 'live' ? '데이터 조회 상태' : '시스템 상태' }}</h2>
-                    <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">{{ dashboard.mode === 'live' ? '각 목록 API의 이번 조회 결과입니다. 서버 자체의 가동 상태는 아닙니다.' : '연결된 서버와 저장소 상태입니다.' }}</p>
+                    <h2 class="text-base font-extrabold text-slate-900 dark:text-slate-100">
+                        {{ dashboard.mode === 'live' ? '데이터 조회 상태' : '시스템 상태' }}
+                    </h2>
+                    <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                        {{
+                            dashboard.mode === 'live'
+                                ? '각 목록 API의 이번 조회 결과입니다. 서버 자체의 가동 상태는 아닙니다.'
+                                : '연결된 서버와 저장소 상태입니다.'
+                        }}
+                    </p>
 
                     <div class="mt-4 space-y-3">
                         <div v-for="system in dashboard.systems" :key="system.name" class="rounded-lg border border-slate-200 p-4 dark:border-slate-700">
@@ -155,7 +174,9 @@ onMounted(fetchDashboard)
                                 </div>
                                 <StatusBadge :status="system.status" />
                             </div>
-                            <div v-if="system.latency" class="mt-3 text-[11px] font-semibold text-slate-500 dark:text-slate-400">응답시간 {{ system.latency }}</div>
+                            <div v-if="system.latency" class="mt-3 text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+                                응답시간 {{ system.latency }}
+                            </div>
                         </div>
                     </div>
 

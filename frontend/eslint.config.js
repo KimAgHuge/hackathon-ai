@@ -5,11 +5,7 @@ import prettierRecommended from 'eslint-plugin-prettier/recommended'
 
 export default [
     {
-        ignores: [
-            'dist/**',
-            'node_modules/**',
-            'coverage/**',
-        ],
+        ignores: ['dist/**', 'node_modules/**', 'coverage/**'],
     },
     js.configs.recommended,
     ...pluginVue.configs['flat/essential'],

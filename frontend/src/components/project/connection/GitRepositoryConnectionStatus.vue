@@ -47,16 +47,11 @@ const presentation = computed(() => {
     return values[props.status] || values.IDLE
 })
 
-const shortCommitSha = computed(() =>
-    props.commitSha ? props.commitSha.slice(0, 12) : ''
-)
+const shortCommitSha = computed(() => (props.commitSha ? props.commitSha.slice(0, 12) : ''))
 </script>
 
 <template>
-    <section
-        class="mt-4 rounded-2xl border px-5 py-4"
-        :class="presentation.className"
-    >
+    <section class="mt-4 rounded-2xl border px-5 py-4" :class="presentation.className">
         <div class="flex flex-wrap items-start justify-between gap-3">
             <div>
                 <p class="text-sm font-semibold">
@@ -73,10 +68,7 @@ const shortCommitSha = computed(() =>
             ></span>
         </div>
 
-        <dl
-            v-if="status === 'SUCCESS'"
-            class="mt-3 grid gap-2 text-xs sm:grid-cols-2"
-        >
+        <dl v-if="status === 'SUCCESS'" class="mt-3 grid gap-2 text-xs sm:grid-cols-2">
             <div>
                 <dt class="font-semibold">브랜치</dt>
                 <dd class="mt-1">{{ branch }}</dd>

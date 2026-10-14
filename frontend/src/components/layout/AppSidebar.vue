@@ -76,13 +76,7 @@ const handleLogout = async () => {
 </script>
 
 <template>
-    <button
-        v-if="open"
-        type="button"
-        class="fixed inset-0 z-30 bg-slate-950/50 lg:hidden"
-        aria-label="메뉴 닫기"
-        @click="emit('close')"
-    ></button>
+    <button v-if="open" type="button" class="fixed inset-0 z-30 bg-slate-950/50 lg:hidden" aria-label="메뉴 닫기" @click="emit('close')"></button>
     <aside
         class="fixed inset-y-0 left-0 z-40 flex w-64 max-w-[85vw] flex-col overflow-y-auto border-r border-slate-800 bg-[#071a38] px-4 py-5 text-white transition-transform lg:z-30 lg:translate-x-0"
         :class="open ? 'translate-x-0' : '-translate-x-full'"
@@ -111,13 +105,7 @@ const handleLogout = async () => {
                 @click="emit('close')"
             >
                 <svg class="h-[18px] w-[18px] shrink-0" viewBox="0 0 24 24" fill="none">
-                    <path
-                        :d="menu.icon"
-                        stroke="currentColor"
-                        stroke-width="1.7"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                    />
+                    <path :d="menu.icon" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
                 </svg>
                 <span>{{ menu.label }}</span>
             </RouterLink>
@@ -134,16 +122,7 @@ const handleLogout = async () => {
                 </div>
             </div>
 
-            <BaseButton
-                class="mt-2"
-                variant="ghost"
-                size="small"
-                block
-                :loading="authStore.loading"
-                @click="handleLogout"
-            >
-                로그아웃
-            </BaseButton>
+            <BaseButton class="mt-2" variant="ghost" size="small" block :loading="authStore.loading" @click="handleLogout"> 로그아웃 </BaseButton>
         </div>
     </aside>
 </template>

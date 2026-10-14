@@ -118,13 +118,7 @@ src/
 ## BaseTable 사용 예시
 
 ```vue
-<BaseTable
-    :columns="columns"
-    :rows="rows"
-    :loading="loading"
-    clickable
-    @row-click="openDetail"
->
+<BaseTable :columns="columns" :rows="rows" :loading="loading" clickable @row-click="openDetail">
     <template #cell-status="{ value }">
         <StatusBadge :status="value" />
     </template>

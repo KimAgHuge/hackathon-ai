@@ -72,21 +72,11 @@ const filteredProjects = computed(() => {
     if (!value) return projects.value
 
     return projects.value.filter((project) => {
-        return [project.id, project.name, project.stack, project.source, project.branch]
-            .some((item) => String(item).toLowerCase().includes(value))
+        return [project.id, project.name, project.stack, project.source, project.branch].some((item) => String(item).toLowerCase().includes(value))
     })
 })
 
-const {
-    page,
-    pageSize,
-    sortKey,
-    sortDirection,
-    totalCount,
-    pagedRows,
-    handleSort,
-    resetPage,
-} = useClientTable({
+const { page, pageSize, sortKey, sortDirection, totalCount, pagedRows, handleSort, resetPage } = useClientTable({
     rows: filteredProjects,
     defaultPageSize: 5,
     defaultSortKey: 'updatedAt',
@@ -187,39 +177,18 @@ onMounted(fetchProjects)
     <div>
         <ViewHeading title="프로젝트 관리" description="분석 대상 프로젝트의 소스코드와 DB 연결 정보를 관리합니다.">
             <template #actions>
-                <BaseButton
-                    v-if="authStore.hasPermission('PROJECT_CREATE')"
-                    class="w-full lg:w-auto"
-                    to="/projects/new"
-                >
-                    + 프로젝트 등록
-                </BaseButton>
+                <BaseButton v-if="authStore.hasPermission('PROJECT_CREATE')" class="w-full lg:w-auto" to="/projects/new"> + 프로젝트 등록 </BaseButton>
             </template>
         </ViewHeading>
 
         <div class="mb-4 flex flex-col gap-3 md:flex-row md:items-end md:justify-between md:gap-4">
-            <BaseInput
-                v-model="keyword"
-                class="w-full md:max-w-md md:flex-1"
-                label="프로젝트 검색"
-                placeholder="프로젝트명, 코드, 기술 스택 검색"
-            />
+            <BaseInput v-model="keyword" class="w-full md:max-w-md md:flex-1" label="프로젝트 검색" placeholder="프로젝트명, 코드, 기술 스택 검색" />
 
             <div class="flex flex-col gap-3 sm:flex-row sm:items-end">
-                <BaseButton
-                    class="w-full sm:w-auto"
-                    variant="secondary"
-                    :disabled="loading || Boolean(busyProjectId)"
-                    @click="showDeleted = !showDeleted"
-                >
+                <BaseButton class="w-full sm:w-auto" variant="secondary" :disabled="loading || Boolean(busyProjectId)" @click="showDeleted = !showDeleted">
                     {{ showDeleted ? '일반 프로젝트 보기' : '삭제된 프로젝트 보기' }}
                 </BaseButton>
-                <BaseSelect
-                    v-model="pageSize"
-                    class="w-full sm:w-32"
-                    label="표시 개수"
-                    :options="pageSizeOptions"
-                />
+                <BaseSelect v-model="pageSize" class="w-full sm:w-32" label="표시 개수" :options="pageSizeOptions" />
             </div>
         </div>
 
@@ -228,10 +197,19 @@ onMounted(fetchProjects)
 
         <section v-if="projectToDelete" class="mb-4 rounded-xl border border-rose-200 bg-rose-50 p-4" aria-label="프로젝트 삭제 확인">
             <p class="mb-2 text-sm font-semibold text-rose-800">{{ projectToDelete.name }} 프로젝트를 목록에서 제외할까요?</p>
-            <p class="mb-3 text-xs text-rose-700">요구사항과 분석 이력은 보존되며, 복구 전에는 새 작업을 시작할 수 없습니다. 확인하려면 프로젝트 이름을 입력하세요.</p>
+            <p class="mb-3 text-xs text-rose-700">
+                요구사항과 분석 이력은 보존되며, 복구 전에는 새 작업을 시작할 수 없습니다. 확인하려면 프로젝트 이름을 입력하세요.
+            </p>
             <div class="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-end">
                 <BaseInput v-model="confirmationName" class="min-w-0 flex-1 sm:min-w-64" label="프로젝트 이름 확인" :placeholder="projectToDelete.name" />
-                <BaseButton class="w-full sm:w-auto" variant="danger" :disabled="confirmationName !== projectToDelete.name || Boolean(busyProjectId)" :loading="Boolean(busyProjectId)" @click="confirmDelete">삭제</BaseButton>
+                <BaseButton
+                    class="w-full sm:w-auto"
+                    variant="danger"
+                    :disabled="confirmationName !== projectToDelete.name || Boolean(busyProjectId)"
+                    :loading="Boolean(busyProjectId)"
+                    @click="confirmDelete"
+                    >삭제</BaseButton
+                >
                 <BaseButton class="w-full sm:w-auto" variant="secondary" :disabled="Boolean(busyProjectId)" @click="cancelDelete">취소</BaseButton>
             </div>
         </section>
@@ -279,20 +257,46 @@ onMounted(fetchProjects)
             </template>
 
             <template #cell-actions="{ row }">
-                <BaseButton v-if="showDeleted && authStore.hasPermission('PROJECT_UPDATE')" class="w-full" size="small" variant="secondary" :disabled="Boolean(busyProjectId)" @click="recoverProject(row)">복구</BaseButton>
+                <BaseButton
+                    v-if="showDeleted && authStore.hasPermission('PROJECT_UPDATE')"
+                    class="w-full"
+                    size="small"
+                    variant="secondary"
+                    :disabled="Boolean(busyProjectId)"
+                    @click="recoverProject(row)"
+                    >복구</BaseButton
+                >
                 <div v-else class="flex flex-col gap-1">
-                    <BaseButton v-if="!showDeleted && authStore.hasPermission('ANALYSIS_READ')" class="w-full" size="small" variant="secondary" :to="{ name: 'analysis-history', query: { projectId: row.id } }">이력</BaseButton>
-                    <BaseButton v-if="!showDeleted && authStore.hasPermission('PROJECT_UPDATE')" class="w-full" size="small" variant="secondary" @click="editProject(row)">수정</BaseButton>
-                    <BaseButton v-if="!showDeleted && authStore.hasPermission('PROJECT_UPDATE')" class="w-full" size="small" variant="danger" :disabled="Boolean(busyProjectId)" @click="requestDelete(row)">삭제</BaseButton>
+                    <BaseButton
+                        v-if="!showDeleted && authStore.hasPermission('ANALYSIS_READ')"
+                        class="w-full"
+                        size="small"
+                        variant="secondary"
+                        :to="{ name: 'analysis-history', query: { projectId: row.id } }"
+                        >이력</BaseButton
+                    >
+                    <BaseButton
+                        v-if="!showDeleted && authStore.hasPermission('PROJECT_UPDATE')"
+                        class="w-full"
+                        size="small"
+                        variant="secondary"
+                        @click="editProject(row)"
+                        >수정</BaseButton
+                    >
+                    <BaseButton
+                        v-if="!showDeleted && authStore.hasPermission('PROJECT_UPDATE')"
+                        class="w-full"
+                        size="small"
+                        variant="danger"
+                        :disabled="Boolean(busyProjectId)"
+                        @click="requestDelete(row)"
+                        >삭제</BaseButton
+                    >
                 </div>
             </template>
 
             <template #footer>
-                <BasePagination
-                    v-model:page="page"
-                    :page-size="Number(pageSize)"
-                    :total-count="totalCount"
-                />
+                <BasePagination v-model:page="page" :page-size="Number(pageSize)" :total-count="totalCount" />
             </template>
         </BaseTable>
     </div>

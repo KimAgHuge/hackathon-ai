@@ -1,14 +1,7 @@
 import { httpClient } from '@/api/httpClient'
 import { getAllRequirements } from '@/api/requirementApi'
 import { buildDashboardSummary } from '@/lib/dashboardSummary'
-import {
-    analysisHistoryMock,
-    changeRequestsMock,
-    dashboardMock,
-    documentsMock,
-    modelsMock,
-    projectsMock,
-} from '@/mocks/appMock'
+import { analysisHistoryMock, changeRequestsMock, dashboardMock, documentsMock, modelsMock, projectsMock } from '@/mocks/appMock'
 
 const useMock = import.meta.env.VITE_USE_MOCK !== 'false'
 

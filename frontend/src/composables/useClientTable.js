@@ -1,11 +1,6 @@
 import { computed, ref, unref, watch } from 'vue'
 
-export const useClientTable = ({
-    rows,
-    defaultPageSize = 5,
-    defaultSortKey = '',
-    defaultSortDirection = 'asc',
-} = {}) => {
+export const useClientTable = ({ rows, defaultPageSize = 5, defaultSortKey = '', defaultSortDirection = 'asc' } = {}) => {
     const page = ref(0)
     const pageSize = ref(defaultPageSize)
     const sortKey = ref(defaultSortKey)

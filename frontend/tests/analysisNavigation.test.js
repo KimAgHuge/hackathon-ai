@@ -15,12 +15,24 @@ test('does not warn for terminal jobs', () => {
 })
 
 test('requests the native unload warning only while analysis may be active', () => {
-    const active = { returnValue: false, prevented: false, preventDefault() { this.prevented = true } }
+    const active = {
+        returnValue: false,
+        prevented: false,
+        preventDefault() {
+            this.prevented = true
+        },
+    }
     warnOnAnalysisUnload(active, 'RUNNING')
     assert.equal(active.prevented, true)
     assert.equal(active.returnValue, true)
 
-    const completed = { returnValue: false, prevented: false, preventDefault() { this.prevented = true } }
+    const completed = {
+        returnValue: false,
+        prevented: false,
+        preventDefault() {
+            this.prevented = true
+        },
+    }
     warnOnAnalysisUnload(completed, 'COMPLETED')
     assert.equal(completed.prevented, false)
     assert.equal(completed.returnValue, false)

@@ -30,9 +30,7 @@ export const buildRequirementPayload = (form) => {
 }
 
 /** 기본 분석은 최신 Git/DB를 확인하고, 저장 근거를 선택한 경우에만 해당 작업 ID를 보낸다. */
-export const buildAnalysisJobPayload = (requirementVersionId, reuseFromJobId = null) => (
+export const buildAnalysisJobPayload = (requirementVersionId, reuseFromJobId = null) =>
     requirementVersionId || reuseFromJobId
-        ? { ...(requirementVersionId ? { requirementVersionId } : {}),
-            ...(reuseFromJobId ? { reuseFromJobId, confirmedUnchanged: true } : {}) }
+        ? { ...(requirementVersionId ? { requirementVersionId } : {}), ...(reuseFromJobId ? { reuseFromJobId, confirmedUnchanged: true } : {}) }
         : undefined
-)

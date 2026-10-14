@@ -29,7 +29,11 @@ onMounted(() => {
                 v-for="tab in tabs"
                 :key="tab.id"
                 class="-mb-px shrink-0 whitespace-nowrap border-b-2 px-5 py-3 text-sm font-bold"
-                :class="activeTab === tab.id ? 'border-blue-600 text-blue-700 dark:border-blue-400 dark:text-blue-300' : 'border-transparent text-slate-500 dark:text-slate-400'"
+                :class="
+                    activeTab === tab.id
+                        ? 'border-blue-600 text-blue-700 dark:border-blue-400 dark:text-blue-300'
+                        : 'border-transparent text-slate-500 dark:text-slate-400'
+                "
                 @click="activeTab = tab.id"
             >
                 {{ tab.label }}
@@ -50,7 +54,9 @@ onMounted(() => {
 
         <template v-if="activeTab === 'connections' && store.settings">
             <section class="mb-4 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-sm shadow-slate-900/3">
-                <div class="flex flex-col gap-2 border-b border-slate-100 px-4 py-5 sm:flex-row sm:items-start sm:justify-between sm:px-6 dark:border-slate-800">
+                <div
+                    class="flex flex-col gap-2 border-b border-slate-100 px-4 py-5 sm:flex-row sm:items-start sm:justify-between sm:px-6 dark:border-slate-800"
+                >
                     <div>
                         <div class="flex flex-wrap items-center gap-3">
                             <h2 class="text-lg font-extrabold text-slate-900 dark:text-slate-100">AI 추론 서버</h2>
@@ -87,7 +93,11 @@ onMounted(() => {
                     </div>
                     <div class="form-group">
                         <label>내부 API Key</label>
-                        <input v-model="store.settings.aiServer.internalApiKey" type="password" :placeholder="store.settings.aiServer.apiKeyConfigured ? '기존 키가 설정되어 있습니다' : '새 키 입력'" />
+                        <input
+                            v-model="store.settings.aiServer.internalApiKey"
+                            type="password"
+                            :placeholder="store.settings.aiServer.apiKeyConfigured ? '기존 키가 설정되어 있습니다' : '새 키 입력'"
+                        />
                     </div>
                 </div>
 
@@ -102,7 +112,9 @@ onMounted(() => {
             </section>
 
             <section class="mb-4 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-sm shadow-slate-900/3">
-                <div class="flex flex-col gap-2 border-b border-slate-100 px-4 py-5 sm:flex-row sm:items-start sm:justify-between sm:px-6 dark:border-slate-800">
+                <div
+                    class="flex flex-col gap-2 border-b border-slate-100 px-4 py-5 sm:flex-row sm:items-start sm:justify-between sm:px-6 dark:border-slate-800"
+                >
                     <div>
                         <div class="flex flex-wrap items-center gap-3">
                             <h2 class="text-lg font-extrabold text-slate-900 dark:text-slate-100">학습 서버</h2>
@@ -115,7 +127,10 @@ onMounted(() => {
                     </div>
                 </div>
 
-                <div v-if="store.settings.trainingServer.status === 'OFFLINE'" class="mx-6 mt-5 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-700">
+                <div
+                    v-if="store.settings.trainingServer.status === 'OFFLINE'"
+                    class="mx-6 mt-5 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-700"
+                >
                     학습 서버가 오프라인입니다. AI 분석 기능은 정상적으로 사용할 수 있으며, 모델 학습과 업데이트만 제한됩니다.
                 </div>
 
@@ -163,7 +178,9 @@ onMounted(() => {
             </section>
 
             <section class="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-sm shadow-slate-900/3">
-                <div class="flex flex-col gap-2 border-b border-slate-100 px-4 py-5 sm:flex-row sm:items-start sm:justify-between sm:px-6 dark:border-slate-800">
+                <div
+                    class="flex flex-col gap-2 border-b border-slate-100 px-4 py-5 sm:flex-row sm:items-start sm:justify-between sm:px-6 dark:border-slate-800"
+                >
                     <div>
                         <div class="flex flex-wrap items-center gap-3">
                             <h2 class="text-lg font-extrabold text-slate-900 dark:text-slate-100">Supabase</h2>
@@ -188,7 +205,11 @@ onMounted(() => {
                     </div>
                     <div class="form-group">
                         <label>Service Role Key</label>
-                        <input v-model="store.settings.supabase.serviceRoleKey" type="password" :placeholder="store.settings.supabase.serviceRoleConfigured ? '기존 키가 설정되어 있습니다' : '새 키 입력'" />
+                        <input
+                            v-model="store.settings.supabase.serviceRoleKey"
+                            type="password"
+                            :placeholder="store.settings.supabase.serviceRoleConfigured ? '기존 키가 설정되어 있습니다' : '새 키 입력'"
+                        />
                     </div>
                     <div class="form-group sm:col-span-2">
                         <label>JWT Issuer</label>
@@ -288,7 +309,9 @@ onMounted(() => {
                     <div class="text-sm font-extrabold text-blue-900">현재 활성 모델은 설정에서 변경하지 않습니다.</div>
                     <div class="mt-1 text-xs text-blue-700">모델 버전, 평가, 배포와 롤백은 AI 모델 관리 화면에서 수행합니다.</div>
                 </div>
-                <RouterLink to="/models" class="rounded-lg bg-blue-700 px-4 py-2 text-center text-xs font-bold whitespace-nowrap text-white">AI 모델 관리로 이동</RouterLink>
+                <RouterLink to="/models" class="rounded-lg bg-blue-700 px-4 py-2 text-center text-xs font-bold whitespace-nowrap text-white"
+                    >AI 모델 관리로 이동</RouterLink
+                >
             </div>
         </section>
     </div>

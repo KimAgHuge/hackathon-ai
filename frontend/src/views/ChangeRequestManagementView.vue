@@ -41,12 +41,10 @@ const priorityOptions = [
     { value: 'MEDIUM', label: '보통' },
     { value: 'HIGH', label: '높음' },
 ]
-const dateRangeError = computed(() => startDate.value && endDate.value && startDate.value > endDate.value
-    ? '종료일은 시작일 이후여야 합니다.'
-    : '')
-const hasActiveFilters = computed(() => Boolean(
-    keyword.value || selectedProject.value || selectedStatus.value !== 'ALL' || selectedPriority.value || startDate.value || endDate.value
-))
+const dateRangeError = computed(() => (startDate.value && endDate.value && startDate.value > endDate.value ? '종료일은 시작일 이후여야 합니다.' : ''))
+const hasActiveFilters = computed(() =>
+    Boolean(keyword.value || selectedProject.value || selectedStatus.value !== 'ALL' || selectedPriority.value || startDate.value || endDate.value)
+)
 const resetFilters = () => {
     keyword.value = ''
     selectedProject.value = ''
@@ -81,21 +79,15 @@ const filteredRequests = computed(() => {
         if (selectedPriority.value && item.priority !== selectedPriority.value) return false
         if (!matchesCreatedDateRange(item.createdAt, startDate.value, endDate.value)) return false
         if (!search) return true
-        return [item.id, item.project, item.title, item.requester]
-            .some((value) => String(value || '').toLocaleLowerCase('ko-KR').includes(search))
+        return [item.id, item.project, item.title, item.requester].some((value) =>
+            String(value || '')
+                .toLocaleLowerCase('ko-KR')
+                .includes(search)
+        )
     })
 })
 
-const {
-    page,
-    pageSize,
-    sortKey,
-    sortDirection,
-    totalCount,
-    pagedRows,
-    handleSort,
-    resetPage,
-} = useClientTable({
+const { page, pageSize, sortKey, sortDirection, totalCount, pagedRows, handleSort, resetPage } = useClientTable({
     rows: filteredRequests,
     defaultPageSize: 10,
     defaultSortKey: 'createdAt',
@@ -124,18 +116,12 @@ onMounted(() => {
     <div v-if="isAnalysisDemoMode">
         <ViewHeading title="변경요청 관리" description="고객 또는 업무부서가 요청한 변경사항과 AI 분석 상태를 관리합니다.">
             <template #actions>
-                <BaseButton v-if="authStore.hasPermission('CHANGE_REQUEST_CREATE')" class="w-full lg:w-auto" disabled>
-                    데모 변경요청
-                </BaseButton>
+                <BaseButton v-if="authStore.hasPermission('CHANGE_REQUEST_CREATE')" class="w-full lg:w-auto" disabled> 데모 변경요청 </BaseButton>
             </template>
         </ViewHeading>
 
         <section class="mb-4 rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-900">
-            <BaseInput
-                v-model="keyword"
-                label="변경요청 검색"
-                placeholder="프로젝트명, 요청번호, 제목, 요청부서 검색"
-            />
+            <BaseInput v-model="keyword" label="변경요청 검색" placeholder="프로젝트명, 요청번호, 제목, 요청부서 검색" />
             <div class="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 <BaseSelect v-model="selectedProject" id="demo-filter-project" label="프로젝트" :options="projectOptions" />
                 <BaseSelect v-model="selectedPriority" id="demo-filter-priority" label="우선순위" :options="priorityOptions" />
@@ -144,7 +130,9 @@ onMounted(() => {
             </div>
             <p class="mt-2 text-xs text-slate-500 dark:text-slate-400">선택한 조건은 모두 함께 적용됩니다.</p>
             <div class="mt-3 flex justify-end">
-                <BaseButton class="w-full sm:w-auto" variant="secondary" size="small" :disabled="!hasActiveFilters" @click="resetFilters">검색 조건 초기화</BaseButton>
+                <BaseButton class="w-full sm:w-auto" variant="secondary" size="small" :disabled="!hasActiveFilters" @click="resetFilters"
+                    >검색 조건 초기화</BaseButton
+                >
             </div>
         </section>
 
@@ -161,9 +149,7 @@ onMounted(() => {
                 </BaseButton>
             </div>
 
-            <div class="text-xs font-semibold text-slate-500 dark:text-slate-400">
-                총 {{ totalCount }}건
-            </div>
+            <div class="text-xs font-semibold text-slate-500 dark:text-slate-400">총 {{ totalCount }}건</div>
         </div>
 
         <BaseTable
@@ -200,11 +186,7 @@ onMounted(() => {
             </template>
 
             <template #footer>
-                <BasePagination
-                    v-model:page="page"
-                    :page-size="pageSize"
-                    :total-count="totalCount"
-                />
+                <BasePagination v-model:page="page" :page-size="pageSize" :total-count="totalCount" />
             </template>
         </BaseTable>
     </div>

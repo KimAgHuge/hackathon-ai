@@ -39,10 +39,7 @@ defineProps({
             <slot />
         </div>
 
-        <footer
-            v-if="$slots.footer"
-            class="border-t border-slate-100 px-6 py-4 dark:border-slate-800"
-        >
+        <footer v-if="$slots.footer" class="border-t border-slate-100 px-6 py-4 dark:border-slate-800">
             <slot name="footer" />
         </footer>
     </section>

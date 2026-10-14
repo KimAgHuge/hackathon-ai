@@ -13,18 +13,18 @@ onMounted(() => {
 
 <template>
     <div>
-        <PageTitle
-            eyebrow="STEP 3"
-            title="통합 프로젝트 아키텍처"
-            description="소스코드와 DB 스키마를 결합해 생성한 화면·API·서비스·SQL·테이블 관계입니다."
-        />
+        <PageTitle eyebrow="STEP 3" title="통합 프로젝트 아키텍처" description="소스코드와 DB 스키마를 결합해 생성한 화면·API·서비스·SQL·테이블 관계입니다." />
 
         <StepHeader :current="3" />
 
         <div v-if="store.architecture" class="summary-strip">
             <div><span>프로젝트</span><strong>doenaai</strong></div>
-            <div><span>소스 커밋</span><strong>{{ store.architecture.sourceCommit }}</strong></div>
-            <div><span>DB 스냅샷</span><strong>{{ store.architecture.databaseSnapshot }}</strong></div>
+            <div>
+                <span>소스 커밋</span><strong>{{ store.architecture.sourceCommit }}</strong>
+            </div>
+            <div>
+                <span>DB 스냅샷</span><strong>{{ store.architecture.databaseSnapshot }}</strong>
+            </div>
             <div><span>분석 상태</span><strong class="success-text">검토 가능</strong></div>
         </div>
 

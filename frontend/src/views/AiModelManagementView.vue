@@ -51,25 +51,16 @@ onMounted(fetchModels)
         <ViewHeading title="AI 모델 관리" description="모델 버전, LoRA 어댑터, 평가 결과와 배포 상태를 관리합니다.">
             <template #actions>
                 <div class="flex flex-col gap-2 sm:flex-row">
-                    <BaseButton
-                        v-if="authStore.hasPermission('MODEL_TRAIN')"
-                        class="w-full sm:w-auto"
-                        variant="secondary"
-                    >
-                        학습 작업 생성
-                    </BaseButton>
-                    <BaseButton
-                        v-if="authStore.hasPermission('MODEL_DEPLOY')"
-                        class="w-full sm:w-auto"
-                    >
-                        새 모델 등록
-                    </BaseButton>
+                    <BaseButton v-if="authStore.hasPermission('MODEL_TRAIN')" class="w-full sm:w-auto" variant="secondary"> 학습 작업 생성 </BaseButton>
+                    <BaseButton v-if="authStore.hasPermission('MODEL_DEPLOY')" class="w-full sm:w-auto"> 새 모델 등록 </BaseButton>
                 </div>
             </template>
         </ViewHeading>
 
         <template v-if="models">
-            <section class="overflow-hidden rounded-xl border border-blue-200 bg-gradient-to-r from-[#071a38] to-[#0f4ca3] text-white shadow-lg shadow-blue-950/10">
+            <section
+                class="overflow-hidden rounded-xl border border-blue-200 bg-gradient-to-r from-[#071a38] to-[#0f4ca3] text-white shadow-lg shadow-blue-950/10"
+            >
                 <div class="grid lg:grid-cols-[1.25fr_0.75fr]">
                     <div class="p-6">
                         <div class="text-[11px] font-extrabold tracking-[0.14em] text-blue-200">CURRENT ACTIVE MODEL</div>
@@ -100,9 +91,7 @@ onMounted(fetchModels)
                         <div class="text-center">
                             <div class="text-sm font-semibold text-blue-100">검증 정확도</div>
                             <div class="mt-2 text-5xl font-black">{{ models.active.accuracy }}%</div>
-                            <BaseButton class="mt-5 border-white/30 text-white hover:bg-white/10" variant="ghost">
-                                배포 상태 확인
-                            </BaseButton>
+                            <BaseButton class="mt-5 border-white/30 text-white hover:bg-white/10" variant="ghost"> 배포 상태 확인 </BaseButton>
                         </div>
                     </div>
                 </div>
@@ -125,17 +114,10 @@ onMounted(fetchModels)
             <div class="mt-5">
                 <div class="mb-3">
                     <h2 class="text-base font-extrabold text-slate-900 dark:text-slate-100">모델 버전</h2>
-                    <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                        승인된 모델만 Mac Studio 추론 서버에 배포할 수 있습니다.
-                    </p>
+                    <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">승인된 모델만 Mac Studio 추론 서버에 배포할 수 있습니다.</p>
                 </div>
 
-                <BaseTable
-                    :columns="columns"
-                    :rows="models.versions"
-                    :loading="loading"
-                    row-key="version"
-                >
+                <BaseTable :columns="columns" :rows="models.versions" :loading="loading" row-key="version">
                     <template #cell-version="{ value }">
                         <span class="font-extrabold text-slate-900 dark:text-slate-100">{{ value }}</span>
                     </template>
@@ -153,16 +135,8 @@ onMounted(fetchModels)
                     </template>
 
                     <template #cell-actions="{ row }">
-                        <BaseButton
-                            v-if="row.status === 'STANDBY'"
-                            size="small"
-                            @click="deployModel(row)"
-                        >
-                            배포
-                        </BaseButton>
-                        <BaseButton v-else size="small" variant="secondary">
-                            상세
-                        </BaseButton>
+                        <BaseButton v-if="row.status === 'STANDBY'" size="small" @click="deployModel(row)"> 배포 </BaseButton>
+                        <BaseButton v-else size="small" variant="secondary"> 상세 </BaseButton>
                     </template>
                 </BaseTable>
             </div>

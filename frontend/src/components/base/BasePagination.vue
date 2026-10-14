@@ -37,32 +37,14 @@ const move = (nextPage) => {
 
 <template>
     <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-        <div class="text-xs text-slate-500 dark:text-slate-400">
-            총 {{ totalCount.toLocaleString() }}건
-        </div>
+        <div class="text-xs text-slate-500 dark:text-slate-400">총 {{ totalCount.toLocaleString() }}건</div>
 
         <div class="flex flex-wrap items-center gap-2">
-            <BaseButton
-                size="small"
-                variant="secondary"
-                :disabled="page <= 0"
-                @click="move(page - 1)"
-            >
-                이전
-            </BaseButton>
+            <BaseButton size="small" variant="secondary" :disabled="page <= 0" @click="move(page - 1)"> 이전 </BaseButton>
 
-            <span class="min-w-20 text-center text-xs font-bold text-slate-600 dark:text-slate-300">
-                {{ currentDisplayPage }} / {{ pageCount }}
-            </span>
+            <span class="min-w-20 text-center text-xs font-bold text-slate-600 dark:text-slate-300"> {{ currentDisplayPage }} / {{ pageCount }} </span>
 
-            <BaseButton
-                size="small"
-                variant="secondary"
-                :disabled="page >= pageCount - 1"
-                @click="move(page + 1)"
-            >
-                다음
-            </BaseButton>
+            <BaseButton size="small" variant="secondary" :disabled="page >= pageCount - 1" @click="move(page + 1)"> 다음 </BaseButton>
         </div>
     </div>
 </template>

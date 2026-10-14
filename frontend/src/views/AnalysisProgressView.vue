@@ -23,12 +23,12 @@ let elapsedTimer = null
 // 브라우저 뒤로가기·앱 내부 이동은 화면만 벗어난다. 서버 분석을 자동 취소하지 않는다.
 const confirmLeavingRunningJob = () => {
     if (!shouldConfirmAnalysisExit(job.value?.status)) return true
-    return window.confirm('분석 화면을 나가시겠습니까? 서버 작업은 계속되며 분석 이력에서 다시 확인할 수 있습니다. 작업 자체를 멈추려면 이 화면의 “분석 작업 취소”를 사용하세요.')
+    return window.confirm(
+        '분석 화면을 나가시겠습니까? 서버 작업은 계속되며 분석 이력에서 다시 확인할 수 있습니다. 작업 자체를 멈추려면 이 화면의 “분석 작업 취소”를 사용하세요.'
+    )
 }
 onBeforeRouteLeave(confirmLeavingRunningJob)
-onBeforeRouteUpdate((to) => (
-    to.params.analysisJobId === route.params.analysisJobId ? true : confirmLeavingRunningJob()
-))
+onBeforeRouteUpdate((to) => (to.params.analysisJobId === route.params.analysisJobId ? true : confirmLeavingRunningJob()))
 
 // 새로고침·탭/창 닫기에는 브라우저 기본 경고만 가능하며 비동기 취소 요청은 보장되지 않는다.
 const warnBeforeUnload = (event) => {
@@ -216,25 +216,39 @@ const evidenceEntries = (evidence) => (evidence && typeof evidence === 'object' 
 
 <template>
     <div class="analysis-page">
-        <PageTitle
-            :eyebrow="isRequirementAnalysis ? 'CHANGE IMPACT' : 'PROJECT ANALYSIS'"
-            :title="isRequirementAnalysis ? '변경 영향 분석 상태 및 결과' : '프로젝트 분석 상태 및 결과'"
-            :description="isRequirementAnalysis
-                ? '선택한 요구사항 버전과 저장소·DB 근거를 바탕으로 영향 범위를 확인합니다.'
-                : '저장소와 DB에서 수집한 사실을 바탕으로 분석 작업의 상태와 결과를 확인합니다.'"
-        />
+        <header class="analysis-header">
+            <PageTitle
+                class="analysis-heading"
+                :eyebrow="isRequirementAnalysis ? 'CHANGE IMPACT' : 'PROJECT ANALYSIS'"
+                :title="isRequirementAnalysis ? '변경 영향 분석 상태 및 결과' : '프로젝트 분석 상태 및 결과'"
+                :description="
+                    isRequirementAnalysis
+                        ? '선택한 요구사항 버전과 저장소·DB 근거를 바탕으로 영향 범위를 확인합니다.'
+                        : '저장소와 DB에서 수집한 사실을 바탕으로 분석 작업의 상태와 결과를 확인합니다.'
+                "
+            />
+            <div class="analysis-header-tools">
+                <div class="analysis-header-actions">
+                    <RouterLink class="button secondary" :to="{ name: 'analysis-history', query: { projectId: route.params.projectId } }">
+                        이력으로 나가기
+                    </RouterLink>
+                    <button
+                        v-if="job && ['PENDING', 'RUNNING'].includes(job.status)"
+                        type="button"
+                        class="button analysis-cancel-button"
+                        :disabled="cancelBusy"
+                        @click="cancelJob"
+                    >
+                        {{ cancelBusy ? '취소 요청 중…' : '분석 작업 취소' }}
+                    </button>
+                </div>
+                <p v-if="shouldConfirmAnalysisExit(job?.status)" class="analysis-header-hint">
+                    화면을 나가도 서버 분석은 계속되며, 분석 이력에서 다시 확인할 수 있습니다.
+                </p>
+            </div>
+        </header>
 
         <p v-if="isAnalysisDemoMode" class="analysis-notice">데모 모드: 아래 상태와 결과는 화면 확인용 샘플이며 실제 분석 결과가 아닙니다.</p>
-
-        <div class="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center">
-            <RouterLink class="button secondary w-full text-center sm:w-auto" :to="{ name: 'analysis-history', query: { projectId: route.params.projectId } }">
-                이력으로 나가기
-            </RouterLink>
-            <button v-if="job && ['PENDING', 'RUNNING'].includes(job.status)" type="button" class="button secondary w-full sm:w-auto" :disabled="cancelBusy" @click="cancelJob">
-                {{ cancelBusy ? '취소 요청 중…' : '분석 작업 취소' }}
-            </button>
-            <span v-if="shouldConfirmAnalysisExit(job?.status)" class="text-xs text-slate-600 dark:text-slate-400">뒤로가기·새로고침·창 닫기로 나가도 서버 분석은 계속되며 이력에서 다시 볼 수 있습니다.</span>
-        </div>
         <p v-if="cancelError" role="alert" class="analysis-notice error-notice">{{ cancelError }}</p>
 
         <div class="analysis-toolbar flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -382,7 +396,10 @@ const evidenceEntries = (evidence) => (evidence && typeof evidence === 'object' 
                         <h3 class="subheading">제안된 DB 변경</h3>
                         <ol class="recommendation-list">
                             <li v-for="(change, index) in databaseImpact.proposedChanges" :key="index">
-                                <strong>{{ change.targetTable }}{{ change.targetColumn ? `.${change.targetColumn}` : '' }} · {{ databaseChangeLabels[change.changeType] || change.changeType }}</strong>
+                                <strong
+                                    >{{ change.targetTable }}{{ change.targetColumn ? `.${change.targetColumn}` : '' }} ·
+                                    {{ databaseChangeLabels[change.changeType] || change.changeType }}</strong
+                                >
                                 <p>{{ change.description }}</p>
                                 <p class="database-change-reason">이유: {{ change.rationale }}</p>
                             </li>
@@ -392,7 +409,8 @@ const evidenceEntries = (evidence) => (evidence && typeof evidence === 'object' 
                         <h3 class="subheading">조건별 DB 영향 (확정 아님)</h3>
                         <ul class="result-list">
                             <li v-for="(path, index) in databaseImpact.conditionalPaths" :key="index">
-                                <strong>{{ path.condition }}</strong>: {{ path.databaseEffect }}
+                                <strong>{{ path.condition }}</strong
+                                >: {{ path.databaseEffect }}
                             </li>
                         </ul>
                     </div>
@@ -403,7 +421,9 @@ const evidenceEntries = (evidence) => (evidence && typeof evidence === 'object' 
                         </ul>
                     </div>
                 </template>
-                <p v-else class="empty-copy">이 분석은 새 DB 영향 판단 형식 도입 전에 저장돼 세부 변경안을 제공하지 않습니다. 다시 분석하면 확인할 수 있습니다.</p>
+                <p v-else class="empty-copy">
+                    이 분석은 새 DB 영향 판단 형식 도입 전에 저장돼 세부 변경안을 제공하지 않습니다. 다시 분석하면 확인할 수 있습니다.
+                </p>
             </section>
 
             <div class="grid two-columns analysis-section">
@@ -480,6 +500,83 @@ const evidenceEntries = (evidence) => (evidence && typeof evidence === 'object' 
 </template>
 
 <style scoped>
+.analysis-header {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    margin-bottom: 24px;
+}
+.analysis-heading,
+.analysis-header-tools {
+    min-width: 0;
+}
+.analysis-header-tools {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.analysis-header-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.analysis-header-actions .button {
+    width: 100%;
+}
+.analysis-header-hint {
+    margin: 0;
+    color: #667188;
+    font-size: 12px;
+    line-height: 1.5;
+}
+.analysis-cancel-button {
+    border-color: #fecdd3;
+    background: #fff1f2;
+    color: #be123c;
+}
+.analysis-cancel-button:hover:not(:disabled) {
+    border-color: #fda4af;
+    background: #ffe4e6;
+}
+:global(.dark) .analysis-cancel-button {
+    border-color: #7f1d1d;
+    background: #451a1a;
+    color: #fecdd3;
+}
+:global(.dark) .analysis-cancel-button:hover:not(:disabled) {
+    background: #631e28;
+}
+:global(.dark) .analysis-header-hint {
+    color: #a5b4c9;
+}
+@media (min-width: 560px) {
+    .analysis-header-actions {
+        flex-direction: row;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+    }
+    .analysis-header-actions .button {
+        width: auto;
+    }
+    .analysis-header-hint {
+        text-align: right;
+    }
+}
+@media (min-width: 1280px) {
+    .analysis-header {
+        flex-direction: row;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 24px;
+    }
+    .analysis-heading {
+        flex: 1 1 auto;
+    }
+    .analysis-header-tools {
+        flex: 0 1 420px;
+        align-items: flex-end;
+    }
+}
 .analysis-toolbar,
 .metric-list > div {
     display: flex;
@@ -575,10 +672,14 @@ const evidenceEntries = (evidence) => (evidence && typeof evidence === 'object' 
     font-size: 12px;
 }
 @keyframes activity-pulse {
-    50% { opacity: 0.35; }
+    50% {
+        opacity: 0.35;
+    }
 }
 @media (prefers-reduced-motion: reduce) {
-    .activity-dot { animation: none; }
+    .activity-dot {
+        animation: none;
+    }
 }
 .database-impact-group {
     margin-top: 16px;

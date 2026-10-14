@@ -84,11 +84,7 @@ const sizeClass = computed(() => {
             },
         ]"
     >
-        <span
-            v-if="loading"
-            class="h-4 w-4 animate-spin rounded-full border-2 border-current border-r-transparent"
-            aria-hidden="true"
-        ></span>
+        <span v-if="loading" class="h-4 w-4 animate-spin rounded-full border-2 border-current border-r-transparent" aria-hidden="true"></span>
 
         <slot />
     </component>

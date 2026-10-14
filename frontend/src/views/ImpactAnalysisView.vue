@@ -14,11 +14,7 @@ onMounted(() => {
 
 <template>
     <div>
-        <PageTitle
-            eyebrow="STEP 4"
-            title="변경 요청 영향도 분석"
-            description="통합 아키텍처와 DB 구조를 근거로 변경 범위와 위험도를 분석합니다."
-        />
+        <PageTitle eyebrow="STEP 4" title="변경 요청 영향도 분석" description="통합 아키텍처와 DB 구조를 근거로 변경 범위와 위험도를 분석합니다." />
 
         <StepHeader :current="4" />
 
@@ -42,9 +38,7 @@ onMounted(() => {
 
                 <section class="panel delay-card">
                     <span>예상 일정 영향</span>
-                    <strong>
-                        {{ store.impact.expectedDelayMin }}~{{ store.impact.expectedDelayMax }}일
-                    </strong>
+                    <strong> {{ store.impact.expectedDelayMin }}~{{ store.impact.expectedDelayMax }}일 </strong>
                     <p>전자서명 공통 모듈 존재 여부와 외부기관 테스트 일정에 따라 달라질 수 있습니다.</p>
                 </section>
 
@@ -52,10 +46,7 @@ onMounted(() => {
                     <span>영향 영역</span>
                     <strong>{{ store.impact.impactAreas.length }}개</strong>
                     <div class="tag-list compact">
-                        <span
-                            v-for="area in store.impact.impactAreas"
-                            :key="area"
-                        >
+                        <span v-for="area in store.impact.impactAreas" :key="area">
                             {{ area }}
                         </span>
                     </div>
@@ -71,11 +62,7 @@ onMounted(() => {
                         </div>
                     </div>
 
-                    <div
-                        v-for="evidence in store.impact.evidences"
-                        :key="evidence.name"
-                        class="evidence-row"
-                    >
+                    <div v-for="evidence in store.impact.evidences" :key="evidence.name" class="evidence-row">
                         <div class="evidence-index">{{ evidence.order }}</div>
                         <div>
                             <strong>{{ evidence.name }}</strong>
@@ -93,10 +80,7 @@ onMounted(() => {
                         </div>
                     </div>
                     <ol class="recommendation-list">
-                        <li
-                            v-for="item in store.impact.recommendations"
-                            :key="item"
-                        >
+                        <li v-for="item in store.impact.recommendations" :key="item">
                             {{ item }}
                         </li>
                     </ol>

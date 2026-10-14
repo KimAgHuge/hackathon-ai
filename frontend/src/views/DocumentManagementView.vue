@@ -29,21 +29,11 @@ const filteredDocuments = computed(() => {
     if (!value) return documents.value
 
     return documents.value.filter((document) => {
-        return [document.name, document.project, document.type]
-            .some((item) => String(item).toLowerCase().includes(value))
+        return [document.name, document.project, document.type].some((item) => String(item).toLowerCase().includes(value))
     })
 })
 
-const {
-    page,
-    pageSize,
-    sortKey,
-    sortDirection,
-    totalCount,
-    pagedRows,
-    handleSort,
-    resetPage,
-} = useClientTable({
+const { page, pageSize, sortKey, sortDirection, totalCount, pagedRows, handleSort, resetPage } = useClientTable({
     rows: filteredDocuments,
     defaultPageSize: 10,
     defaultSortKey: 'updatedAt',
@@ -68,27 +58,13 @@ onMounted(fetchDocuments)
     <div>
         <ViewHeading title="문서 관리" description="요구사항, 인터페이스 정의서, 업무절차 등 RAG 분석 문서를 관리합니다.">
             <template #actions>
-                <BaseButton v-if="authStore.hasPermission('DOCUMENT_UPLOAD')" class="w-full lg:w-auto">
-                    + 문서 업로드
-                </BaseButton>
+                <BaseButton v-if="authStore.hasPermission('DOCUMENT_UPLOAD')" class="w-full lg:w-auto"> + 문서 업로드 </BaseButton>
             </template>
         </ViewHeading>
 
-        <BaseInput
-            v-model="keyword"
-            class="mb-4 max-w-md"
-            label="문서 검색"
-            placeholder="문서명, 프로젝트, 분류 검색"
-        />
+        <BaseInput v-model="keyword" class="mb-4 max-w-md" label="문서 검색" placeholder="문서명, 프로젝트, 분류 검색" />
 
-        <BaseTable
-            :columns="columns"
-            :rows="pagedRows"
-            :loading="loading"
-            :sort-key="sortKey"
-            :sort-direction="sortDirection"
-            @sort-change="handleSort"
-        >
+        <BaseTable :columns="columns" :rows="pagedRows" :loading="loading" :sort-key="sortKey" :sort-direction="sortDirection" @sort-change="handleSort">
             <template #cell-name="{ row }">
                 <div class="font-extrabold text-slate-900 dark:text-slate-100">{{ row.name }}</div>
                 <div class="mt-1 text-xs text-slate-500 dark:text-slate-400">{{ row.id }}</div>
@@ -106,11 +82,7 @@ onMounted(fetchDocuments)
             </template>
 
             <template #footer>
-                <BasePagination
-                    v-model:page="page"
-                    :page-size="pageSize"
-                    :total-count="totalCount"
-                />
+                <BasePagination v-model:page="page" :page-size="pageSize" :total-count="totalCount" />
             </template>
         </BaseTable>
     </div>

@@ -45,9 +45,7 @@ export const useProjectWizardStore = defineStore('projectWizard', () => {
     }
 
     const setRepositoryResult = (result) => {
-        repositoryStatus.value = result.success
-            ? CONNECTION_STATUS.SUCCESS
-            : CONNECTION_STATUS.FAILED
+        repositoryStatus.value = result.success ? CONNECTION_STATUS.SUCCESS : CONNECTION_STATUS.FAILED
         repositoryMessage.value = result.message || ''
         repositoryBranch.value = result.branch || ''
         repositoryCommitSha.value = result.commitSha || ''

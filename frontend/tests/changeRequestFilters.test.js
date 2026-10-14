@@ -12,11 +12,9 @@ test('matches an inclusive date range', () => {
 test('converts timestamp to the same local date shown in the table', () => {
     const timestamp = '2026-10-14T10:30:00+09:00'
     const expectedDate = new Date(timestamp)
-    const localDate = [
-        expectedDate.getFullYear(),
-        String(expectedDate.getMonth() + 1).padStart(2, '0'),
-        String(expectedDate.getDate()).padStart(2, '0'),
-    ].join('-')
+    const localDate = [expectedDate.getFullYear(), String(expectedDate.getMonth() + 1).padStart(2, '0'), String(expectedDate.getDate()).padStart(2, '0')].join(
+        '-'
+    )
 
     assert.equal(toLocalDateKey(timestamp), localDate)
     assert.equal(matchesCreatedDateRange(timestamp, localDate, localDate), true)

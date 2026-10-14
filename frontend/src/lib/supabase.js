@@ -16,10 +16,10 @@ export const isSupabaseConfigured = !hasPlaceholder(supabaseUrl) && !hasPlacehol
 // URL·publishable key가 유효할 때만 인증 클라이언트를 만든다; 비밀번호/서비스 키는 여기 넣지 않는다.
 export const supabase = isSupabaseConfigured
     ? createClient(supabaseUrl, supabasePublishableKey, {
-        auth: {
-            persistSession: true,
-            autoRefreshToken: true,
-            detectSessionInUrl: true,
-        },
-    })
+          auth: {
+              persistSession: true,
+              autoRefreshToken: true,
+              detectSessionInUrl: true,
+          },
+      })
     : null

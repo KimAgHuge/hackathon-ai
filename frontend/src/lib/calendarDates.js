@@ -1,8 +1,4 @@
-export const toDateKey = (date) => [
-    date.getFullYear(),
-    String(date.getMonth() + 1).padStart(2, '0'),
-    String(date.getDate()).padStart(2, '0'),
-].join('-')
+export const toDateKey = (date) => [date.getFullYear(), String(date.getMonth() + 1).padStart(2, '0'), String(date.getDate()).padStart(2, '0')].join('-')
 
 export const parseDateKey = (value) => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(value || '')) return null
