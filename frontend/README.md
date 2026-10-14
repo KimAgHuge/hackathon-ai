@@ -2,6 +2,18 @@
 
 Vue 3, Vite, Pinia, Vue Router, Tailwind CSS 4, Supabase Auth 기반의 관리자 프론트엔드입니다.
 
+## 현재 구현 상태 — 2026-10-14 점검
+
+프로젝트 등록·조직 생성/선택·Git/DB 연결과 현재 요구사항 분석은 실제 API 경로가 있습니다.
+분석 진행 화면은 polling과 저장된 DB 판단·근거·수집 범위 경고를 표시합니다.
+프로젝트 상세/수정, 이력, 아키텍처·영향도 전용 화면, 모델·문서·설정·견적 기능은 미완료입니다.
+`VITE_USE_MOCK=false`를 설정해도 대응 Backend API가 없는 화면까지 동작하지는 않습니다.
+프로젝트 목록은 실제 DTO 필드와 화면 표시 필드가 달라 후속 수정이 필요합니다.
+
+이번 검사: Node 테스트 14개·production build 통과, lint는 포맷 오류 113개·경고 1개로 실패했습니다.
+실제 로그인·Backend·Supabase를 연결한 브라우저 E2E는 이번 점검에서 수행하지 않았습니다.
+화면별 현황·계약 불일치·다음 작업은 [Frontend 구현 점검](../docs/13_2026-10-14_Frontend_구현_점검.md)을 참고합니다.
+
 ## 포함된 기능
 
 - 로그인 화면 및 세션 복원
@@ -22,7 +34,7 @@ npm install
 npm run dev
 ```
 
-기본 `.env.local`은 Mock 인증으로 설정되어 있습니다.
+기본 `.env.example`은 Mock 인증입니다. 복사해 `.env.local`을 생성합니다.
 
 ```text
 이메일: admin@doenaai.local
