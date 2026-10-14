@@ -49,6 +49,15 @@ public class ProjectService {
                 .toList();
     }
 
+    /** 삭제 표식이 있는 프로젝트를 복구 화면에만 반환한다. */
+    @Transactional(readOnly = true)
+    public List<ProjectResponse> getDeletedProjects(UUID userId) {
+        List<Project> projects = isAdmin(userId)
+                ? projectRepository.findDeletedByOrganizationMemberUserId(userId)
+                : projectRepository.findDeletedByProjectAndOrganizationMemberUserId(userId);
+        return projects.stream().map(ProjectResponse::from).toList();
+    }
+
     @Transactional(readOnly = true)
     public ProjectResponse getProject(
             UUID projectId,
@@ -134,10 +143,34 @@ public class ProjectService {
         return ProjectResponse.from(project);
     }
 
+    /** 물리 삭제 없이 목록·새 작업 대상에서 제외한다. 관련 분석 이력은 유지된다. */
+    @Transactional
+    public void deleteProject(UUID projectId, UUID userId) {
+        Project project = findProject(projectId);
+        checkTenantAccess(project, userId);
+        checkManageAccess(projectId, userId);
+        project.markDeleted(userId);
+    }
+
+    /** 삭제된 프로젝트를 다시 일반 목록과 작업 대상으로 되돌린다. */
+    @Transactional
+    public ProjectResponse restoreProject(UUID projectId, UUID userId) {
+        Project project = projectRepository.findById(projectId)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND, "프로젝트를 찾을 수 없습니다."));
+        if (!project.isDeleted()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "삭제된 프로젝트가 아닙니다.");
+        }
+        checkTenantAccess(project, userId);
+        checkManageAccess(projectId, userId);
+        project.restore();
+        return ProjectResponse.from(project);
+    }
+
     private Project findProject(
             UUID projectId
     ) {
-        return projectRepository
+        Project project = projectRepository
                 .findById(projectId)
                 .orElseThrow(() ->
                         new ResponseStatusException(
@@ -145,6 +178,10 @@ public class ProjectService {
                                 "프로젝트를 찾을 수 없습니다."
                         )
                 );
+        if (project.isDeleted()) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "프로젝트를 찾을 수 없습니다.");
+        }
+        return project;
     }
 
     private void checkReadAccess(

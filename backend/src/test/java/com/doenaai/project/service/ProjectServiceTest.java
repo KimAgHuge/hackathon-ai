@@ -215,6 +215,77 @@ class ProjectServiceTest {
     }
 
     @Test
+    void managerSoftDeletesProjectWithoutRemovingRelatedRows() {
+        UUID organizationId = UUID.randomUUID();
+        UUID projectId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        Project project = project(projectId, organizationId, userId);
+
+        when(projectRepository.findById(projectId)).thenReturn(Optional.of(project));
+        when(userAccessRepository.findRoles(userId)).thenReturn(Set.of());
+        when(projectAccessRepository.findMemberRole(projectId, userId))
+                .thenReturn(Optional.of("MANAGER"));
+
+        projectService.deleteProject(projectId, userId);
+
+        assertThat(project.isDeleted()).isTrue();
+        assertThat(project.getDeletedBy()).isEqualTo(userId);
+        assertThat(project.getDeletedAt()).isNotNull();
+        verify(projectRepository, never()).delete(any());
+    }
+
+    @Test
+    void deletedProjectCannotBeReadOrUsedForNewWork() {
+        UUID projectId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        Project project = project(projectId, UUID.randomUUID(), userId);
+        project.markDeleted(userId);
+        when(projectRepository.findById(projectId)).thenReturn(Optional.of(project));
+
+        assertThatThrownBy(() -> projectService.getProject(projectId, userId))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(exception -> assertThat(((ResponseStatusException) exception)
+                        .getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND));
+        assertThatThrownBy(() -> projectService.assertCanManage(projectId, userId))
+                .isInstanceOf(ResponseStatusException.class);
+        verify(organizationService, never()).assertActiveMember(any(), any());
+    }
+
+    @Test
+    void managerCanRestoreDeletedProject() {
+        UUID projectId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        Project project = project(projectId, UUID.randomUUID(), userId);
+        project.markDeleted(userId);
+        when(projectRepository.findById(projectId)).thenReturn(Optional.of(project));
+        when(userAccessRepository.findRoles(userId)).thenReturn(Set.of());
+        when(projectAccessRepository.findMemberRole(projectId, userId))
+                .thenReturn(Optional.of("MANAGER"));
+
+        var response = projectService.restoreProject(projectId, userId);
+
+        assertThat(response.id()).isEqualTo(projectId);
+        assertThat(project.isDeleted()).isFalse();
+        assertThat(project.getDeletedAt()).isNull();
+        assertThat(project.getDeletedBy()).isNull();
+    }
+
+    @Test
+    void viewerCannotSoftDeleteProject() {
+        UUID projectId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        Project project = project(projectId, UUID.randomUUID(), userId);
+        when(projectRepository.findById(projectId)).thenReturn(Optional.of(project));
+        when(userAccessRepository.findRoles(userId)).thenReturn(Set.of());
+        when(projectAccessRepository.findMemberRole(projectId, userId))
+                .thenReturn(Optional.of("VIEWER"));
+
+        assertThatThrownBy(() -> projectService.deleteProject(projectId, userId))
+                .isInstanceOf(org.springframework.security.access.AccessDeniedException.class);
+        assertThat(project.isDeleted()).isFalse();
+    }
+
+    @Test
     void adminListIsStillLimitedToActiveOrganizations() {
         UUID userId = UUID.randomUUID();
 
@@ -248,6 +319,23 @@ class ProjectServiceTest {
                 .findAllByProjectAndOrganizationMemberUserId(userId);
         verify(projectRepository, never())
                 .findAllByOrganizationMemberUserId(any());
+    }
+
+    @Test
+    void deletedProjectListUsesSeparateAuthorizedQuery() {
+        UUID userId = UUID.randomUUID();
+        UUID projectId = UUID.randomUUID();
+        Project deleted = project(projectId, UUID.randomUUID(), userId);
+        deleted.markDeleted(userId);
+
+        when(userAccessRepository.findRoles(userId)).thenReturn(Set.of());
+        when(projectRepository.findDeletedByProjectAndOrganizationMemberUserId(userId))
+                .thenReturn(List.of(deleted));
+
+        assertThat(projectService.getDeletedProjects(userId))
+                .extracting(response -> response.id())
+                .containsExactly(projectId);
+        verify(projectRepository, never()).findAllByProjectAndOrganizationMemberUserId(any());
     }
 
     @Test

@@ -1,7 +1,9 @@
 package com.doenaai.project.service;
 
 import com.doenaai.analysis.repository.AnalysisJobRepository;
+import com.doenaai.analysis.repository.AnalysisResultRepository;
 import com.doenaai.analysis.service.AnalysisJobService;
+import com.doenaai.analysis.service.AnalysisWorker;
 import com.doenaai.project.connection.repository.GitHostPolicyRepository;
 import com.doenaai.project.connection.repository.ProjectDatabaseSourceRepository;
 import com.doenaai.project.connection.repository.ProjectRepositoryConnectionRepository;
@@ -15,6 +17,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.web.server.ResponseStatusException;
 import tools.jackson.databind.ObjectMapper;
 
@@ -50,6 +53,12 @@ class ProjectTenantPropagationTest {
     private AnalysisJobRepository analysisJobRepository;
 
     @Mock
+    private AnalysisResultRepository analysisResultRepository;
+
+    @Mock
+    private ObjectProvider<AnalysisWorker> analysisWorker;
+
+    @Mock
     private RequirementService requirementService;
 
     private GitRepositoryConnectionService gitService;
@@ -73,9 +82,11 @@ class ProjectTenantPropagationTest {
         );
         analysisService = new AnalysisJobService(
                 analysisJobRepository,
+                analysisResultRepository,
                 projectService,
                 gitService,
-                requirementService
+                requirementService,
+                analysisWorker
         );
     }
 

@@ -149,6 +149,14 @@ public class RequirementService {
                 .toList();
     }
 
+    /** 접근 가능한 활성 프로젝트의 변경요청을 기존 프로젝트별 공개 범위 정책으로 모은다. */
+    @Transactional(readOnly = true)
+    public List<RequirementResponse> getAllRequirements(UUID userId) {
+        return projectService.getProjects(userId).stream()
+                .flatMap(project -> getRequirements(project.id(), userId).stream())
+                .toList();
+    }
+
     @Transactional(readOnly = true)
     public RequirementResponse getRequirement(
             UUID requirementId,

@@ -18,6 +18,9 @@ import org.springframework.beans.factory.annotation.Value;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.TimeUnit;
 
 /** 대기 작업을 가져와 Git·DB 근거 수집, AI 호출, 결과 저장까지 순서대로 처리한다. */
@@ -36,6 +39,7 @@ public class AnalysisWorker {
     private final RequirementVersionRepository versions;
     private final AnalysisPromptBuilder prompts;
     private final AiAnalysisClient ai;
+    private final ConcurrentMap<UUID, Thread> activeThreads = new ConcurrentHashMap<>();
     @Value("${doenaai.analysis.stale-timeout-seconds:1800}")
     private int staleTimeoutSeconds = 1800;
     @Value("${doenaai.ai-server.timeout-seconds:660}")
@@ -55,51 +59,105 @@ public class AnalysisWorker {
     /** 선점한 job을 처리해 완료 결과 또는 안전한 실패 사유를 저장한다. */
     void process(AnalysisWorkItem job) {
         UUID jobId = job.jobId();
+        activeThreads.put(jobId, Thread.currentThread());
         log.info("Analysis started: jobId={}", jobId);
         String stage = "프로젝트 접근 권한 확인";
         long stageStartedNanos = startStage(jobId, stage);
         try {
-            Map<String, Object> payload;
+            if (jobs.isCancelled(jobId)) throw new CancellationException("Analysis cancelled.");
+            Map<String, Object> payload = null;
+            Map<String, Object> databaseSummary = null;
             if (job.requestedBy() == null) throw new IllegalStateException("Missing requesting user.");
             projects.assertCanManage(job.projectId(), job.requestedBy());
             completeStage(jobId, stage, stageStartedNanos);
-            stage = "Git 커밋 소스 수집 (저장소 설정·인증·커밋과 파일 크기 제한 확인)";
-            stageStartedNanos = startStage(jobId, stage);
-            try (var snapshot = git.checkoutSnapshot(job.projectId(), job.requestedBy(), job.repositoryUrl(),
-                    job.branch(), job.commitSha())) {
-                completeStage(jobId, stage, stageStartedNanos);
-                stage = "Git 수집 진행률 기록";
-                jobs.progress(job.jobId(), 40, 0, 0);
-                stage = "읽기 전용 DB 구조 수집 (저장된 연결·권한·스키마 확인)";
+            if (job.reuseFromJobId() != null) {
+                stage = "선택한 저장 근거 확인";
                 stageStartedNanos = startStage(jobId, stage);
-                Map<String, Object> databaseSummary = database.collect(job.projectId());
-                completeStage(jobId, stage, stageStartedNanos);
-                stage = "DB 수집 진행률 기록";
-                jobs.progress(job.jobId(), 40, 100, 0);
-                stage = "소스와 DB 참조 분석";
-                stageStartedNanos = startStage(jobId, stage);
-                var scan = source.collect(snapshot.path(), databaseSummary);
-                var sourceSummary = new LinkedHashMap<>(scan.sourceSummary());
-                sourceSummary.put("commitSha", job.commitSha());
+                var saved = results.findReusableEvidenceByJobId(job.projectId(), job.reuseFromJobId())
+                        .orElseThrow(() -> new IllegalStateException("Saved evidence is no longer available."));
+                if (!EvidenceReusePolicy.canUseSavedSnapshot(saved, job.commitSha())) {
+                    throw new IllegalStateException("Saved evidence is incomplete.");
+                }
+                databaseSummary = saved.databaseSummary();
+                var sourceSummary = new LinkedHashMap<>(saved.sourceSummary());
+                sourceSummary.remove("changeRequirement");
+                sourceSummary.remove("promptCoverage");
                 sourceSummary.put("analysisScope", job.requirementVersionId() == null
                         ? "PROJECT_STRUCTURE_SCAN" : "REQUIREMENT_IMPACT");
-                completeStage(jobId, stage, stageStartedNanos);
-                stage = "요구사항 버전 확인";
-                stageStartedNanos = startStage(jobId, stage);
                 addRequirement(job, sourceSummary);
+                jobs.progress(jobId, 100, 100, 40);
+                payload = prompts.build(job.projectId(), sourceSummary, databaseSummary, saved.relations());
                 completeStage(jobId, stage, stageStartedNanos);
-                stage = "소스 분석 진행률 기록";
-                jobs.progress(job.jobId(), 100, 100, 40);
-                stage = "AI 입력 준비 (분석 범위·민감 필드 확인)";
+                log.info("Saved analysis evidence selected: jobId={}, sourceJobId={}", jobId, saved.sourceJobId());
+            } else {
+                stage = "기존 소스·DB 근거 재사용 가능 여부 확인";
                 stageStartedNanos = startStage(jobId, stage);
-                payload = prompts.build(job.projectId(), sourceSummary, databaseSummary, scan.relations());
+                var previous = results.findReusableEvidence(job.projectId(), job.commitSha());
                 completeStage(jobId, stage, stageStartedNanos);
-                stage = "Git 임시 파일 정리";
+                if (previous.isPresent()) {
+                stage = "읽기 전용 DB 구조 수집 (저장된 연결·권한·스키마 확인)";
                 stageStartedNanos = startStage(jobId, stage);
+                databaseSummary = database.collect(job.projectId());
+                completeStage(jobId, stage, stageStartedNanos);
+                if (EvidenceReusePolicy.canReuse(previous.get(), databaseSummary, job.commitSha())) {
+                    stage = "저장된 근거에 현재 요구사항 적용";
+                    stageStartedNanos = startStage(jobId, stage);
+                    var sourceSummary = new LinkedHashMap<>(previous.get().sourceSummary());
+                    sourceSummary.remove("changeRequirement");
+                    sourceSummary.remove("promptCoverage");
+                    sourceSummary.put("analysisScope", job.requirementVersionId() == null
+                            ? "PROJECT_STRUCTURE_SCAN" : "REQUIREMENT_IMPACT");
+                    addRequirement(job, sourceSummary);
+                    jobs.progress(jobId, 100, 100, 40);
+                    payload = prompts.build(job.projectId(), sourceSummary, databaseSummary, previous.get().relations());
+                    jobs.markEvidenceReused(jobId, previous.get().sourceJobId());
+                    completeStage(jobId, stage, stageStartedNanos);
+                    log.info("Analysis evidence reused: jobId={}, sourceJobId={}", jobId, previous.get().sourceJobId());
+                }
+                }
             }
-            completeStage(jobId, stage, stageStartedNanos);
+            if (payload == null) {
+                stage = "Git 커밋 소스 수집 (저장소 설정·인증·커밋과 파일 크기 제한 확인)";
+                stageStartedNanos = startStage(jobId, stage);
+                try (var snapshot = git.checkoutSnapshot(job.projectId(), job.requestedBy(), job.repositoryUrl(),
+                        job.branch(), job.commitSha())) {
+                    completeStage(jobId, stage, stageStartedNanos);
+                    stage = "Git 수집 진행률 기록";
+                    jobs.progress(job.jobId(), 40, 0, 0);
+                    if (databaseSummary == null) {
+                        stage = "읽기 전용 DB 구조 수집 (저장된 연결·권한·스키마 확인)";
+                        stageStartedNanos = startStage(jobId, stage);
+                        databaseSummary = database.collect(job.projectId());
+                        completeStage(jobId, stage, stageStartedNanos);
+                    }
+                    stage = "DB 수집 진행률 기록";
+                    jobs.progress(job.jobId(), 40, 100, 0);
+                    stage = "소스와 DB 참조 분석";
+                    stageStartedNanos = startStage(jobId, stage);
+                    var scan = source.collect(snapshot.path(), databaseSummary);
+                    var sourceSummary = new LinkedHashMap<>(scan.sourceSummary());
+                    sourceSummary.put("commitSha", job.commitSha());
+                    sourceSummary.put("analysisScope", job.requirementVersionId() == null
+                            ? "PROJECT_STRUCTURE_SCAN" : "REQUIREMENT_IMPACT");
+                    completeStage(jobId, stage, stageStartedNanos);
+                    stage = "요구사항 버전 확인";
+                    stageStartedNanos = startStage(jobId, stage);
+                    addRequirement(job, sourceSummary);
+                    completeStage(jobId, stage, stageStartedNanos);
+                    stage = "소스 분석 진행률 기록";
+                    jobs.progress(job.jobId(), 100, 100, 40);
+                    stage = "AI 입력 준비 (분석 범위·민감 필드 확인)";
+                    stageStartedNanos = startStage(jobId, stage);
+                    payload = prompts.build(job.projectId(), sourceSummary, databaseSummary, scan.relations());
+                    completeStage(jobId, stage, stageStartedNanos);
+                    stage = "Git 임시 파일 정리";
+                    stageStartedNanos = startStage(jobId, stage);
+                }
+                completeStage(jobId, stage, stageStartedNanos);
+            }
             stage = "AI 분석 요청 (AI 서버·내부 API 키·모델·시간 제한 확인)";
             stageStartedNanos = startStage(jobId, stage);
+            if (jobs.isCancelled(jobId)) throw new CancellationException("Analysis cancelled.");
             var result = ai.analyze(payload);
             completeStage(jobId, stage, stageStartedNanos);
             stage = "AI 분석 진행률 기록";
@@ -113,7 +171,20 @@ public class AnalysisWorker {
             completeStage(jobId, stage, stageStartedNanos);
             log.info("Analysis completed: jobId={}", job.jobId());
         } catch (Exception exception) {
-            if (exception instanceof InterruptedException) Thread.currentThread().interrupt();
+            boolean interrupted = Thread.interrupted();
+            boolean cancelled = exception instanceof CancellationException;
+            if (!cancelled) {
+                try {
+                    cancelled = jobs.isCancelled(jobId);
+                } catch (Exception statusFailure) {
+                    log.warn("Analysis cancellation status check failed: jobId={}, exception={}",
+                            jobId, statusFailure.getClass().getSimpleName());
+                }
+            }
+            if (cancelled) {
+                log.info("Analysis cancelled: jobId={}", jobId);
+                return;
+            }
             // JDBC/Git/HTTP exception messages can contain credentials. Do not log them or stack traces.
             log.warn("Analysis failed: jobId={}, stage={}, exception={}",
                     job.jobId(), stage, exception.getClass().getSimpleName());
@@ -123,7 +194,16 @@ public class AnalysisWorker {
                 log.error("Analysis failure status update failed: jobId={}, stage={}, exception={}",
                         job.jobId(), stage, persistenceException.getClass().getSimpleName());
             }
+            if (interrupted || exception instanceof InterruptedException) Thread.currentThread().interrupt();
+        } finally {
+            activeThreads.remove(jobId, Thread.currentThread());
         }
+    }
+
+    /** 취소된 실행 작업의 Git/HTTP 대기를 깨운다. DB 상태가 우선이며 결과 저장은 상태 조건으로 차단된다. */
+    public void interruptActive(UUID jobId) {
+        Thread thread = activeThreads.get(jobId);
+        if (thread != null) thread.interrupt();
     }
 
     private long startStage(UUID jobId, String stage) {

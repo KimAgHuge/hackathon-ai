@@ -20,6 +20,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
 import java.util.UUID;
 
 @RestController
@@ -28,6 +29,14 @@ import java.util.UUID;
 public class RequirementController {
 
     private final RequirementService requirementService;
+
+    @PreAuthorize("@permissionChecker.has(authentication, 'CHANGE_REQUEST_READ')")
+    @GetMapping
+    public List<RequirementResponse> getAllRequirements(
+            @AuthenticationPrincipal Jwt jwt
+    ) {
+        return requirementService.getAllRequirements(getUserId(jwt));
+    }
 
     @PreAuthorize("isAuthenticated()")
     @GetMapping("/{requirementId}")

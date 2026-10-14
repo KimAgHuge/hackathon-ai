@@ -1,6 +1,7 @@
 package com.doenaai.requirement.service;
 
 import com.doenaai.project.dto.ProjectAccessContext;
+import com.doenaai.project.dto.ProjectResponse;
 import com.doenaai.project.service.ProjectService;
 import com.doenaai.requirement.dto.RequirementCreateRequest;
 import com.doenaai.requirement.dto.RequirementStatusUpdateRequest;
@@ -61,6 +62,29 @@ class RequirementServiceTest {
                 versionRepository,
                 projectService
         );
+    }
+
+    @Test
+    void allRequirementsReadOnlyAccessibleProjects() {
+        UUID userId = UUID.randomUUID();
+        UUID firstProjectId = UUID.randomUUID();
+        UUID secondProjectId = UUID.randomUUID();
+        UUID organizationId = UUID.randomUUID();
+        when(projectService.getProjects(userId)).thenReturn(List.of(
+                new ProjectResponse(firstProjectId, organizationId, "첫 프로젝트", null,
+                        null, null, null, null, null, null, null, null),
+                new ProjectResponse(secondProjectId, organizationId, "둘째 프로젝트", null,
+                        null, null, null, null, null, null, null, null)
+        ));
+        when(projectService.getAccessContext(firstProjectId, userId))
+                .thenReturn(new ProjectAccessContext(firstProjectId, organizationId, "OWNER"));
+        when(projectService.getAccessContext(secondProjectId, userId))
+                .thenReturn(new ProjectAccessContext(secondProjectId, organizationId, "CUSTOMER"));
+
+        assertThat(requirementService.getAllRequirements(userId)).isEmpty();
+
+        verify(requirementRepository).findAllByProjectIdOrderByCreatedAtDesc(firstProjectId);
+        verify(requirementRepository).findAllVisibleToCustomer(secondProjectId, userId);
     }
 
     @Test

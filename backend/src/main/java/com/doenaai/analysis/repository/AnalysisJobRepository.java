@@ -70,6 +70,26 @@ public class AnalysisJobRepository {
         );
     }
 
+    /** 기존 완료 작업의 고정 입력 스냅샷으로 새 PENDING 분석을 생성한다. 원격 Git/DB는 조회하지 않는다. */
+    public AnalysisJobResponse createFromSavedEvidence(UUID projectId, UUID requirementVersionId,
+                                                       UUID requestedBy, UUID sourceJobId) {
+        return jdbcTemplate.queryForObject("""
+                insert into public.analysis_jobs (
+                    project_id, requirement_version_id, requested_by, analysis_type, status,
+                    input_snapshot, analysis_options
+                )
+                select j.project_id, ?, ?, 'PROJECT_SCAN', 'PENDING', j.input_snapshot,
+                       jsonb_build_object('reuseMode', 'STORED', 'userConfirmedUnchanged', true,
+                                          'reuseFromJobId', j.id::text,
+                                          'evidenceReusedFromJobId', j.id::text)
+                from public.analysis_jobs j
+                where j.id = ? and j.project_id = ? and j.status = 'COMPLETED'
+                returning id, project_id, requirement_version_id, status,
+                    source_progress, database_progress, relation_progress,
+                    created_at, error_message, started_at, completed_at
+                """, this::mapRow, requirementVersionId, requestedBy, sourceJobId, projectId);
+    }
+
     public Optional<AnalysisJobResponse> findById(
             UUID analysisJobId
     ) {
@@ -142,11 +162,13 @@ public class AnalysisJobRepository {
                 returning j.id, j.project_id, j.requirement_version_id, j.requested_by,
                     j.input_snapshot ->> 'repositoryUrl' as repository_url,
                     j.input_snapshot ->> 'branch' as branch,
-                    j.input_snapshot ->> 'commitSha' as commit_sha
+                    j.input_snapshot ->> 'commitSha' as commit_sha,
+                    j.analysis_options ->> 'reuseFromJobId' as reuse_from_job_id
                 """, (rs, row) -> new AnalysisWorkItem(
                 rs.getObject("id", UUID.class), rs.getObject("project_id", UUID.class),
                 rs.getObject("requirement_version_id", UUID.class), rs.getObject("requested_by", UUID.class),
-                rs.getString("repository_url"), rs.getString("branch"), rs.getString("commit_sha")
+                rs.getString("repository_url"), rs.getString("branch"), rs.getString("commit_sha"),
+                rs.getString("reuse_from_job_id") == null ? null : UUID.fromString(rs.getString("reuse_from_job_id"))
         )).stream().findFirst();
     }
 
@@ -160,6 +182,17 @@ public class AnalysisJobRepository {
         if (changed != 1) throw new IllegalStateException("Analysis job is no longer running.");
     }
 
+    /** 재사용한 근거의 출처를 남겨 새 분석 결과의 계보를 추적한다. */
+    public void markEvidenceReused(UUID jobId, UUID sourceJobId) {
+        int changed = jdbcTemplate.update("""
+                update public.analysis_jobs
+                set analysis_options = jsonb_set(analysis_options, '{evidenceReusedFromJobId}', to_jsonb(?::text)),
+                    updated_at = now()
+                where id = ? and status = 'RUNNING'
+                """, sourceJobId.toString(), jobId);
+        if (changed != 1) throw new IllegalStateException("Analysis job is no longer running.");
+    }
+
     /** RUNNING 작업을 FAILED로 끝낸다; safeMessage에는 자격증명·원본 예외를 넣지 않는다. */
     public void fail(UUID jobId, String safeMessage) {
         jdbcTemplate.update("""
@@ -167,6 +200,21 @@ public class AnalysisJobRepository {
                     completed_at = now(), updated_at = now()
                 where id = ? and status = 'RUNNING'
                 """, safeMessage, jobId);
+    }
+
+    /** 대기·실행 중 작업만 취소한다. 완료 결과는 변경하지 않는다. */
+    public boolean cancel(UUID jobId) {
+        return jdbcTemplate.update("""
+                update public.analysis_jobs set status = 'CANCELLED',
+                    error_message = null, completed_at = now(), updated_at = now()
+                where id = ? and status in ('PENDING', 'RUNNING')
+                """, jobId) == 1;
+    }
+
+    public boolean isCancelled(UUID jobId) {
+        return Boolean.TRUE.equals(jdbcTemplate.queryForObject("""
+                select status = 'CANCELLED' from public.analysis_jobs where id = ?
+                """, Boolean.class, jobId));
     }
 
     /** Recover abandoned work after a process crash; never retry a remote call automatically. */

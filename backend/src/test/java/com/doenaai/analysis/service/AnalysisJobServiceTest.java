@@ -1,7 +1,9 @@
 package com.doenaai.analysis.service;
 
 import com.doenaai.analysis.dto.AnalysisJobResponse;
+import com.doenaai.analysis.dto.ReusableEvidence;
 import com.doenaai.analysis.repository.AnalysisJobRepository;
+import com.doenaai.analysis.repository.AnalysisResultRepository;
 import com.doenaai.project.connection.dto.GitRepositoryConnectionResponse;
 import com.doenaai.project.connection.entity.RepositoryAuthType;
 import com.doenaai.project.connection.entity.RepositoryProviderType;
@@ -14,11 +16,15 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.UUID;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -32,6 +38,12 @@ class AnalysisJobServiceTest {
 
     @Mock
     private AnalysisJobRepository analysisJobRepository;
+
+    @Mock
+    private AnalysisResultRepository analysisResultRepository;
+
+    @Mock
+    private ObjectProvider<AnalysisWorker> analysisWorker;
 
     @Mock
     private ProjectService projectService;
@@ -48,9 +60,11 @@ class AnalysisJobServiceTest {
     void setUp() {
         analysisJobService = new AnalysisJobService(
                 analysisJobRepository,
+                analysisResultRepository,
                 projectService,
                 gitService,
-                requirementService
+                requirementService,
+                analysisWorker
         );
     }
 
@@ -183,5 +197,70 @@ class AnalysisJobServiceTest {
 
         assertThat(response.requirementVersionId()).isNull();
         verifyNoInteractions(requirementService);
+    }
+
+    @Test
+    void savedEvidenceStartsNewAnalysisWithoutContactingGit() {
+        UUID projectId = UUID.randomUUID();
+        UUID versionId = UUID.randomUUID();
+        UUID sourceJobId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        String sha = "a".repeat(40);
+        var evidence = new ReusableEvidence(sourceJobId,
+                Map.of("commitSha", sha, "promptCoverage", Map.of("truncated", false),
+                        "scanMetrics", Map.of("truncated", false)),
+                Map.of("truncated", false, "warnings", List.of(), "tables", List.of()), List.of());
+        var saved = AnalysisJobResponse.of(UUID.randomUUID(), projectId, versionId, "PENDING", 0, 0, 0,
+                OffsetDateTime.now(ZoneOffset.UTC));
+        when(analysisResultRepository.findReusableEvidenceByJobId(projectId, sourceJobId))
+                .thenReturn(Optional.of(evidence));
+        when(analysisJobRepository.createFromSavedEvidence(projectId, versionId, userId, sourceJobId))
+                .thenReturn(saved);
+
+        assertThat(analysisJobService.createProjectScan(projectId, versionId, userId, sourceJobId, true))
+                .isSameAs(saved);
+        verifyNoInteractions(gitService);
+        verify(requirementService).assertVersionBelongsToProject(versionId, projectId, userId);
+    }
+
+    @Test
+    void unavailableSavedEvidenceIsRejectedWithoutGitOrJobCreation() {
+        UUID projectId = UUID.randomUUID();
+        UUID sourceJobId = UUID.randomUUID();
+        when(analysisResultRepository.findReusableEvidenceByJobId(projectId, sourceJobId))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> analysisJobService.createProjectScan(projectId, null, UUID.randomUUID(), sourceJobId, true))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("저장 근거");
+        verifyNoInteractions(gitService, analysisJobRepository);
+    }
+
+    @Test
+    void savedEvidenceRequiresExplicitUnchangedConfirmation() {
+        UUID projectId = UUID.randomUUID();
+        UUID sourceJobId = UUID.randomUUID();
+
+        assertThatThrownBy(() -> analysisJobService.createProjectScan(projectId, null,
+                UUID.randomUUID(), sourceJobId, false))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("변경 없음 확인");
+        verifyNoInteractions(analysisResultRepository, gitService, analysisJobRepository);
+    }
+
+    @Test
+    void cancellingActiveJobReturnsCancelledState() {
+        UUID jobId = UUID.randomUUID();
+        UUID projectId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        var pending = AnalysisJobResponse.of(jobId, projectId, null, "PENDING", 0, 0, 0,
+                OffsetDateTime.now(ZoneOffset.UTC));
+        var cancelled = AnalysisJobResponse.of(jobId, projectId, null, "CANCELLED", 0, 0, 0,
+                pending.createdAt());
+        when(analysisJobRepository.findById(jobId)).thenReturn(Optional.of(pending), Optional.of(cancelled));
+        when(analysisJobRepository.cancel(jobId)).thenReturn(true);
+
+        assertThat(analysisJobService.cancelAnalysisJob(jobId, userId).status()).isEqualTo("CANCELLED");
+        verify(projectService).assertCanManage(projectId, userId);
     }
 }

@@ -4,6 +4,8 @@ import jakarta.persistence.*;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -57,6 +59,16 @@ public class Project {
     @Column(name = "updated_at", nullable = false)
     private OffsetDateTime updatedAt;
 
+    @JdbcTypeCode(SqlTypes.CHAR)
+    @Column(name = "del_yn", nullable = false, length = 1)
+    private String delYn = "N";
+
+    @Column(name = "deleted_at")
+    private OffsetDateTime deletedAt;
+
+    @Column(name = "deleted_by")
+    private UUID deletedBy;
+
     public Project(
             UUID organizationId,
             String name,
@@ -77,6 +89,7 @@ public class Project {
                 ? ProjectSourceType.GIT
                 : sourceType;
         this.status = ProjectStatus.ACTIVE;
+        this.delYn = "N";
         this.createdBy = createdBy;
     }
 
@@ -109,5 +122,21 @@ public class Project {
                 ? this.sourceType
                 : sourceType;
         this.status = status;
+    }
+
+    public boolean isDeleted() {
+        return "Y".equals(delYn);
+    }
+
+    public void markDeleted(UUID userId) {
+        this.delYn = "Y";
+        this.deletedAt = OffsetDateTime.now(ZoneOffset.UTC);
+        this.deletedBy = userId;
+    }
+
+    public void restore() {
+        this.delYn = "N";
+        this.deletedAt = null;
+        this.deletedBy = null;
     }
 }

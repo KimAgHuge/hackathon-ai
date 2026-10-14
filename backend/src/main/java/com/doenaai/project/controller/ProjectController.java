@@ -27,11 +27,12 @@ public class ProjectController {
     )
     @GetMapping
     public List<ProjectResponse> getProjects(
+            @RequestParam(defaultValue = "false") boolean deleted,
             @AuthenticationPrincipal Jwt jwt
     ) {
-        return projectService.getProjects(
-                getUserId(jwt)
-        );
+        return deleted
+                ? projectService.getDeletedProjects(getUserId(jwt))
+                : projectService.getProjects(getUserId(jwt));
     }
 
     @PreAuthorize(
@@ -77,6 +78,25 @@ public class ProjectController {
                 request,
                 getUserId(jwt)
         );
+    }
+
+    @PreAuthorize("@permissionChecker.has(authentication, 'PROJECT_UPDATE')")
+    @DeleteMapping("/{projectId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void deleteProject(
+            @PathVariable UUID projectId,
+            @AuthenticationPrincipal Jwt jwt
+    ) {
+        projectService.deleteProject(projectId, getUserId(jwt));
+    }
+
+    @PreAuthorize("@permissionChecker.has(authentication, 'PROJECT_UPDATE')")
+    @PostMapping("/{projectId}/restore")
+    public ProjectResponse restoreProject(
+            @PathVariable UUID projectId,
+            @AuthenticationPrincipal Jwt jwt
+    ) {
+        return projectService.restoreProject(projectId, getUserId(jwt));
     }
 
     private UUID getUserId(

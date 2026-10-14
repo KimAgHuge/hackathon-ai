@@ -1,6 +1,7 @@
 package com.doenaai.analysis.repository;
 
 import com.doenaai.analysis.dto.AnalysisResultResponse;
+import com.doenaai.analysis.dto.ReusableEvidence;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
@@ -10,6 +11,7 @@ import tools.jackson.databind.ObjectMapper;
 
 import java.time.OffsetDateTime;
 import java.util.Map;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -54,5 +56,56 @@ public class AnalysisResultRepository {
                     ((Number) result.getOrDefault("riskScore", 0)).intValue(), result, facts,
                     rs.getObject("created_at", OffsetDateTime.class));
         }, jobId).stream().findFirst();
+    }
+
+    /** 같은 프로젝트·고정 Git SHA의 완전한 이전 입력 근거를 찾는다. */
+    @SuppressWarnings("unchecked")
+    public Optional<ReusableEvidence> findReusableEvidence(UUID projectId, String commitSha) {
+        return jdbcTemplate.query("""
+                select j.id, r.inference_metadata -> 'facts' as facts
+                from public.analysis_jobs j join public.analysis_results r on r.analysis_job_id = j.id
+                where j.project_id = ? and j.status = 'COMPLETED'
+                  and j.input_snapshot ->> 'commitSha' = ?
+                  and (r.inference_metadata -> 'facts' -> 'sourceSummary'
+                      -> 'promptCoverage' ->> 'truncated') = 'false'
+                  and (r.inference_metadata -> 'facts' -> 'sourceSummary'
+                      -> 'scanMetrics' ->> 'truncated') = 'false'
+                  and (r.inference_metadata -> 'facts' -> 'databaseSummary' ->> 'truncated') = 'false'
+                  and (r.inference_metadata -> 'facts' -> 'databaseSummary' -> 'warnings') = '[]'::jsonb
+                  and jsonb_typeof(r.inference_metadata -> 'facts' -> 'relations') = 'array'
+                order by j.created_at desc, j.id desc limit 1
+                """, (rs, row) -> {
+            Map<String, Object> facts = objectMapper.readValue(rs.getString("facts"), MAP);
+            return new ReusableEvidence(rs.getObject("id", UUID.class),
+                    (Map<String, Object>) facts.get("sourceSummary"),
+                    (Map<String, Object>) facts.get("databaseSummary"),
+                    (List<Map<String, Object>>) facts.get("relations"));
+        }, projectId, commitSha).stream().findFirst();
+    }
+
+    /** 사용자가 명시적으로 선택한 완료 작업의 완전한 입력 근거만 반환한다. */
+    @SuppressWarnings("unchecked")
+    public Optional<ReusableEvidence> findReusableEvidenceByJobId(UUID projectId, UUID sourceJobId) {
+        return jdbcTemplate.query("""
+                select j.id, r.inference_metadata -> 'facts' as facts
+                from public.analysis_jobs j join public.analysis_results r on r.analysis_job_id = j.id
+                where j.id = ? and j.project_id = ? and j.status = 'COMPLETED'
+                  and (j.input_snapshot ->> 'commitSha') is not null
+                  and (j.input_snapshot ->> 'commitSha') =
+                      (r.inference_metadata -> 'facts' -> 'sourceSummary' ->> 'commitSha')
+                  and (r.inference_metadata -> 'facts' -> 'sourceSummary'
+                      -> 'promptCoverage' ->> 'truncated') = 'false'
+                  and (r.inference_metadata -> 'facts' -> 'sourceSummary'
+                      -> 'scanMetrics' ->> 'truncated') = 'false'
+                  and (r.inference_metadata -> 'facts' -> 'databaseSummary' ->> 'truncated') = 'false'
+                  and (r.inference_metadata -> 'facts' -> 'databaseSummary' -> 'warnings') = '[]'::jsonb
+                  and jsonb_typeof(r.inference_metadata -> 'facts' -> 'relations') = 'array'
+                """, (rs, row) -> {
+            Map<String, Object> facts = objectMapper.readValue(rs.getString("facts"), MAP);
+            return new ReusableEvidence(rs.getObject("id", UUID.class),
+                    (Map<String, Object>) facts.get("sourceSummary"),
+                    (Map<String, Object>) facts.get("databaseSummary"),
+                    (List<Map<String, Object>>) facts.get("relations"));
+        }, sourceJobId, projectId).stream().findFirst();
     }
 }

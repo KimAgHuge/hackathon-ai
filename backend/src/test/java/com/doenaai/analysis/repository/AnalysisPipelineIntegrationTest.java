@@ -322,6 +322,33 @@ class AnalysisPipelineIntegrationTest {
     }
 
     @Test
+    void completeEvidenceCanBeFoundAndReuseSourceIsRecorded() {
+        var first = newJob();
+        jobs.claimNext().orElseThrow();
+        var facts = Map.<String, Object>of(
+                "sourceSummary", Map.of("commitSha", COMMIT_SHA,
+                        "promptCoverage", Map.of("truncated", false),
+                        "scanMetrics", Map.of("truncated", false)),
+                "databaseSummary", Map.of("type", "POSTGRESQL", "schema", "public",
+                        "tables", List.of(), "warnings", List.of(), "truncated", false),
+                "relations", List.of());
+        results.complete(first.jobId(), validResult(), facts);
+
+        var reusable = results.findReusableEvidence(PROJECT_ID, COMMIT_SHA).orElseThrow();
+        assertThat(reusable.sourceJobId()).isEqualTo(first.jobId());
+        assertThat(reusable.sourceSummary()).isEqualTo(facts.get("sourceSummary"));
+        assertThat(results.findReusableEvidence(PROJECT_ID, "f".repeat(40))).isEmpty();
+
+        var second = newJob();
+        jobs.claimNext().orElseThrow();
+        jobs.markEvidenceReused(second.jobId(), first.jobId());
+        assertThat(jdbc.queryForObject("""
+                select analysis_options ->> 'evidenceReusedFromJobId'
+                from public.analysis_jobs where id = ?
+                """, String.class, second.jobId())).isEqualTo(first.jobId().toString());
+    }
+
+    @Test
     void resultInsertConstraintFailureRollsBackTheCompletedStatusAndAllProgress() {
         var pending = newJob();
         jobs.claimNext().orElseThrow();
