@@ -1,6 +1,7 @@
 package com.doenaai.analysis.dto;
 
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.UUID;
 
 /** 저장된 작업의 목록 표시용 요약. 원본 JSON은 개별 결과 API에서만 조회한다. */
@@ -16,6 +17,7 @@ public record AnalysisHistoryItem(
         boolean approved,
         UUID evidenceReusedFromJobId,
         boolean reusableEvidence,
+        List<String> evidenceUnavailableReasons,
         String sourceCommit,
         OffsetDateTime createdAt,
         OffsetDateTime completedAt

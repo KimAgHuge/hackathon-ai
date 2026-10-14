@@ -10,6 +10,7 @@ import org.springframework.stereotype.Repository;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
@@ -33,6 +34,13 @@ public class AnalysisHistoryRepository {
                        coalesce(r.approved, false) as approved,
                        j.analysis_options ->> 'evidenceReusedFromJobId' as evidence_reused_from_job_id,
                        j.input_snapshot ->> 'commitSha' as source_commit,
+                       r.analysis_job_id as result_job_id,
+                       r.inference_metadata -> 'facts' -> 'sourceSummary' ->> 'commitSha' as facts_commit,
+                       r.inference_metadata -> 'facts' -> 'sourceSummary' -> 'promptCoverage' ->> 'truncated' as prompt_truncated,
+                       r.inference_metadata -> 'facts' -> 'sourceSummary' -> 'scanMetrics' ->> 'truncated' as scan_truncated,
+                       r.inference_metadata -> 'facts' -> 'databaseSummary' ->> 'truncated' as database_truncated,
+                       (r.inference_metadata -> 'facts' -> 'databaseSummary' -> 'warnings') = '[]'::jsonb as database_warnings_empty,
+                       jsonb_typeof(r.inference_metadata -> 'facts' -> 'relations') as relations_type,
                        (j.status = 'COMPLETED'
                          and (j.input_snapshot ->> 'commitSha') is not null
                          and (j.input_snapshot ->> 'commitSha') =
@@ -57,14 +65,50 @@ public class AnalysisHistoryRepository {
 
     private AnalysisHistoryItem mapRow(ResultSet rs, int ignored) throws SQLException {
         String reused = rs.getString("evidence_reused_from_job_id");
+        boolean reusable = rs.getBoolean("reusable_evidence");
         return new AnalysisHistoryItem(
                 rs.getObject("id", UUID.class), rs.getObject("project_id", UUID.class),
                 rs.getString("project_name"), rs.getObject("requirement_version_id", UUID.class),
                 rs.getString("requirement_title"), rs.getString("status"), rs.getString("risk_level"),
                 rs.getString("summary"), rs.getBoolean("approved"),
                 reused == null ? null : UUID.fromString(reused),
-                rs.getBoolean("reusable_evidence"), rs.getString("source_commit"),
+                reusable, reusable ? List.of() : evidenceUnavailableReasons(rs), rs.getString("source_commit"),
                 rs.getObject("created_at", OffsetDateTime.class),
                 rs.getObject("completed_at", OffsetDateTime.class));
+    }
+
+    /** SQL의 재사용 조건별 결손 사유를 코드로 돌려준다. 화면에서는 이 코드를 사용자 언어로 표시한다. */
+    static List<String> evidenceUnavailableReasons(ResultSet rs) throws SQLException {
+        List<String> reasons = new ArrayList<>();
+        if (!"COMPLETED".equals(rs.getString("status"))) {
+            reasons.add("ANALYSIS_NOT_COMPLETED");
+            return reasons;
+        }
+        if (rs.getString("result_job_id") == null) {
+            reasons.add("RESULT_MISSING");
+            return reasons;
+        }
+
+        String sourceCommit = rs.getString("source_commit");
+        String factsCommit = rs.getString("facts_commit");
+        if (sourceCommit == null) reasons.add("SOURCE_COMMIT_MISSING");
+        if (factsCommit == null) reasons.add("SAVED_COMMIT_MISSING");
+        if (sourceCommit != null && factsCommit != null && !sourceCommit.equals(factsCommit)) {
+            reasons.add("SOURCE_COMMIT_MISMATCH");
+        }
+        addTruncationReason(reasons, rs.getString("prompt_truncated"), "SOURCE_PROMPT_COVERAGE_MISSING", "SOURCE_PROMPT_TRUNCATED");
+        addTruncationReason(reasons, rs.getString("scan_truncated"), "SOURCE_SCAN_STATUS_MISSING", "SOURCE_SCAN_TRUNCATED");
+        addTruncationReason(reasons, rs.getString("database_truncated"), "DATABASE_COVERAGE_MISSING", "DATABASE_TRUNCATED");
+        Boolean warningsEmpty = rs.getObject("database_warnings_empty", Boolean.class);
+        if (warningsEmpty == null) reasons.add("DATABASE_WARNINGS_MISSING");
+        else if (!warningsEmpty) reasons.add("DATABASE_WARNINGS_PRESENT");
+        if (!"array".equals(rs.getString("relations_type"))) reasons.add("RELATIONS_MISSING");
+        if (reasons.isEmpty()) reasons.add("EVIDENCE_FORMAT_UNSUPPORTED");
+        return reasons;
+    }
+
+    private static void addTruncationReason(List<String> reasons, String value, String missingCode, String truncatedCode) {
+        if (value == null) reasons.add(missingCode);
+        else if (!"false".equals(value)) reasons.add(truncatedCode);
     }
 }

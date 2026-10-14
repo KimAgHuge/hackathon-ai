@@ -15,6 +15,7 @@ import StatusBadge from '@/components/common/StatusBadge.vue'
 import ViewHeading from '@/components/common/ViewHeading.vue'
 import { useClientTable } from '@/composables/useClientTable'
 import { matchesCreatedDateRange } from '@/lib/changeRequestFilters'
+import { evidenceUnavailableReasonLabel } from '@/lib/evidenceReuse'
 import { buildRequirementPayload } from '@/lib/requirementWorkflow'
 import { useAuthStore } from '@/stores/authStore'
 
@@ -30,6 +31,8 @@ const analyzingRequirementId = ref('')
 const analysisTarget = ref(null)
 const analysisPanel = ref(null)
 const snapshotOptions = ref([])
+const unavailableSnapshots = ref([])
+const unavailableSnapshotCount = ref(0)
 const snapshotLoading = ref(false)
 const snapshotError = ref('')
 const evidenceMode = ref('VERIFY_CURRENT')
@@ -243,6 +246,8 @@ const prepareAnalysis = async (requirement) => {
     selectedSnapshotId.value = ''
     confirmedUnchanged.value = false
     snapshotOptions.value = []
+    unavailableSnapshots.value = []
+    unavailableSnapshotCount.value = 0
     snapshotError.value = ''
     snapshotLoading.value = true
     await nextTick()
@@ -250,12 +255,16 @@ const prepareAnalysis = async (requirement) => {
     try {
         const response = await getAnalysisHistory({ projectId: requirement.projectId, page: 0, size: 100 })
         if (analysisTarget.value?.id !== requirement.id) return
-        snapshotOptions.value = (response.items || [])
+        const historyItems = response.items || []
+        snapshotOptions.value = historyItems
             .filter((item) => item.reusableEvidence)
             .map((item) => ({
                 value: item.jobId,
                 label: `${new Date(item.createdAt).toLocaleString('ko-KR')} · ${item.sourceCommit?.slice(0, 8) || '커밋 정보 없음'}`,
             }))
+        const unavailable = historyItems.filter((item) => !item.reusableEvidence)
+        unavailableSnapshotCount.value = unavailable.length
+        unavailableSnapshots.value = unavailable.slice(0, 5)
         selectedSnapshotId.value = snapshotOptions.value[0]?.value || ''
     } catch (error) {
         if (analysisTarget.value?.id === requirement.id) snapshotError.value = `저장 근거를 조회하지 못했습니다. ${getErrorMessage(error)}`
@@ -527,6 +536,36 @@ onMounted(() => {
                 <p v-else-if="!snapshotOptions.length" class="mt-3 text-sm text-slate-600 dark:text-slate-400">
                     최근 분석 100건에서 재사용 가능한 완전한 근거를 찾지 못했습니다. 최신 상태 확인 방식은 계속 사용할 수 있습니다.
                 </p>
+                <div
+                    v-if="!snapshotLoading && !snapshotError && unavailableSnapshots.length"
+                    class="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm dark:border-amber-800 dark:bg-amber-950/30"
+                >
+                    <p class="font-semibold text-amber-900 dark:text-amber-200">최근 분석의 저장 근거를 재사용할 수 없는 이유</p>
+                    <ul class="mt-2 space-y-3">
+                        <li
+                            v-for="item in unavailableSnapshots"
+                            :key="item.jobId"
+                            class="min-w-0 border-t border-amber-200 pt-2 first:border-t-0 first:pt-0 dark:border-amber-800"
+                        >
+                            <p class="break-words font-medium text-slate-800 dark:text-slate-100">
+                                {{ formatDate(item.createdAt) }} · {{ item.requirementTitle || '프로젝트 구조 분석' }}
+                            </p>
+                            <ul class="mt-1 list-disc space-y-1 pl-5 text-slate-700 dark:text-slate-300">
+                                <li
+                                    v-for="reason in item.evidenceUnavailableReasons?.length
+                                        ? item.evidenceUnavailableReasons
+                                        : ['EVIDENCE_FORMAT_UNSUPPORTED']"
+                                    :key="reason"
+                                >
+                                    {{ evidenceUnavailableReasonLabel(reason) }}
+                                </li>
+                            </ul>
+                        </li>
+                    </ul>
+                    <p v-if="unavailableSnapshotCount > unavailableSnapshots.length" class="mt-2 text-xs text-slate-600 dark:text-slate-400">
+                        최근 5건만 표시합니다. 그 외 {{ unavailableSnapshotCount - unavailableSnapshots.length }}건도 재사용할 수 없습니다.
+                    </p>
+                </div>
                 <div v-if="evidenceMode === 'SAVED'" class="mt-4 grid gap-3">
                     <BaseSelect v-model="selectedSnapshotId" label="분석 기준 시점 · Git 커밋" :options="snapshotOptions" />
                     <label class="flex items-start gap-2 text-sm text-slate-700 dark:text-slate-300">
