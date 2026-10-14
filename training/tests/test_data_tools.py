@@ -16,7 +16,8 @@ from export_dataset import export, prepare
 
 def case(group="p1", related=True):
     """테스트 메모리에서만 쓰는 합성 승인 사례를 만든다. 업무 데이터로 전달하지 않는다."""
-    general = {"summary": "입력 근거를 확인하고 요구사항을 명확히 해야 합니다.", "frameworks": [],
+    general = {"summary": "입력 근거를 확인하고 요구사항을 명확히 해야 합니다.",
+               "plainLanguageSummary": "변경 범위를 정하려면 요청 내용을 더 확인해야 합니다.", "frameworks": [],
                "riskLevel": "UNKNOWN", "riskScore": 0, "impactAreas": [], "evidences": [], "recommendations": [],
                "databaseRelevance": "UNCERTAIN" if related else "UNRELATED",
                "databaseRelevanceReason": "팀 개념을 확인해야 합니다." if related else "화면 색상만 변경합니다."}
@@ -134,6 +135,12 @@ class DatasetTests(unittest.TestCase):
         answer["conditionalPaths"][0]["unknown"] = "추가 필드"
         with self.assertRaises(DatasetError):
             validate_response("database", answer)
+
+    def test_general_answer_requires_plain_language_summary(self):
+        answer = case()["answers"]["general"]
+        del answer["plainLanguageSummary"]
+        with self.assertRaises(DatasetError):
+            validate_response("general", answer)
 
     def test_duplicate_json_key_and_nonfinite_number_rejected(self):
         for raw in ('{"humanApproved":false,"humanApproved":true}', '{"value":NaN}', '{"value":Infinity}'):

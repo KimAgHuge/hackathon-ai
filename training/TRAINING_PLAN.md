@@ -19,7 +19,7 @@
 ## 출력 계약 주의사항
 
 모델은 현재 두 단계로 호출되므로 최종 API JSON을 모든 학습 사례의 정답으로 사용하지 않는다.
-전체 단계의 응답은 `summary`, `frameworks`, `riskLevel`, `riskScore`, `impactAreas`,
+전체 단계의 응답은 `summary`, `plainLanguageSummary`(고객·PM용 한 줄 요약), `frameworks`, `riskLevel`, `riskScore`, `impactAreas`,
 `evidences`, `recommendations`, `databaseRelevance`, `databaseRelevanceReason`이다.
 DB 단계 응답은 `status`, `explanation`, `observedTables`, `proposedChanges`,
 `conditionalPaths`, `openQuestions`이다.

@@ -92,6 +92,7 @@ class FakeClient:
 
 VALID_MODEL_JSON = """{
   "summary": "프로젝트 구조 요약",
+  "plainLanguageSummary": "현재 시스템의 구성을 살펴본 결과이며, 아직 변경 작업을 결정한 것은 아닙니다.",
   "frameworks": ["Vue", "Spring Boot", "Oracle"],
   "riskLevel": "UNKNOWN",
   "riskScore": 0,
@@ -111,6 +112,7 @@ VALID_MODEL_JSON = """{
 
 AMBIGUOUS_DB_JSON = """{
   "summary": "팀의 의미에 따라 DB 변경 범위가 달라집니다.",
+  "plainLanguageSummary": "프로젝트 관리 담당을 한 팀으로 제한하려면 팀의 의미를 먼저 확인해야 합니다.",
   "frameworks": [],
   "riskLevel": "UNKNOWN",
   "riskScore": 0,
@@ -133,6 +135,7 @@ AMBIGUOUS_DB_JSON = """{
 
 CONCRETE_DB_JSON = """{
   "summary": "별도 팀 소유권이 필요합니다.",
+  "plainLanguageSummary": "프로젝트마다 담당 팀을 정하는 방식으로 바뀔 수 있어 기존 정보 확인이 필요합니다.",
   "frameworks": [],
   "riskLevel": "MEDIUM",
   "riskScore": 50,
@@ -182,7 +185,20 @@ def test_analyze_validates_structured_response():
 
     assert result.risk_level == "UNKNOWN"
     assert result.risk_score == 0
+    assert result.plain_language_summary.startswith("현재 시스템의 구성")
     assert client.chat_calls == 1
+
+
+def test_plain_language_summary_is_required_and_retried():
+    incomplete = json.loads(GENERAL_MODEL_JSON)
+    incomplete.pop("plainLanguageSummary")
+    client = FakeClient(chat_responses=[json.dumps(incomplete, ensure_ascii=False), GENERAL_MODEL_JSON])
+
+    result = asyncio.run(LlmService(settings(), client=client).analyze(analysis_request()))
+
+    assert result.plain_language_summary
+    assert client.chat_calls == 2
+    assert "plainLanguageSummary" in client.chat_kwargs[1]["messages"][-1]["content"]
 
 
 def test_requirement_analysis_requires_grounded_db_decision():

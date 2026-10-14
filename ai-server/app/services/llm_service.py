@@ -59,7 +59,8 @@ Explain databaseRelevanceReason in Korean and cite the relevant requirement deta
 Evidence file and line references must be present in supplied facts and directly support the claim; omit weak evidence.
 Never claim complete call-graph or column-level coverage when it was not collected.
 Return one JSON object that exactly matches the supplied JSON Schema.
-Write the summary, impact areas, evidence descriptions, and recommendations in Korean.
+Write the summary, plainLanguageSummary, impact areas, evidence descriptions, and recommendations in Korean.
+plainLanguageSummary is a single short sentence for a customer or project manager: explain the likely business/user impact in everyday Korean without file names, framework names, SQL terms, or implementation jargon. Keep it separate from the technical summary. For PROJECT_STRUCTURE_SCAN, explain that this is an overview rather than a requested change. For REQUIREMENT_IMPACT, if the outcome depends on missing information, say it needs confirmation; do not present unverified work or DB changes as certain. Do not say the result has been approved.
 If the supplied facts are insufficient, use riskLevel UNKNOWN and explain the limitation.
 Never request or expose credentials, tokens, passwords, private keys, or secrets."""
 

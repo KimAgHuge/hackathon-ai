@@ -32,6 +32,7 @@ class FakeLlmService:
             raise self.analysis_exception
         return ProjectAnalysisResponse(
             summary="Vue와 Spring Boot로 구성된 프로젝트입니다.",
+            plain_language_summary="시스템의 현재 구성을 살펴본 결과이며, 아직 변경 작업을 확정한 것은 아닙니다.",
             frameworks=["Vue", "Spring Boot", "Oracle"],
             risk_level="UNKNOWN",
             risk_score=0,

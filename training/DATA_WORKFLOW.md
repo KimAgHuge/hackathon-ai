@@ -28,6 +28,7 @@
 승인 표시의 진위·검토자 권한도 로컬 도구가 인증하지 않는다. 승인 책임자는 별도로 정해야 한다.
 
 기존 DB의 `original_result`·`corrected_result`는 최종 조합 응답이다.
+새 계약의 `answers.general.plainLanguageSummary`는 기술 요약과 별도로 고객·PM이 이해할 수 있는 한 줄이다. AI 초안을 그대로 승인하지 말고, 영향이나 확정 여부를 과장하지 않는지 사람이 검토한다.
 최종 응답에서 제거된 `databaseRelevance`, `databaseRelevanceReason`을 임의로 복원하지 않는다.
 검토자가 전체 단계 정답에 해당 필드를 작성하거나 실제 단계별 응답을 확보해야 한다.
 `inference_metadata.facts`는 실제 입력 근거의 출발점이고, 소스 SHA·요구사항 버전은 작업 snapshot과 연결한다.

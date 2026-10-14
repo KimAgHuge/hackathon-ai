@@ -27,7 +27,7 @@ import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 class AiAnalysisClientTest {
     private static final String API_KEY = "integration-only-test-key-not-a-real-credential";
     private static final String VALID_RESULT = """
-            {"summary":"테스트 분석 결과","riskLevel":"LOW","riskScore":7,
+            {"summary":"테스트 분석 결과","plainLanguageSummary":"변경 범위를 확인한 결과입니다.","riskLevel":"LOW","riskScore":7,
              "frameworks":["Spring Boot"],"impactAreas":["API"],
              "recommendations":["검증"],"evidences":[{"source":"test"}],
              "databaseImpact":{"status":"NOT_APPLICABLE","explanation":"변경 요구사항이 없습니다.",
@@ -77,6 +77,7 @@ class AiAnalysisClientTest {
         Map<String, Object> result = client(Duration.ofSeconds(3)).analyze(PAYLOAD);
 
         assertThat(result).containsEntry("summary", "테스트 분석 결과")
+                .containsEntry("plainLanguageSummary", "변경 범위를 확인한 결과입니다.")
                 .containsEntry("riskLevel", "LOW").containsEntry("riskScore", 7);
         assertThat(receivedKey.get()).isEqualTo(API_KEY);
         assertThat(receivedContentType.get()).isEqualTo("application/json");
@@ -108,6 +109,16 @@ class AiAnalysisClientTest {
                 .isInstanceOf(IOException.class)
                 .hasMessage("Invalid AI result contract.")
                 .hasNoCause();
+    }
+
+    @Test
+    void invalidPlainLanguageSummaryIsRejected() {
+        serve(exchange -> respond(exchange, 200,
+                VALID_RESULT.replace("변경 범위를 확인한 결과입니다.", " ")));
+
+        assertThatThrownBy(() -> client(Duration.ofSeconds(3)).analyze(PAYLOAD))
+                .isInstanceOf(IOException.class)
+                .hasMessage("Invalid AI plain-language summary.");
     }
 
     @Test

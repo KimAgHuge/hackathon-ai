@@ -136,6 +136,10 @@ const count = (value) => (Array.isArray(value) ? `${value.length.toLocaleString(
 const source = computed(() => analysis.value?.facts?.sourceSummary || {})
 const database = computed(() => analysis.value?.facts?.databaseSummary || {})
 const aiResult = computed(() => analysis.value?.result || {})
+const plainLanguageSummary = computed(() => {
+    const value = aiResult.value.plainLanguageSummary
+    return typeof value === 'string' && value.trim() ? value.trim() : ''
+})
 const databaseImpact = computed(() => aiResult.value.databaseImpact || null)
 const databaseImpactLabels = {
     CHANGE_REQUIRED: 'DB 변경 필요',
@@ -353,6 +357,18 @@ const evidenceEntries = (evidence) => (evidence && typeof evidence === 'object' 
         </div>
 
         <template v-if="analysis">
+            <section class="panel analysis-section plain-language-section">
+                <div class="panel-heading">
+                    <div>
+                        <h2>쉽게 보는 한 줄 요약</h2>
+                        <p>고객·PM을 위한 설명</p>
+                    </div>
+                    <span class="badge blue">AI 초안 · 검토 전</span>
+                </div>
+                <p v-if="plainLanguageSummary" class="plain-language-copy">{{ plainLanguageSummary }}</p>
+                <p v-else class="empty-copy">이전 분석 결과에는 쉬운 요약이 없습니다. 아래 기술 요약을 확인하세요.</p>
+            </section>
+
             <section class="panel analysis-section">
                 <div class="panel-heading">
                     <div>
@@ -642,6 +658,25 @@ const evidenceEntries = (evidence) => (evidence && typeof evidence === 'object' 
 }
 .analysis-section {
     margin-top: 20px;
+}
+.plain-language-section {
+    border: 1px solid #b8cafa;
+    background: #f3f7ff;
+}
+.plain-language-copy {
+    margin: 0;
+    color: #1e3a6d;
+    font-size: clamp(16px, 2vw, 19px);
+    font-weight: 700;
+    line-height: 1.65;
+    overflow-wrap: anywhere;
+}
+:global(html.dark .plain-language-section) {
+    border-color: #365389;
+    background: #14213d;
+}
+:global(html.dark .plain-language-copy) {
+    color: #dbeafe;
 }
 .analysis-activity {
     display: flex;

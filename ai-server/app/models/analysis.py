@@ -3,7 +3,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-from pydantic import ConfigDict, Field, model_validator
+from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from app.models.base import ApiModel, to_camel
 
@@ -151,12 +151,21 @@ class GeneralAnalysisResponse(ApiModel):
     )
 
     summary: str
+    plain_language_summary: str = Field(min_length=1, max_length=200)
     frameworks: List[str]
     risk_level: RiskLevel
     risk_score: int = Field(ge=0, le=100)
     impact_areas: List[str]
     evidences: List[Dict[str, Any]]
     recommendations: List[str]
+
+    @field_validator("plain_language_summary")
+    @classmethod
+    def validate_plain_language_summary(cls, value: str) -> str:
+        sentence = value.strip()
+        if not sentence or "\n" in sentence or "\r" in sentence:
+            raise ValueError("A plain-language summary must be a single non-empty line.")
+        return sentence
 
 
 class RequirementGeneralAnalysisResponse(GeneralAnalysisResponse):

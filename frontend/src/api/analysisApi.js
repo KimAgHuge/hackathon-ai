@@ -83,6 +83,7 @@ export const getAnalysisResult = async (analysisJobId, options = {}) => {
             riskLevel: 'UNKNOWN',
             riskScore: null,
             result: {
+                plainLanguageSummary: '이 화면은 분석 결과의 예시이며, 실제 프로젝트를 조사한 내용은 아닙니다.',
                 frameworks: [],
                 impactAreas: [],
                 evidences: [],

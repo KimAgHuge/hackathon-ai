@@ -168,7 +168,7 @@ def review_flags(stage, answer, request):
         flags.append("unique_requires_human_review")
     if any(w in text for w in ("삭제", "제거", "DROP")) and not any(w in requirement for w in ("삭제", "제거", "폐지", "DROP", "drop")):
         flags.append("destructive_word_requires_human_review")
-    sentences = [answer["summary"], *answer["impactAreas"], *answer["recommendations"]] if stage == "general" else [
+    sentences = [answer["summary"], answer["plainLanguageSummary"], *answer["impactAreas"], *answer["recommendations"]] if stage == "general" else [
         answer["explanation"], *answer["openQuestions"],
         *(p["condition"] + " " + p["databaseEffect"] for p in answer["conditionalPaths"]),
         *(p["description"] + " " + p["rationale"] for p in answer["proposedChanges"]),

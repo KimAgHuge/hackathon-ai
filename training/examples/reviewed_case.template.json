@@ -30,6 +30,7 @@
   "answers": {
     "general": {
       "summary": "실제 검토한 전체 분석 정답을 작성합니다.",
+      "plainLanguageSummary": "고객과 담당자가 이해할 수 있는 변경 영향 한 줄 요약을 작성합니다.",
       "frameworks": [],
       "riskLevel": "UNKNOWN",
       "riskScore": 0,

@@ -112,6 +112,13 @@ public class AiAnalysisClient {
                 || score.doubleValue() != score.intValue() || score.intValue() < 0 || score.intValue() > 100) {
             throw new IOException("Invalid AI result contract.");
         }
+        // 구버전 AI 서버와 저장 결과는 허용하되, 새 필드가 있으면 한 줄 계약을 지킨다.
+        if (result.containsKey("plainLanguageSummary")
+                && (!(result.get("plainLanguageSummary") instanceof String plainSummary)
+                    || plainSummary.isBlank() || plainSummary.length() > 200
+                    || plainSummary.contains("\n") || plainSummary.contains("\r"))) {
+            throw new IOException("Invalid AI plain-language summary.");
+        }
         for (String name : List.of("frameworks", "impactAreas", "recommendations")) {
             if (!(result.get(name) instanceof List<?> items) || items.stream().anyMatch(v -> !(v instanceof String))) {
                 throw new IOException("Invalid AI result list.");
