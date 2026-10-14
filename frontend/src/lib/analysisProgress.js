@@ -15,6 +15,27 @@ export const analysisActivity = (job) => {
     return '분석 결과를 저장하는 중'
 }
 
+/** 서버가 저장한 공개용 단계 내역만 표시한다. 과거 작업에는 이 필드가 없을 수 있다. */
+export const analysisActivityEvents = (job) =>
+    (Array.isArray(job?.activityLog) ? job.activityLog : [])
+        .map((event, sequence) => ({ ...event, sequence }))
+        .filter(
+            (event) =>
+                typeof event.label === 'string' &&
+                typeof event.at === 'string' &&
+                ['STARTED', 'WAITING', 'COMPLETED', 'FAILED', 'CANCELLED'].includes(event.state)
+        )
+        .slice(-14)
+        .reverse()
+
+export const activeActivityEvent = (job) => {
+    if (job?.status !== 'RUNNING') return null
+    const latest = analysisActivityEvents(job)[0]
+    if (latest?.state === 'STARTED') return latest
+    if (latest?.state !== 'WAITING') return null
+    return [...job.activityLog].reverse().find((event) => event.state === 'STARTED' && event.label === latest.label) || latest
+}
+
 export const analysisElapsedSeconds = (job, now = Date.now()) => {
     const start = Date.parse(job?.startedAt || job?.createdAt || '')
     if (!Number.isFinite(start)) return null

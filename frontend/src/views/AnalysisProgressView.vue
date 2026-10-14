@@ -4,7 +4,14 @@ import { onBeforeRouteLeave, onBeforeRouteUpdate, RouterLink, useRoute } from 'v
 import PageTitle from '@/components/common/PageTitle.vue'
 import { cancelAnalysisJob, getAnalysisJob, getAnalysisResult, isAnalysisDemoMode } from '@/api/analysisApi'
 import { createAnalysisPoller } from '@/lib/analysisPolling'
-import { activeAnalysisStage, analysisActivity, analysisElapsedSeconds, formatAnalysisElapsed } from '@/lib/analysisProgress'
+import {
+    activeActivityEvent,
+    activeAnalysisStage,
+    analysisActivity,
+    analysisActivityEvents,
+    analysisElapsedSeconds,
+    formatAnalysisElapsed,
+} from '@/lib/analysisProgress'
 import { shouldConfirmAnalysisExit, warnOnAnalysisUnload } from '@/lib/analysisNavigation'
 import { riskLevelLabel } from '@/lib/riskLevel'
 
@@ -125,12 +132,23 @@ const percentage = (value) => (typeof value === 'number' && Number.isFinite(valu
 const progressText = (value) => (percentage(value) === null ? '진행률 미제공' : `${percentage(value)}%`)
 const activeStage = computed(() => activeAnalysisStage(job.value))
 const activityText = computed(() => analysisActivity(job.value))
+const activityEvents = computed(() => analysisActivityEvents(job.value))
+const currentActivity = computed(() => activeActivityEvent(job.value))
 const elapsedText = computed(() => formatAnalysisElapsed(analysisElapsedSeconds(job.value, clock.value)))
+const currentActivityElapsed = computed(() => {
+    const started = Date.parse(currentActivity.value?.at || '')
+    return Number.isFinite(started) ? formatAnalysisElapsed(Math.max(0, (clock.value - started) / 1000)) : null
+})
 const formatDate = (value) => {
     if (!value) return '—'
     const date = new Date(value)
     return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString('ko-KR')
 }
+const formatActivityTime = (value) => {
+    const date = new Date(value)
+    return Number.isNaN(date.getTime()) ? '시간 미상' : date.toLocaleTimeString('ko-KR')
+}
+const activityStateLabel = (state) => ({ STARTED: '진행 중', WAITING: '응답 대기', COMPLETED: '완료', FAILED: '실패', CANCELLED: '취소' })[state] || ''
 const count = (value) => (Array.isArray(value) ? `${value.length.toLocaleString('ko-KR')}개` : '정보 없음')
 // result는 AI 판단, facts는 AI에 실제 전달된 소스·DB 근거다.
 const source = computed(() => analysis.value?.facts?.sourceSummary || {})
@@ -327,6 +345,34 @@ const evidenceEntries = (evidence) => (evidence && typeof evidence === 'object' 
                 <strong>분석 실패 사유</strong>
                 <p>{{ job.errorMessage || '서버가 상세 오류를 제공하지 않았습니다.' }}</p>
             </div>
+        </section>
+
+        <section v-if="job" class="panel activity-log-panel" aria-labelledby="activity-log-title">
+            <div class="panel-heading">
+                <div>
+                    <h2 id="activity-log-title">실시간 작업 내역</h2>
+                    <p>서버에서 확인된 단계만 표시합니다. 내부 오류나 접속 정보는 표시하지 않습니다.</p>
+                </div>
+                <span v-if="job.status === 'RUNNING'" class="badge blue">자동 갱신 중</span>
+            </div>
+            <p v-if="currentActivity" class="activity-current">
+                <span class="activity-dot" aria-hidden="true"></span>
+                {{ currentActivity.label }} · 이 단계 경과 {{ currentActivityElapsed || '계산 중' }}
+            </p>
+            <ol v-if="activityEvents.length" class="activity-log-list" role="log" aria-label="분석 작업 내역" aria-live="polite" aria-relevant="additions">
+                <li v-for="event in activityEvents" :key="event.sequence" class="activity-log-item">
+                    <time :datetime="event.at">{{ formatActivityTime(event.at) }}</time>
+                    <span class="activity-state" :class="`state-${event.state.toLowerCase()}`">{{ activityStateLabel(event.state) }}</span>
+                    <span class="activity-label">{{ event.label }}</span>
+                </li>
+            </ol>
+            <p v-else class="empty-copy">
+                {{
+                    job.status === 'PENDING'
+                        ? '분석 작업 시작을 기다리고 있습니다.'
+                        : '이 분석에는 저장된 작업 내역이 없습니다. 위의 현재 단계와 경과 시간을 확인하세요.'
+                }}
+            </p>
         </section>
 
         <div v-if="job" class="grid three-columns">
@@ -659,6 +705,70 @@ const evidenceEntries = (evidence) => (evidence && typeof evidence === 'object' 
 .analysis-section {
     margin-top: 20px;
 }
+.activity-log-panel {
+    margin: 20px 0;
+}
+.activity-current {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 0 14px;
+    color: #274895;
+    font-size: 14px;
+    font-weight: 700;
+}
+.activity-log-list {
+    display: grid;
+    gap: 8px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+.activity-log-item {
+    display: grid;
+    grid-template-columns: 100px 58px minmax(0, 1fr);
+    align-items: start;
+    gap: 10px;
+    border: 1px solid #e2e8f2;
+    border-radius: 10px;
+    padding: 9px 12px;
+    font-size: 13px;
+    overflow-wrap: anywhere;
+}
+.activity-log-item time {
+    color: #667188;
+    font-variant-numeric: tabular-nums;
+}
+.activity-state {
+    color: #4665b2;
+    font-weight: 700;
+}
+.state-completed {
+    color: #23805a;
+}
+.state-failed,
+.state-cancelled {
+    color: #b04a4a;
+}
+:global(html.dark .activity-current) {
+    color: #bfdbfe;
+}
+:global(html.dark .activity-log-item) {
+    border-color: #334155;
+}
+:global(html.dark .activity-log-item time) {
+    color: #a5b4c9;
+}
+:global(html.dark .activity-state) {
+    color: #a7bfff;
+}
+:global(html.dark .state-completed) {
+    color: #86efac;
+}
+:global(html.dark .state-failed),
+:global(html.dark .state-cancelled) {
+    color: #fda4af;
+}
 .plain-language-section {
     border: 1px solid #b8cafa;
     background: #f3f7ff;
@@ -790,6 +900,12 @@ const evidenceEntries = (evidence) => (evidence && typeof evidence === 'object' 
     .two-columns,
     .job-metadata {
         grid-template-columns: minmax(0, 1fr);
+    }
+    .activity-log-item {
+        grid-template-columns: 90px minmax(0, 1fr);
+    }
+    .activity-label {
+        grid-column: 1 / -1;
     }
 }
 </style>
