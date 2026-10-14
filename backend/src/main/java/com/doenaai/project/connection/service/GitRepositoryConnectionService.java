@@ -410,6 +410,7 @@ public class GitRepositoryConnectionService {
         validateAuthentication(request, target, credentials);
         Path root = Files.createTempDirectory("doenaai-analysis-");
         boolean succeeded = false;
+        String snapshotPhase = "CREATE_REPOSITORY";
         try {
           Path checkout;
           try (var authentication = createAuthenticationContext(request, target, credentials)) {
@@ -423,18 +424,41 @@ public class GitRepositoryConnectionService {
                         .setTimeout(Math.min(180, Math.max(connectionTimeoutSeconds, 60)))
                         .setProgressMonitor(monitor);
                 authentication.configure(command);
+                snapshotPhase = "FETCH";
                 command.call();
+                snapshotPhase = "CHECK_FETCH_LIMITS";
                 monitor.checkDiskNow();
                 monitor.check();
                 checkout = Files.createDirectory(root.resolve("source"));
+                snapshotPhase = "EXPORT_TREE";
                 exportTree(repository, commitSha, checkout);
             }
           }
           succeeded = true;
           return new GitSnapshot(checkout, root);
+        } catch (IOException exception) {
+            // Never log third-party exception messages: Git transports may include credentials in URLs.
+            log.warn("Git snapshot I/O failed: phase={}, code={}", snapshotPhase,
+                    safeSnapshotFailureCode(exception));
+            throw exception;
         } finally {
             if (!succeeded) GitAuthenticationContext.deleteDirectory(root);
         }
+    }
+
+    private static String safeSnapshotFailureCode(IOException exception) {
+        String message = exception.getMessage();
+        if (message == null) return "UNCLASSIFIED_IO";
+        return switch (message) {
+            case "Snapshot mismatch." -> "SNAPSHOT_MISMATCH";
+            case "Snapshot extraction cancelled." -> "EXTRACTION_CANCELLED";
+            case "Unsafe snapshot path." -> "UNSAFE_PATH";
+            case "Snapshot exceeds analysis limits." -> "EXPORT_LIMIT";
+            case "Invalid snapshot pack header." -> "INVALID_PACK_HEADER";
+            case "Snapshot object count exceeds analysis limits." -> "PACK_OBJECT_LIMIT";
+            case "Snapshot transfer exceeds analysis limits or was cancelled." -> "TRANSFER_LIMIT_OR_CANCELLED";
+            default -> "UNCLASSIFIED_IO";
+        };
     }
 
     static void exportTree(Repository repository, String commitSha, Path target) throws IOException {
@@ -555,7 +579,7 @@ public class GitRepositoryConnectionService {
         private final long maxDiskBytes;
         private final int maxObjects;
         private final AtomicLong packBytes = new AtomicLong();
-        private volatile boolean cancelled;
+        private volatile String cancellationReason;
         private long lastDiskCheck;
         SnapshotProgressMonitor(Path ownedRoot) {
             this(ownedRoot, MAX_PACK_BYTES, MAX_CLONE_DISK_BYTES, MAX_RECEIVED_OBJECTS,
@@ -569,20 +593,29 @@ public class GitRepositoryConnectionService {
             this.deadline = System.nanoTime() + timeoutNanos;
         }
         public void start(int totalTasks) { }
-        public void beginTask(String title, int totalWork) { if (totalWork > maxObjects) cancelled = true; }
+        public void beginTask(String title, int totalWork) { if (totalWork > maxObjects) cancel("OBJECT_COUNT"); }
         public void update(int completed) { }
         public void endTask() { }
         public boolean isCancelled() {
-            if (cancelled || Thread.currentThread().isInterrupted() || System.nanoTime() > deadline) return true;
+            if (cancellationReason != null) return true;
+            if (Thread.currentThread().isInterrupted()) cancel("INTERRUPTED");
+            if (System.nanoTime() > deadline) cancel("DEADLINE");
+            if (cancellationReason != null) return true;
             if (System.nanoTime() - lastDiskCheck > java.time.Duration.ofMillis(250).toNanos()) checkDiskNow();
-            return cancelled;
+            return cancellationReason != null;
         }
         void received(int count) throws IOException {
-            if (packBytes.addAndGet(count) > maxPackBytes) cancelled = true;
+            if (packBytes.addAndGet(count) > maxPackBytes) cancel("PACK_BYTES");
             check();
         }
         void check() throws IOException {
-            if (isCancelled()) throw new IOException("Snapshot transfer exceeds analysis limits or was cancelled.");
+            if (isCancelled()) {
+                log.warn("Git snapshot safety check cancelled: reason={}", cancellationReason);
+                throw new IOException("Snapshot transfer exceeds analysis limits or was cancelled.");
+            }
+        }
+        private void cancel(String reason) {
+            if (cancellationReason == null) cancellationReason = reason;
         }
         void checkDiskNow() {
             lastDiskCheck = System.nanoTime();
@@ -592,13 +625,26 @@ public class GitRepositoryConnectionService {
                     private int entries;
                     @Override public FileVisitResult visitFile(Path file, BasicFileAttributes attributes) {
                         bytes += attributes.size();
-                        if (++entries > MAX_RECEIVED_OBJECTS * 2 || bytes > maxDiskBytes) cancelled = true;
-                        return cancelled ? FileVisitResult.TERMINATE : FileVisitResult.CONTINUE;
+                        if (++entries > MAX_RECEIVED_OBJECTS * 2) cancel("DISK_ENTRIES");
+                        if (bytes > maxDiskBytes) cancel("DISK_BYTES");
+                        return cancellationReason != null ? FileVisitResult.TERMINATE : FileVisitResult.CONTINUE;
+                    }
+                    @Override public FileVisitResult visitFileFailed(Path file, IOException exception) throws IOException {
+                        return visitFailedSnapshotPath(ownedRoot, file, exception);
                     }
                 });
             } catch (IOException | SecurityException exception) {
-                cancelled = true;
+                log.warn("Git snapshot disk scan failed: exception={}", exception.getClass().getSimpleName());
+                cancel("DISK_SCAN_IO");
             }
+        }
+        static FileVisitResult visitFailedSnapshotPath(Path ownedRoot, Path file, IOException exception) throws IOException {
+            // JGit can delete its own temporary pack file between discovery and attribute reading.
+            // A vanished child no longer consumes disk space; the root and all other I/O failures remain fatal.
+            if (exception instanceof java.nio.file.NoSuchFileException && !file.equals(ownedRoot)) {
+                return FileVisitResult.CONTINUE;
+            }
+            throw exception;
         }
         public void showDuration(boolean enabled) { }
     }

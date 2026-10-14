@@ -9,6 +9,8 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.file.FileSystemException;
 import java.nio.file.Files;
+import java.nio.file.FileVisitResult;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.time.Duration;
 import static org.assertj.core.api.Assertions.*;
@@ -112,6 +114,19 @@ class GitSnapshotTest {
         finally { Thread.interrupted(); }
     }
 
+    @Test void vanishedTemporaryPackIsIgnoredButMissingRootAndOtherIoErrorsAreFatal() throws Exception {
+        Path vanished = root.resolve("objects.git/objects/pack/temporary.pack");
+        assertThat(GitRepositoryConnectionService.SnapshotProgressMonitor.visitFailedSnapshotPath(
+                root, vanished, new NoSuchFileException(vanished.toString())))
+                .isEqualTo(FileVisitResult.CONTINUE);
+        assertThatThrownBy(() -> GitRepositoryConnectionService.SnapshotProgressMonitor.visitFailedSnapshotPath(
+                root, root, new NoSuchFileException(root.toString())))
+                .isInstanceOf(NoSuchFileException.class);
+        assertThatThrownBy(() -> GitRepositoryConnectionService.SnapshotProgressMonitor.visitFailedSnapshotPath(
+                root, vanished, new IOException("unreadable")))
+                .isInstanceOf(IOException.class);
+    }
+
     @Test void actualFetchUsesPackReceiveLimitAndClosesOwnedRepository() throws Exception {
         Path source = Files.createDirectory(root.resolve("origin"));
         try (Git origin = Git.init().setDirectory(source.toFile()).call()) {
@@ -129,6 +144,29 @@ class GitSnapshotTest {
             }
             new GitRepositoryConnectionService.GitSnapshot(owned.resolve("source"), owned).close();
             assertThat(owned).doesNotExist();
+        }
+    }
+
+    @Test void actualFetchAndExportSucceedsWithinLimits() throws Exception {
+        Path source = Files.createDirectory(root.resolve("origin-success"));
+        try (Git origin = Git.init().setDirectory(source.toFile()).call()) {
+            Files.writeString(source.resolve("query.sql"), "select id from public.users;");
+            origin.add().addFilepattern(".").call();
+            var commit = origin.commit().setMessage("source").setAuthor("Test", "test@example.test").call();
+            String branch = origin.getRepository().getBranch();
+            Path owned = Files.createDirectory(root.resolve("owned-success"));
+            var limit = new GitRepositoryConnectionService.SnapshotProgressMonitor(owned);
+            try (var target = new GitRepositoryConnectionService.SnapshotRepository(owned.resolve("objects.git"), limit)) {
+                target.create(true);
+                new Git(target).fetch().setRemote(source.toUri().toString())
+                        .setRefSpecs(new RefSpec("+refs/heads/" + branch + ":refs/heads/snapshot"))
+                        .setDepth(100).setProgressMonitor(limit).call();
+                limit.checkDiskNow();
+                limit.check();
+                Path checkout = Files.createDirectory(owned.resolve("source"));
+                GitRepositoryConnectionService.exportTree(target, commit.name(), checkout);
+                assertThat(Files.readString(checkout.resolve("query.sql"))).contains("public.users");
+            }
         }
     }
 
