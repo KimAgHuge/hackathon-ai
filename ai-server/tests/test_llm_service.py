@@ -4,9 +4,10 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from pydantic import ValidationError
 
 from app.config import Settings
-from app.models.analysis import ProjectAnalysisRequest
+from app.models.analysis import DatabaseImpact, ProjectAnalysisRequest
 from app.services.llm_service import (
     InvalidModelResponseError,
     LlmService,
@@ -193,6 +194,73 @@ def test_requirement_analysis_requires_grounded_db_decision():
     assert client.chat_calls == 2
 
 
+def test_explicit_business_term_mapping_reaches_both_analysis_steps():
+    request = requirement_request()
+    clarification = "여기서 팀은 기존 소속 조직(organization)을 의미한다."
+    request.source_summary["changeRequirement"]["refinedContent"] += " " + clarification
+    request.database_summary["tables"][0]["foreignKeys"] = [{
+        "column": "organization_id", "referencedSchema": "public",
+        "referencedTable": "organizations", "referencedColumn": "id",
+    }]
+    request.database_summary["tables"].append({
+        "schema": "public", "name": "organizations", "columns": [{"name": "id"}],
+    })
+    no_schema_change = {
+        "status": "NO_CHANGE",
+        "explanation": "팀은 기존 조직이며 public.projects.organization_id가 이미 프로젝트당 한 조직을 참조합니다.",
+        "observedTables": ["public.projects"],
+        "proposedChanges": [],
+        "conditionalPaths": [],
+        "openQuestions": ["기존 프로젝트에 조직이 비어 있는 데이터가 있는지 확인해야 합니다."],
+    }
+    client = FakeClient(chat_responses=[
+        REQUIREMENT_GENERAL_MODEL_JSON,
+        json.dumps(no_schema_change, ensure_ascii=False),
+    ])
+
+    result = asyncio.run(LlmService(settings(), client=client).analyze(request))
+
+    assert result.database_impact.status.value == "NO_CHANGE"
+    assert client.chat_calls == 2
+    assert all(clarification in call["messages"][1]["content"] for call in client.chat_kwargs)
+
+
+def test_database_prompt_handles_an_unrelated_repository_domain():
+    payload = requirement_request().model_dump(mode="json", by_alias=True)
+    payload["sourceSummary"]["changeRequirement"] = {
+        "title": "창고별 재고 품목 관리",
+        "refinedContent": "각 재고 품목은 기존 창고 하나에 소속된다.",
+    }
+    payload["databaseSummary"]["tables"] = [
+        {"schema": "inventory", "name": "items", "columns": [{"name": "warehouse_id"}],
+         "foreignKeys": [{"column": "warehouse_id", "referencedSchema": "inventory",
+                          "referencedTable": "warehouses", "referencedColumn": "id"}]},
+        {"schema": "inventory", "name": "warehouses", "columns": [{"name": "id"}]},
+    ]
+    request = ProjectAnalysisRequest.model_validate(payload)
+    db_result = {
+        "status": "NO_CHANGE",
+        "explanation": "재고 품목의 창고 연결은 inventory.items.warehouse_id로 표현됩니다.",
+        "observedTables": ["inventory.items", "inventory.warehouses"],
+        "proposedChanges": [],
+        "conditionalPaths": [],
+        "openQuestions": [],
+    }
+    client = FakeClient(chat_responses=[
+        REQUIREMENT_GENERAL_MODEL_JSON,
+        json.dumps(db_result, ensure_ascii=False),
+    ])
+
+    result = asyncio.run(LlmService(settings(), client=client).analyze(request))
+
+    assert result.database_impact.status.value == "NO_CHANGE"
+    assert "창고별 재고 품목 관리" in client.chat_kwargs[1]["messages"][1]["content"]
+    db_system_prompt = client.chat_kwargs[1]["messages"][0]["content"]
+    assert "single-valued foreign key" in db_system_prompt
+    assert "team and an organization" not in db_system_prompt
+    assert "project row" not in db_system_prompt
+
+
 def test_presentation_only_requirement_skips_database_model_call():
     client = FakeClient(chat_responses=[UNRELATED_GENERAL_MODEL_JSON])
 
@@ -330,6 +398,23 @@ def test_analyze_rejects_invalid_json_after_retry_limit():
 
     with pytest.raises(InvalidModelResponseError):
         asyncio.run(service.analyze(analysis_request()))
+
+
+def test_validation_log_code_does_not_include_model_content():
+    with pytest.raises(ValidationError) as failure:
+        DatabaseImpact.model_validate({
+            "status": "NEEDS_CLARIFICATION",
+            "explanation": "비공개 프로젝트 설명",
+            "observedTables": [],
+            "proposedChanges": [],
+            "conditionalPaths": [],
+            "openQuestions": ["팀의 의미는 무엇인가요?"],
+        })
+
+    assert LlmService._safe_validation_code(failure.value) == "DB_NEEDS_PATHS"
+    assert LlmService._safe_validation_code(
+        ValueError("DB impact omitted the requirement's business term: 비공개 프로젝트 설명.")
+    ) == "DB_BUSINESS_TERM_MISSING"
 
 
 def test_analyze_maps_ollama_timeout():
