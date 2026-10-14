@@ -1,10 +1,11 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { RouterLink, useRoute } from 'vue-router'
+import { onBeforeRouteLeave, onBeforeRouteUpdate, RouterLink, useRoute } from 'vue-router'
 import PageTitle from '@/components/common/PageTitle.vue'
 import { cancelAnalysisJob, getAnalysisJob, getAnalysisResult, isAnalysisDemoMode } from '@/api/analysisApi'
 import { createAnalysisPoller } from '@/lib/analysisPolling'
 import { activeAnalysisStage, analysisActivity, analysisElapsedSeconds, formatAnalysisElapsed } from '@/lib/analysisProgress'
+import { shouldConfirmAnalysisExit } from '@/lib/analysisNavigation'
 import { riskLevelLabel } from '@/lib/riskLevel'
 
 const route = useRoute()
@@ -18,6 +19,23 @@ const cancelError = ref('')
 const lastCheckedAt = ref(null)
 const clock = ref(Date.now())
 let elapsedTimer = null
+
+// 브라우저 뒤로가기·앱 내부 이동은 화면만 벗어난다. 서버 분석을 자동 취소하지 않는다.
+const confirmLeavingRunningJob = () => {
+    if (!shouldConfirmAnalysisExit(job.value?.status)) return true
+    return window.confirm('분석 화면을 나가시겠습니까? 서버 작업은 계속되며 분석 이력에서 다시 확인할 수 있습니다. 작업 자체를 멈추려면 이 화면의 “분석 작업 취소”를 사용하세요.')
+}
+onBeforeRouteLeave(confirmLeavingRunningJob)
+onBeforeRouteUpdate((to) => (
+    to.params.analysisJobId === route.params.analysisJobId ? true : confirmLeavingRunningJob()
+))
+
+// 새로고침·탭/창 닫기에는 브라우저 기본 경고만 가능하며 비동기 취소 요청은 보장되지 않는다.
+const warnBeforeUnload = (event) => {
+    if (!shouldConfirmAnalysisExit(job.value?.status)) return
+    event.preventDefault()
+    event.returnValue = ''
+}
 
 const statusLabels = { PENDING: '분석 대기', RUNNING: '분석 진행 중', COMPLETED: '분석 완료', FAILED: '분석 실패', CANCELLED: '분석 취소' }
 const statusLabel = computed(() => statusLabels[job.value?.status] || job.value?.status || '작업 확인 중')
@@ -89,11 +107,13 @@ watch(
 )
 
 onMounted(() => {
+    window.addEventListener('beforeunload', warnBeforeUnload)
     elapsedTimer = setInterval(() => {
         if (job.value?.status === 'PENDING' || job.value?.status === 'RUNNING') clock.value = Date.now()
     }, 1000)
 })
 onBeforeUnmount(() => {
+    window.removeEventListener('beforeunload', warnBeforeUnload)
     poller.stop()
     if (elapsedTimer !== null) clearInterval(elapsedTimer)
 })
@@ -215,7 +235,7 @@ const evidenceEntries = (evidence) => (evidence && typeof evidence === 'object' 
             <button v-if="job && ['PENDING', 'RUNNING'].includes(job.status)" type="button" class="button secondary w-full sm:w-auto" :disabled="cancelBusy" @click="cancelJob">
                 {{ cancelBusy ? '취소 요청 중…' : '분석 작업 취소' }}
             </button>
-            <span v-if="job && ['PENDING', 'RUNNING'].includes(job.status)" class="text-xs text-slate-600 dark:text-slate-400">화면을 떠나도 서버 분석은 계속되며 이력에서 다시 볼 수 있습니다.</span>
+            <span v-if="shouldConfirmAnalysisExit(job?.status)" class="text-xs text-slate-600 dark:text-slate-400">뒤로가기·새로고침·창 닫기로 나가도 서버 분석은 계속되며 이력에서 다시 볼 수 있습니다.</span>
         </div>
         <p v-if="cancelError" role="alert" class="analysis-notice error-notice">{{ cancelError }}</p>
 
