@@ -1,0 +1,2 @@
+# 최초 설치 후 requirements-lock.txt의 고정 버전으로 같은 환경을 재현한다.
+mlx-lm[train]

@@ -68,6 +68,12 @@ htmlcov/
 /training/outputs/
 /training/checkpoints/
 /training/logs/
+/training/.tools/
+/training/.python/
+/training/.cache/
+/training/models/
+/training/datasets/
+/training/adapters/
 
 *.safetensors
 *.gguf
