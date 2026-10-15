@@ -1,5 +1,6 @@
 package com.doenaai.project.service;
 
+import com.doenaai.analysis.AnalysisNodeIdentity;
 import com.doenaai.analysis.repository.AnalysisJobRepository;
 import com.doenaai.analysis.repository.AnalysisResultRepository;
 import com.doenaai.analysis.service.AnalysisJobService;
@@ -86,7 +87,8 @@ class ProjectTenantPropagationTest {
                 projectService,
                 gitService,
                 requirementService,
-                analysisWorker
+                analysisWorker,
+                new AnalysisNodeIdentity(true, "test-backend-instance")
         );
     }
 

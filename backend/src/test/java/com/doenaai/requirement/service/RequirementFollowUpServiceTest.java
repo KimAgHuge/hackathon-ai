@@ -107,9 +107,67 @@ class RequirementFollowUpServiceTest {
     @Test
     void rejectsStaleVersionBeforeWriting() {
         when(versions.findCurrent(requirementId)).thenReturn(Optional.of(version(UUID.randomUUID(), 2, List.of(), null)));
+        when(jobs.findById(jobId)).thenReturn(Optional.of(completedJob()));
 
         assertThatThrownBy(() -> service.create(requirementId,
                 new RequirementFollowUpRequest(jobId, versionId, List.of(), "추가 질문"), userId))
+                .isInstanceOfSatisfying(ResponseStatusException.class,
+                        error -> assertThat(error.getStatusCode()).isEqualTo(HttpStatus.CONFLICT));
+        verify(versions, never()).markCurrentVersionHistorical(any());
+    }
+
+    @Test
+    void retriesCancelledFollowUpWithoutDuplicatingTheSameAnswers() {
+        UUID retryVersionId = UUID.randomUUID();
+        var savedAnswer = Map.<String, Object>of(
+                "kind", "AI_QUESTION_ANSWER", "questionKey", jobId + ":0",
+                "question", "저장 위치는?", "answer", "public.profiles");
+        var current = version(retryVersionId, 2, List.of(savedAnswer), jobId);
+        when(versions.findCurrent(requirementId)).thenReturn(Optional.of(current));
+        when(jobs.findById(jobId)).thenReturn(Optional.of(completedJob()));
+        when(results.findByJobId(jobId)).thenReturn(Optional.of(resultWithQuestion("저장 위치는?")));
+
+        var response = service.create(requirementId, new RequirementFollowUpRequest(jobId, versionId,
+                List.of(new RequirementFollowUpRequest.Answer(0, "public.profiles")), null), userId);
+
+        assertThat(response.id()).isEqualTo(retryVersionId);
+        verify(jobs).hasActiveOrCompletedAnalysis(retryVersionId);
+        verify(versions, never()).markCurrentVersionHistorical(any());
+    }
+
+    @Test
+    void updatesAnswerAfterFailedFollowUpAndKeepsVersionHistory() {
+        UUID failedVersionId = UUID.randomUUID();
+        var oldAnswer = Map.<String, Object>of(
+                "kind", "AI_QUESTION_ANSWER", "questionKey", jobId + ":0",
+                "question", "저장 위치는?", "answer", "auth.users");
+        when(versions.findCurrent(requirementId)).thenReturn(Optional.of(version(failedVersionId, 2, List.of(oldAnswer), jobId)));
+        when(jobs.findById(jobId)).thenReturn(Optional.of(completedJob()));
+        when(results.findByJobId(jobId)).thenReturn(Optional.of(resultWithQuestion("저장 위치는?")));
+        when(versions.findNextVersionNumber(requirementId)).thenReturn(3);
+        when(versions.insert(eq(requirementId), eq(3), any(), eq(userId), anyList(), eq(jobId), eq(failedVersionId)))
+                .thenReturn(version(UUID.randomUUID(), 3, List.of(), jobId));
+
+        service.create(requirementId, new RequirementFollowUpRequest(jobId, versionId,
+                List.of(new RequirementFollowUpRequest.Answer(0, "public.profiles")), null), userId);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<Object>> saved = ArgumentCaptor.forClass(List.class);
+        verify(versions).insert(eq(requirementId), eq(3), any(), eq(userId), saved.capture(), eq(jobId), eq(failedVersionId));
+        assertThat(saved.getValue()).hasSize(1);
+        assertThat(((Map<?, ?>) saved.getValue().getFirst()).get("answer")).isEqualTo("public.profiles");
+        verify(versions).markCurrentVersionHistorical(requirementId);
+    }
+
+    @Test
+    void doesNotContinueOldQuestionsWhileLatestAnalysisIsRunning() {
+        UUID retryVersionId = UUID.randomUUID();
+        when(versions.findCurrent(requirementId)).thenReturn(Optional.of(version(retryVersionId, 2, List.of(), jobId)));
+        when(jobs.findById(jobId)).thenReturn(Optional.of(completedJob()));
+        when(jobs.hasActiveOrCompletedAnalysis(retryVersionId)).thenReturn(true);
+
+        assertThatThrownBy(() -> service.create(requirementId,
+                new RequirementFollowUpRequest(jobId, versionId, List.of(), "새 질문"), userId))
                 .isInstanceOfSatisfying(ResponseStatusException.class,
                         error -> assertThat(error.getStatusCode()).isEqualTo(HttpStatus.CONFLICT));
         verify(versions, never()).markCurrentVersionHistorical(any());
@@ -162,5 +220,14 @@ class RequirementFollowUpServiceTest {
     private RequirementVersion version(UUID id, int number, List<Object> clarifications, UUID sourceJobId) {
         return new RequirementVersion(id, requirementId, number, "멤버 변경", "초기 원문", "정리한 요구사항",
                 List.of(), List.of(), null, clarifications, sourceJobId, null, true, userId, OffsetDateTime.now());
+    }
+
+    private AnalysisJobResponse completedJob() {
+        return AnalysisJobResponse.of(jobId, projectId, versionId, "COMPLETED", 100, 100, 100, OffsetDateTime.now());
+    }
+
+    private AnalysisResultResponse resultWithQuestion(String question) {
+        return new AnalysisResultResponse(jobId, projectId, "요약", "UNKNOWN", 0,
+                Map.of("databaseImpact", Map.of("openQuestions", List.of(question))), Map.of(), OffsetDateTime.now());
     }
 }

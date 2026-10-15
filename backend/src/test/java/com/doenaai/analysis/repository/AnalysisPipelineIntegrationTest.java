@@ -1,5 +1,6 @@
 package com.doenaai.analysis.repository;
 
+import com.doenaai.analysis.AnalysisNodeIdentity;
 import com.doenaai.analysis.dto.AnalysisJobResponse;
 import com.doenaai.analysis.dto.AnalysisWorkItem;
 import org.junit.jupiter.api.AfterAll;
@@ -84,7 +85,8 @@ class AnalysisPipelineIntegrationTest {
 
         var transactionManager = new DataSourceTransactionManager(dataSource);
         transactions = new TransactionTemplate(transactionManager);
-        jobs = transactional(new AnalysisJobRepository(jdbc, JsonMapper.builder().build()),
+        jobs = transactional(new AnalysisJobRepository(jdbc, JsonMapper.builder().build(),
+                        new AnalysisNodeIdentity(true, "primary")),
                 AnalysisJobRepository.class, transactionManager);
         results = transactional(new AnalysisResultRepository(jdbc, JsonMapper.builder().build()),
                 AnalysisResultRepository.class, transactionManager);
@@ -104,7 +106,9 @@ class AnalysisPipelineIntegrationTest {
                         requirement_version_id uuid,
                         requested_by uuid,
                         analysis_type varchar(30) not null default 'CHANGE_REQUEST'
-                            check (analysis_type in ('CHANGE_REQUEST', 'PROJECT_SCAN', 'REQUIREMENT', 'REANALYSIS')),
+                            check (analysis_type in ('CHANGE_REQUEST', 'PROJECT_SCAN', 'PROJECT_SCAN_V2', 'REQUIREMENT', 'REANALYSIS')),
+                        target_worker_id varchar(80),
+                        claimed_by_worker_id varchar(80),
                         status varchar(20) not null default 'PENDING'
                             check (status in ('PENDING', 'RUNNING', 'COMPLETED', 'FAILED', 'CANCELLED')),
                         source_progress integer not null default 0 check (source_progress between 0 and 100),
@@ -213,6 +217,23 @@ class AnalysisPipelineIntegrationTest {
             executor.shutdownNow();
             assertThat(executor.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
         }
+    }
+
+    @Test
+    void onlyTargetWorkerCanClaimNewScan() {
+        var pending = newJob();
+        assertThat(jdbc.queryForObject("select analysis_type from public.analysis_jobs where id = ?",
+                String.class, pending.jobId())).isEqualTo("PROJECT_SCAN_V2");
+        assertThat(jdbc.queryForObject("select target_worker_id from public.analysis_jobs where id = ?",
+                String.class, pending.jobId())).isEqualTo("primary");
+        var otherInstance = new AnalysisJobRepository(jdbc, JsonMapper.builder().build(),
+                new AnalysisNodeIdentity(true, "another-worker"));
+        assertThat(otherInstance.claimNext()).isEmpty();
+        assertThat(jobs.findById(pending.jobId()).orElseThrow().status()).isEqualTo("PENDING");
+
+        assertThat(jobs.claimNext().orElseThrow().jobId()).isEqualTo(pending.jobId());
+        assertThat(jdbc.queryForObject("select claimed_by_worker_id from public.analysis_jobs where id = ?",
+                String.class, pending.jobId())).isEqualTo("primary");
     }
 
     @Test

@@ -1,5 +1,6 @@
 package com.doenaai.analysis.service;
 
+import com.doenaai.analysis.AnalysisNodeIdentity;
 import com.doenaai.analysis.dto.AnalysisJobResponse;
 import com.doenaai.analysis.repository.AnalysisJobRepository;
 import com.doenaai.analysis.repository.AnalysisResultRepository;
@@ -27,6 +28,7 @@ public class AnalysisJobService {
             gitRepositoryConnectionService;
     private final RequirementService requirementService;
     private final ObjectProvider<AnalysisWorker> analysisWorker;
+    private final AnalysisNodeIdentity nodeIdentity;
 
     /**
      * Git 연결과 접근 권한을 확인한 뒤 분석 작업을 대기열에 등록한다.
@@ -49,6 +51,7 @@ public class AnalysisJobService {
                 projectId,
                 userId
         );
+        nodeIdentity.requireLocalWorker();
 
         if (requirementVersionId != null) {
             requirementService.assertVersionBelongsToProject(

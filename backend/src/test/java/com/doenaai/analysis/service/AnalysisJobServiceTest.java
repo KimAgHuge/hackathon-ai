@@ -1,5 +1,6 @@
 package com.doenaai.analysis.service;
 
+import com.doenaai.analysis.AnalysisNodeIdentity;
 import com.doenaai.analysis.dto.AnalysisJobResponse;
 import com.doenaai.analysis.dto.ReusableEvidence;
 import com.doenaai.analysis.repository.AnalysisJobRepository;
@@ -64,8 +65,22 @@ class AnalysisJobServiceTest {
                 projectService,
                 gitService,
                 requirementService,
-                analysisWorker
+                analysisWorker,
+                new AnalysisNodeIdentity(true, "test-backend-instance")
         );
+    }
+
+    @Test
+    void disabledWorkerRejectsAnalysisBeforeReadingCredentials() {
+        analysisJobService = new AnalysisJobService(analysisJobRepository, analysisResultRepository,
+                projectService, gitService, requirementService, analysisWorker,
+                new AnalysisNodeIdentity(false, "test-backend-instance"));
+
+        assertThatThrownBy(() -> analysisJobService.createProjectScan(
+                UUID.randomUUID(), null, UUID.randomUUID()))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("503 SERVICE_UNAVAILABLE");
+        verifyNoInteractions(gitService, analysisJobRepository);
     }
 
     @Test

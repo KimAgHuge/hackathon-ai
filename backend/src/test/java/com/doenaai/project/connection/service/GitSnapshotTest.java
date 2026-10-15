@@ -8,6 +8,8 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.file.FileSystemException;
+import java.nio.file.DirectoryNotEmptyException;
+import java.nio.file.AccessDeniedException;
 import java.nio.file.Files;
 import java.nio.file.FileVisitResult;
 import java.nio.file.NoSuchFileException;
@@ -18,6 +20,19 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 class GitSnapshotTest {
     @TempDir Path root;
+
+    @Test void cleanupFailureKeepsOnlySafeCodeAndArea() {
+        var sourceFailure = GitRepositoryConnectionService.SnapshotCleanupException.from(root,
+                new AccessDeniedException(root.resolve("source/private-token.sql").toString()));
+        assertThat(sourceFailure.code()).isEqualTo("GIT_CLEANUP_ACCESS_DENIED");
+        assertThat(sourceFailure.area()).isEqualTo("SOURCE");
+        assertThat(sourceFailure.getMessage()).doesNotContain(root.toString(), "private-token");
+
+        var rootFailure = GitRepositoryConnectionService.SnapshotCleanupException.from(root,
+                new DirectoryNotEmptyException(root.toString()));
+        assertThat(rootFailure.code()).isEqualTo("GIT_CLEANUP_DIRECTORY_NOT_EMPTY");
+        assertThat(rootFailure.area()).isEqualTo("ROOT");
+    }
 
     @Test void exportsRequestedCommitNotLatest() throws Exception {
         Path repository = Files.createDirectory(root.resolve("repo"));

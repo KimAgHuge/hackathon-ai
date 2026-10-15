@@ -22,6 +22,7 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 
@@ -52,14 +53,21 @@ public class RequirementFollowUpService {
         versions.lockRequirement(requirementId);
         var current = versions.findCurrent(requirementId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT, "현재 요구사항 버전을 찾을 수 없습니다."));
-        if (!current.id().equals(request.expectedVersionId())) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "요구사항 버전이 변경되었습니다. 새로고침 후 다시 작성해 주세요.");
-        }
         var job = jobs.findById(request.sourceAnalysisJobId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "이전 분석을 찾을 수 없습니다."));
         if (!"COMPLETED".equals(job.status()) || !requirement.getProjectId().equals(job.projectId())
-                || !current.id().equals(job.requirementVersionId())) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "현재 요구사항 버전의 완료된 분석만 이어서 질문할 수 있습니다.");
+                || !request.expectedVersionId().equals(job.requirementVersionId())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "완료된 원본 분석의 질문만 이어서 답할 수 있습니다.");
+        }
+        boolean retryAfterInterruptedAnalysis = !current.id().equals(request.expectedVersionId())
+                && job.jobId().equals(current.sourceAnalysisJobId());
+        if (!current.id().equals(request.expectedVersionId()) && !retryAfterInterruptedAnalysis) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "요구사항이 다른 경로로 변경되었습니다. 최신 버전에서 다시 확인해 주세요.");
+        }
+        if (retryAfterInterruptedAnalysis && jobs.hasActiveOrCompletedAnalysis(current.id())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "현재 버전의 분석이 진행 중이거나 완료됐습니다. 해당 분석에서 질문을 이어가 주세요.");
         }
         var result = results.findByJobId(job.jobId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "이전 분석 결과를 찾을 수 없습니다."));
@@ -75,6 +83,7 @@ public class RequirementFollowUpService {
         }
 
         List<Object> clarifications = new ArrayList<>(current.clarifications());
+        boolean changed = false;
         Set<Integer> seen = new HashSet<>();
         String createdAt = OffsetDateTime.now(ZoneOffset.UTC).toString();
         for (var answer : answers) {
@@ -83,19 +92,33 @@ public class RequirementFollowUpService {
                     || question.isBlank()) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "확인 질문 번호가 올바르지 않습니다.");
             }
+            String questionKey = job.jobId() + ":" + index;
+            String answerText = answer.answer().trim();
+            boolean sameAnswer = clarifications.stream().anyMatch(item -> item instanceof Map<?, ?> entry
+                    && Objects.equals(entry.get("questionKey"), questionKey)
+                    && Objects.equals(entry.get("answer"), answerText));
+            if (sameAnswer) continue;
+            // 취소·실패한 분석에 남긴 답변을 수정하면 새 버전에 최신 답변만 담고 과거 버전은 보존한다.
+            clarifications.removeIf(item -> item instanceof Map<?, ?> entry
+                    && Objects.equals(entry.get("questionKey"), questionKey));
             Map<String, Object> entry = new LinkedHashMap<>();
             entry.put("id", UUID.randomUUID().toString());
             entry.put("kind", "AI_QUESTION_ANSWER");
             entry.put("sourceAnalysisJobId", job.jobId().toString());
             entry.put("questionIndex", index);
-            entry.put("questionKey", job.jobId() + ":" + index);
+            entry.put("questionKey", questionKey);
             entry.put("question", question);
-            entry.put("answer", answer.answer().trim());
+            entry.put("answer", answerText);
             entry.put("createdBy", userId.toString());
             entry.put("createdAt", createdAt);
             clarifications.add(entry);
+            changed = true;
         }
-        if (!followUpQuestion.isEmpty()) {
+        boolean sameQuestion = clarifications.stream().anyMatch(item -> item instanceof Map<?, ?> entry
+                && Objects.equals(entry.get("kind"), "USER_QUESTION")
+                && Objects.equals(entry.get("sourceAnalysisJobId"), job.jobId().toString())
+                && Objects.equals(entry.get("question"), followUpQuestion));
+        if (!followUpQuestion.isEmpty() && !sameQuestion) {
             Map<String, Object> entry = new LinkedHashMap<>();
             entry.put("id", UUID.randomUUID().toString());
             entry.put("kind", "USER_QUESTION");
@@ -104,7 +127,10 @@ public class RequirementFollowUpService {
             entry.put("createdBy", userId.toString());
             entry.put("createdAt", createdAt);
             clarifications.add(entry);
+            changed = true;
         }
+        // 같은 답변을 다시 제출했다면 새 버전을 늘리지 않고 저장된 버전으로 분석만 재시도한다.
+        if (retryAfterInterruptedAnalysis && !changed) return RequirementVersionResponse.from(current, false);
         var snapshot = new RequirementVersionCreateRequest(current.title(), current.originalContent(),
                 current.refinedContent(), current.acceptanceCriteria(), current.attachmentsMetadata(),
                 "이전 분석의 확인 질문 답변 및 추가 질문");

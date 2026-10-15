@@ -1,5 +1,6 @@
 package com.doenaai.analysis.repository;
 
+import com.doenaai.analysis.AnalysisNodeIdentity;
 import com.doenaai.analysis.dto.AnalysisJobResponse;
 import com.doenaai.analysis.dto.AnalysisActivityEvent;
 import com.doenaai.analysis.dto.AnalysisWorkItem;
@@ -22,6 +23,7 @@ public class AnalysisJobRepository {
 
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
+    private final AnalysisNodeIdentity nodeIdentity;
     private static final TypeReference<List<AnalysisActivityEvent>> ACTIVITY_LOG = new TypeReference<>() {};
 
     /** 프로젝트·요구사항 버전·Git 커밋을 고정한 PENDING 작업을 생성해 반환한다. */
@@ -41,14 +43,16 @@ public class AnalysisJobRepository {
                     requested_by,
                     analysis_type,
                     status,
+                    target_worker_id,
                     input_snapshot
                 )
                 values (
                     ?,
                     ?,
                     ?,
-                    'PROJECT_SCAN',
+                    'PROJECT_SCAN_V2',
                     'PENDING',
+                    ?,
                     jsonb_build_object(
                         'sourceType', 'GIT',
                         'repositoryUrl', ?,
@@ -71,6 +75,7 @@ public class AnalysisJobRepository {
                 projectId,
                 requirementVersionId,
                 requestedBy,
+                nodeIdentity.instanceId(),
                 repositoryUrl,
                 branch,
                 commitSha
@@ -83,9 +88,10 @@ public class AnalysisJobRepository {
         return jdbcTemplate.queryForObject("""
                 insert into public.analysis_jobs (
                     project_id, requirement_version_id, requested_by, analysis_type, status,
+                    target_worker_id,
                     input_snapshot, analysis_options
                 )
-                select j.project_id, ?, ?, 'PROJECT_SCAN', 'PENDING', j.input_snapshot,
+                select j.project_id, ?, ?, 'PROJECT_SCAN_V2', 'PENDING', ?, j.input_snapshot,
                        jsonb_build_object('reuseMode', 'STORED', 'userConfirmedUnchanged', true,
                                           'reuseFromJobId', j.id::text,
                                           'evidenceReusedFromJobId', j.id::text)
@@ -95,7 +101,7 @@ public class AnalysisJobRepository {
                     source_progress, database_progress, relation_progress,
                     created_at, error_message, started_at, completed_at,
                     analysis_options -> 'activityLog' as activity_log
-                """, this::mapRow, requirementVersionId, requestedBy, sourceJobId, projectId);
+                """, this::mapRow, requirementVersionId, requestedBy, nodeIdentity.instanceId(), sourceJobId, projectId);
     }
 
     public Optional<AnalysisJobResponse> findById(
@@ -156,19 +162,20 @@ public class AnalysisJobRepository {
         );
     }
 
-    /** Claim and commit before any remote IO; competing workers cannot claim the same row. */
+    /** 요청을 받은 백엔드의 작업만 선점한다. 원격 호출 전에 선점 결과를 저장한다. */
     @Transactional
     public Optional<AnalysisWorkItem> claimNext() {
         return jdbcTemplate.query("""
                 with candidate as (
                     select id from public.analysis_jobs
-                    where status = 'PENDING' and analysis_type = 'PROJECT_SCAN'
+                    where status = 'PENDING' and analysis_type = 'PROJECT_SCAN_V2'
+                      and target_worker_id = ?
                     order by created_at, id
                     for update skip locked limit 1
                 )
                 update public.analysis_jobs j
                 set status = 'RUNNING', started_at = now(), updated_at = now(),
-                    error_message = null
+                    error_message = null, claimed_by_worker_id = ?
                 from candidate c where j.id = c.id
                 returning j.id, j.project_id, j.requirement_version_id, j.requested_by,
                     j.input_snapshot ->> 'repositoryUrl' as repository_url,
@@ -180,7 +187,7 @@ public class AnalysisJobRepository {
                 rs.getObject("requirement_version_id", UUID.class), rs.getObject("requested_by", UUID.class),
                 rs.getString("repository_url"), rs.getString("branch"), rs.getString("commit_sha"),
                 rs.getString("reuse_from_job_id") == null ? null : UUID.fromString(rs.getString("reuse_from_job_id"))
-        )).stream().findFirst();
+        ), nodeIdentity.instanceId(), nodeIdentity.instanceId()).stream().findFirst();
     }
 
     /** RUNNING 작업의 세 수집 단계 진행률(0~100)을 갱신한다. */
@@ -248,7 +255,19 @@ public class AnalysisJobRepository {
                 """, Boolean.class, jobId));
     }
 
-    /** Recover abandoned work after a process crash; never retry a remote call automatically. */
+    /** 현재 버전에 진행 중이거나 완료된 분석이 있으면 이전 결과의 질문을 다시 이어 쓰지 않는다. */
+    public boolean hasActiveOrCompletedAnalysis(UUID requirementVersionId) {
+        return Boolean.TRUE.equals(jdbcTemplate.queryForObject("""
+                select exists (
+                    select 1 from public.analysis_jobs
+                    where requirement_version_id = ?
+                      and analysis_type in ('PROJECT_SCAN', 'PROJECT_SCAN_V2')
+                      and status in ('PENDING', 'RUNNING', 'COMPLETED')
+                )
+                """, Boolean.class, requirementVersionId));
+    }
+
+    /** 중단된 실행 작업은 다른 서버에서 재처리하지 않고 제한 시간 후 실패로 끝낸다. */
     public void failStale(int timeoutSeconds) {
         jdbcTemplate.update("""
                 update public.analysis_jobs set status = 'FAILED',
@@ -258,7 +277,7 @@ public class AnalysisJobRepository {
                         coalesce(analysis_options -> 'activityLog', '[]'::jsonb)
                         || jsonb_build_array(jsonb_build_object('at', now(), 'label',
                             '분석 처리 시간이 초과되었거나 서버가 중단되었습니다.', 'state', 'FAILED')), true)
-                where status = 'RUNNING' and analysis_type = 'PROJECT_SCAN'
+                where status = 'RUNNING' and analysis_type = 'PROJECT_SCAN_V2'
                   and updated_at < now() - (? * interval '1 second')
                 """, timeoutSeconds);
     }

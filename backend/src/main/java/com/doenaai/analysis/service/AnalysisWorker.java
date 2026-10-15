@@ -1,5 +1,6 @@
 package com.doenaai.analysis.service;
 
+import com.doenaai.analysis.AnalysisNodeIdentity;
 import com.doenaai.analysis.dto.AnalysisWorkItem;
 import com.doenaai.analysis.repository.AnalysisJobRepository;
 import com.doenaai.analysis.repository.AnalysisResultRepository;
@@ -8,6 +9,7 @@ import com.doenaai.project.connection.service.GitRepositoryConnectionService;
 import com.doenaai.project.service.ProjectService;
 import com.doenaai.requirement.repository.RequirementVersionRepository;
 import com.doenaai.requirement.service.RequirementService;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -32,7 +34,7 @@ import java.util.concurrent.TimeUnit;
 @Slf4j
 @Service
 @RequiredArgsConstructor
-@ConditionalOnProperty(name = "doenaai.analysis.worker-enabled", havingValue = "true", matchIfMissing = true)
+@ConditionalOnProperty(name = "doenaai.analysis.worker-enabled", havingValue = "true")
 public class AnalysisWorker {
     private static final int MAX_CLARIFICATION_CONTEXT_CHARS = 12_000;
     private static final ScheduledExecutorService ACTIVITY_HEARTBEATS =
@@ -65,11 +67,17 @@ public class AnalysisWorker {
     private final RequirementVersionRepository versions;
     private final AnalysisPromptBuilder prompts;
     private final AiAnalysisClient ai;
+    private final AnalysisNodeIdentity nodeIdentity;
     private final ConcurrentMap<UUID, Thread> activeThreads = new ConcurrentHashMap<>();
     @Value("${doenaai.analysis.stale-timeout-seconds:1800}")
     private int staleTimeoutSeconds = 1800;
     @Value("${doenaai.ai-server.timeout-seconds:660}")
     private int aiTimeoutSeconds = 660;
+
+    @PostConstruct
+    void logWorkerReady() {
+        log.info("Analysis worker ready: instanceId={}", nodeIdentity.instanceId());
+    }
 
     /** 대기 작업을 하나 선점한다. 원격 호출 중에는 DB 트랜잭션을 유지하지 않는다. */
     @Scheduled(fixedDelayString = "${doenaai.analysis.poll-delay-ms:2500}", initialDelayString = "5000")
@@ -86,7 +94,7 @@ public class AnalysisWorker {
     void process(AnalysisWorkItem job) {
         UUID jobId = job.jobId();
         activeThreads.put(jobId, Thread.currentThread());
-        log.info("Analysis started: jobId={}", jobId);
+        log.info("Analysis started: jobId={}, instanceId={}", jobId, nodeIdentity.instanceId());
         String stage = "프로젝트 접근 권한 확인";
         long stageStartedNanos = startStage(jobId, stage);
         try {
@@ -166,6 +174,8 @@ public class AnalysisWorker {
                     sourceSummary.put("analysisScope", job.requirementVersionId() == null
                             ? "PROJECT_STRUCTURE_SCAN" : "REQUIREMENT_IMPACT");
                     completeStage(jobId, stage, stageStartedNanos);
+                    // Git 수집뿐 아니라 소스와 DB 참조 조사까지 끝난 시점에 소스 단계를 완료로 기록한다.
+                    jobs.progress(job.jobId(), 100, 100, 0);
                     stage = "요구사항 버전 확인";
                     stageStartedNanos = startStage(jobId, stage);
                     addRequirement(job, sourceSummary);
@@ -221,10 +231,17 @@ public class AnalysisWorker {
                 return;
             }
             // JDBC/Git/HTTP exception messages can contain credentials. Do not log them or stack traces.
-            log.warn("Analysis failed: jobId={}, stage={}, exception={}",
-                    job.jobId(), stage, exception.getClass().getSimpleName());
+            var cleanupFailure = exception instanceof GitRepositoryConnectionService.SnapshotCleanupException classified
+                    ? classified : null;
+            String failureCode = cleanupFailure != null ? cleanupFailure.code()
+                    : "Git 임시 파일 정리".equals(stage) ? "GIT_CLEANUP_UNCLASSIFIED" : "ANALYSIS_STAGE_FAILURE";
+            String failureArea = cleanupFailure == null ? "NOT_APPLICABLE" : cleanupFailure.area();
+            log.warn("Analysis failed: jobId={}, stage={}, exception={}, code={}, area={}, instanceId={}",
+                    job.jobId(), stage, exception.getClass().getSimpleName(), failureCode, failureArea, nodeIdentity.instanceId());
             try {
-                jobs.fail(job.jobId(), stage + " 단계에서 실패했습니다. 설정을 확인한 뒤 새 분석을 시작하세요.");
+                jobs.fail(job.jobId(), stage + " 단계에서 실패했습니다. 오류 코드: " + failureCode
+                        + (cleanupFailure == null ? "" : ", 정리 영역: " + failureArea)
+                        + ", 처리 인스턴스: " + nodeIdentity.instanceId() + ".");
             } catch (Exception persistenceException) {
                 log.error("Analysis failure status update failed: jobId={}, stage={}, exception={}",
                         job.jobId(), stage, persistenceException.getClass().getSimpleName());

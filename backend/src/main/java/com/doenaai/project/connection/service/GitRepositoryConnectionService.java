@@ -499,7 +499,55 @@ public class GitRepositoryConnectionService {
     public record GitSnapshot(Path path, Path ownedRoot) implements AutoCloseable {
         @Override
         public void close() throws IOException {
-            GitAuthenticationContext.deleteDirectory(ownedRoot);
+            try {
+                GitAuthenticationContext.deleteDirectory(ownedRoot);
+            } catch (IOException exception) {
+                throw SnapshotCleanupException.from(ownedRoot, exception);
+            } catch (java.io.UncheckedIOException exception) {
+                throw SnapshotCleanupException.from(ownedRoot, exception.getCause());
+            }
+        }
+    }
+
+    /** 파일명·경로·예외 원문을 노출하지 않고 임시 스냅샷 정리 실패를 분류한다. */
+    public static final class SnapshotCleanupException extends IOException {
+        private final String code;
+        private final String area;
+
+        private SnapshotCleanupException(String code, String area, IOException cause) {
+            super("Snapshot cleanup failed.", cause);
+            this.code = code;
+            this.area = area;
+        }
+
+        public String code() {
+            return code;
+        }
+
+        public String area() {
+            return area;
+        }
+
+        public static SnapshotCleanupException from(Path root, IOException cause) {
+            String code = cause instanceof java.nio.file.AccessDeniedException ? "GIT_CLEANUP_ACCESS_DENIED"
+                    : cause instanceof java.nio.file.DirectoryNotEmptyException ? "GIT_CLEANUP_DIRECTORY_NOT_EMPTY"
+                    : cause instanceof java.nio.file.NoSuchFileException ? "GIT_CLEANUP_PATH_DISAPPEARED"
+                    : cause instanceof java.nio.file.FileSystemException ? "GIT_CLEANUP_FILESYSTEM_ERROR"
+                    : "GIT_CLEANUP_IO_ERROR";
+            String area = "UNKNOWN";
+            if (root != null && cause instanceof java.nio.file.FileSystemException fileError && fileError.getFile() != null) {
+                try {
+                    Path owned = root.toAbsolutePath().normalize();
+                    Path failed = Path.of(fileError.getFile()).toAbsolutePath().normalize();
+                    if (failed.equals(owned)) area = "ROOT";
+                    else if (failed.startsWith(owned.resolve("source"))) area = "SOURCE";
+                    else if (failed.startsWith(owned.resolve("objects.git"))) area = "GIT_OBJECTS";
+                    else if (failed.startsWith(owned)) area = "OTHER";
+                } catch (RuntimeException ignored) {
+                    // 잘못된 경로 문자열도 로그에 출력하지 않고 분류만 포기한다.
+                }
+            }
+            return new SnapshotCleanupException(code, area, cause);
         }
     }
 

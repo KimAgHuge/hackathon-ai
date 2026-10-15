@@ -1,5 +1,6 @@
 package com.doenaai.analysis.service;
 
+import com.doenaai.analysis.AnalysisNodeIdentity;
 import com.doenaai.analysis.dto.AnalysisWorkItem;
 import com.doenaai.analysis.dto.ReusableEvidence;
 import com.doenaai.analysis.repository.AnalysisJobRepository;
@@ -18,6 +19,7 @@ import org.springframework.boot.test.system.OutputCaptureExtension;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.nio.file.Files;
+import java.nio.file.DirectoryNotEmptyException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -40,6 +42,7 @@ class AnalysisWorkerTest {
     final RequirementService requirements = mock(RequirementService.class);
     final RequirementVersionRepository versions = mock(RequirementVersionRepository.class);
     final AiAnalysisClient ai = mock(AiAnalysisClient.class);
+    final AnalysisNodeIdentity nodeIdentity = new AnalysisNodeIdentity(true, "test-backend-instance");
     final AnalysisWorkItem job = new AnalysisWorkItem(UUID.randomUUID(), UUID.randomUUID(), null,
             UUID.randomUUID(), "https://github.com/example/repository.git", "main", "a".repeat(40));
     AnalysisWorker worker;
@@ -47,10 +50,18 @@ class AnalysisWorkerTest {
 
     @BeforeEach void setup() throws Exception {
         worker = new AnalysisWorker(jobs, results, projects, git, database, source, requirements, versions,
-                new AnalysisPromptBuilder(JsonMapper.builder().build(), AnalysisPromptBuilder.DEFAULT_MAX_CHARS), ai);
+                new AnalysisPromptBuilder(JsonMapper.builder().build(), AnalysisPromptBuilder.DEFAULT_MAX_CHARS),
+                ai, nodeIdentity);
         checkout = Files.createDirectory(directory.resolve("checkout"));
         when(git.checkoutSnapshot(job.projectId(), job.requestedBy(), job.repositoryUrl(), job.branch(), job.commitSha()))
                 .thenReturn(new GitRepositoryConnectionService.GitSnapshot(checkout, checkout));
+    }
+
+    @Test void onlyReceivingBackendInstancePollsItsOwnQueue() {
+        worker.logWorkerReady();
+        worker.poll();
+        verify(jobs).failStale(1800);
+        verify(jobs).claimNext();
     }
 
     @Test void collectsRealFactsCompletesAndDeletesCheckoutBeforeModelCall(CapturedOutput output) throws Exception {
@@ -75,6 +86,7 @@ class AnalysisWorkerTest {
         var sequence = inOrder(jobs, results);
         sequence.verify(jobs).progress(job.jobId(), 40, 0, 0);
         sequence.verify(jobs).progress(job.jobId(), 40, 100, 0);
+        sequence.verify(jobs).progress(job.jobId(), 100, 100, 0);
         sequence.verify(jobs).progress(job.jobId(), 100, 100, 40);
         sequence.verify(jobs).progress(job.jobId(), 100, 100, 90);
         sequence.verify(results).complete(eq(job.jobId()), eq(result), anyMap());
@@ -129,6 +141,8 @@ class AnalysisWorkerTest {
 
         verify(jobs, never()).progress(any(), anyInt(), anyInt(), anyInt());
         verify(jobs).fail(eq(job.jobId()), argThat(message -> message.contains("Git 커밋 소스 수집")
+                && message.contains("오류 코드: ANALYSIS_STAGE_FAILURE")
+                && message.contains("처리 인스턴스:")
                 && !message.contains("unsafe-fixture")));
         verifyNoInteractions(database, source, ai);
         verify(results, never()).complete(any(), anyMap(), anyMap());
@@ -136,6 +150,29 @@ class AnalysisWorkerTest {
                         + ", stage=Git 커밋 소스 수집",
                 "Analysis failed: jobId=" + job.jobId() + ", stage=Git 커밋 소스 수집")
                 .doesNotContain("unsafe-fixture");
+    }
+
+    @Test void cleanupFailureRecordsSafeCodeAreaAndWorkerInstance(CapturedOutput output) throws Exception {
+        var snapshot = mock(GitRepositoryConnectionService.GitSnapshot.class);
+        when(snapshot.path()).thenReturn(checkout);
+        doThrow(GitRepositoryConnectionService.SnapshotCleanupException.from(checkout,
+                new DirectoryNotEmptyException(checkout.resolve("source/private-token.sql").toString())))
+                .when(snapshot).close();
+        when(git.checkoutSnapshot(job.projectId(), job.requestedBy(), job.repositoryUrl(), job.branch(), job.commitSha()))
+                .thenReturn(snapshot);
+        var db = Map.<String, Object>of("tables", List.of());
+        when(database.collect(job.projectId())).thenReturn(db);
+        when(source.collect(checkout, db)).thenReturn(new SourceEvidenceCollector.ScanResult(Map.of(), List.of()));
+
+        worker.process(job);
+
+        verify(jobs).fail(eq(job.jobId()), argThat(message -> message.contains("GIT_CLEANUP_DIRECTORY_NOT_EMPTY")
+                && message.contains("정리 영역: SOURCE")
+                && message.contains("처리 인스턴스:")
+                && !message.contains("private-token.sql")));
+        verifyNoInteractions(ai);
+        assertThat(output.getAll()).contains("stage=Git 임시 파일 정리", "code=GIT_CLEANUP_DIRECTORY_NOT_EMPTY", "area=SOURCE")
+                .doesNotContain("private-token.sql");
     }
 
     @Test void revokedProjectAccessStopsBeforeCredentialUse() {
