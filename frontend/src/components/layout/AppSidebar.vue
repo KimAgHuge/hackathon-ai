@@ -65,8 +65,8 @@ const visibleMenus = computed(() => {
     return menus.filter((menu) => authStore.hasPermission(menu.permission))
 })
 
-const displayName = computed(() => authStore.currentUser?.displayName || '사용자')
-const email = computed(() => authStore.currentUser?.email || '-')
+const displayName = computed(() => authStore.currentUser?.displayName || (authStore.profileError ? '권한 확인 실패' : '권한 확인 중'))
+const email = computed(() => authStore.currentUser?.email || '')
 const initial = computed(() => displayName.value.slice(0, 1))
 
 const handleLogout = async () => {
@@ -109,6 +109,15 @@ const handleLogout = async () => {
                 </svg>
                 <span>{{ menu.label }}</span>
             </RouterLink>
+            <p v-if="visibleMenus.length === 0" class="rounded-lg px-3 py-2 text-xs leading-5 text-slate-300">
+                {{
+                    authStore.currentUser
+                        ? '표시할 메뉴 권한이 없습니다.'
+                        : authStore.profileError
+                          ? '권한 정보를 불러오지 못했습니다.'
+                          : '메뉴 권한을 확인하고 있습니다.'
+                }}
+            </p>
         </nav>
 
         <div class="mt-auto border-t border-slate-700/70 pt-4">

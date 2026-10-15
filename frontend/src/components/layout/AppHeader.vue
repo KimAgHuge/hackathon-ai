@@ -12,7 +12,9 @@ const themeStore = useThemeStore()
 
 const breadcrumb = computed(() => route.meta.breadcrumb || route.meta.title || '')
 const themeButtonLabel = computed(() => (themeStore.isDark ? '라이트 모드로 전환' : '다크 모드로 전환'))
-const roleLabel = computed(() => authStore.roles.join(', ') || 'USER')
+const roleLabel = computed(
+    () => authStore.roles.join(', ') || (authStore.profileError ? '권한 조회 실패' : authStore.currentUser ? '역할 없음' : '권한 확인 중')
+)
 </script>
 
 <template>

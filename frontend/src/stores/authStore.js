@@ -1,6 +1,7 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { getCurrentUser } from '@/api/authApi'
+import { getProfileErrorMessage, loadProfileWithRetry } from '@/lib/authProfile'
 import { isSupabaseConfigured, supabase } from '@/lib/supabase'
 
 const AUTH_MODE = import.meta.env.VITE_AUTH_MODE || 'mock'
@@ -61,9 +62,14 @@ export const useAuthStore = defineStore('auth', () => {
     const initialized = ref(false)
     const loading = ref(false)
     const errorMessage = ref('')
+    const profileLoading = ref(false)
+    const profileError = ref('')
 
     let authSubscription = null
     let initializePromise = null
+    let profileLoadPromise = null
+    let profileLoadUserId = null
+    let profileGeneration = 0
 
     const isMockAuth = computed(() => AUTH_MODE === 'mock')
     const isAuthenticated = computed(() => Boolean(session.value))
@@ -76,6 +82,22 @@ export const useAuthStore = defineStore('auth', () => {
         return permissions.value.includes(permission)
     }
 
+    // 계정이 바뀌거나 로그아웃하면 이전 계정의 권한과 진행 중인 조회 결과를 무효화한다.
+    const setSession = (nextSession) => {
+        const previousUserId = session.value?.user?.id
+        const nextUserId = nextSession?.user?.id
+        session.value = nextSession
+
+        if (!nextSession || previousUserId !== nextUserId) {
+            profileGeneration += 1
+            profileLoadPromise = null
+            profileLoadUserId = null
+            currentUser.value = null
+            profileLoading.value = false
+            profileError.value = ''
+        }
+    }
+
     // 세션의 사용자로 Backend 프로필(실 API) 또는 데모 프로필을 불러와 반환한다.
     const loadCurrentUser = async () => {
         if (!session.value) {
@@ -83,13 +105,42 @@ export const useAuthStore = defineStore('auth', () => {
             return null
         }
 
-        if (PROFILE_SOURCE === 'backend' && !isMockAuth.value) {
-            currentUser.value = await getCurrentUser()
-            return currentUser.value
-        }
+        const userId = session.value.user?.id
+        if (profileLoadPromise && profileLoadUserId === userId) return profileLoadPromise
 
-        currentUser.value = buildMockProfile(session.value.user)
-        return currentUser.value
+        const requestGeneration = profileGeneration
+        profileLoading.value = true
+        profileError.value = ''
+
+        const request = (async () => {
+            try {
+                const profile =
+                    PROFILE_SOURCE === 'backend' && !isMockAuth.value
+                        ? await loadProfileWithRetry(getCurrentUser)
+                        : await Promise.resolve(buildMockProfile(session.value.user))
+
+                if (profileGeneration === requestGeneration && session.value?.user?.id === userId) {
+                    currentUser.value = profile
+                }
+                return profile
+            } catch (error) {
+                if (profileGeneration === requestGeneration) {
+                    currentUser.value = null
+                    profileError.value = getProfileErrorMessage(error)
+                }
+                throw error
+            } finally {
+                if (profileGeneration === requestGeneration) profileLoading.value = false
+                if (profileLoadPromise === request) {
+                    profileLoadPromise = null
+                    profileLoadUserId = null
+                }
+            }
+        })()
+
+        profileLoadPromise = request
+        profileLoadUserId = userId
+        return request
     }
 
     const initializeMockSession = async () => {
@@ -98,12 +149,11 @@ export const useAuthStore = defineStore('auth', () => {
         if (!storedSession) return
 
         try {
-            session.value = JSON.parse(storedSession)
+            setSession(JSON.parse(storedSession))
             await loadCurrentUser()
         } catch {
             window.localStorage.removeItem(MOCK_SESSION_KEY)
-            session.value = null
-            currentUser.value = null
+            setSession(null)
         }
     }
 
@@ -114,28 +164,27 @@ export const useAuthStore = defineStore('auth', () => {
 
         if (error) throw error
 
-        session.value = data.session
-
-        if (session.value) {
-            await loadCurrentUser()
-        }
+        setSession(data.session)
 
         const { data: listener } = supabase.auth.onAuthStateChange((event, nextSession) => {
-            session.value = nextSession
+            setSession(nextSession)
 
-            if (!nextSession) {
-                currentUser.value = null
-                return
-            }
+            if (!nextSession) return
 
             window.setTimeout(() => {
                 loadCurrentUser().catch(() => {
-                    currentUser.value = null
+                    // 조회 실패 상태는 store에 남기고 권한이 확인되지 않은 화면은 숨긴다.
                 })
             }, 0)
         })
 
         authSubscription = listener.subscription
+
+        if (session.value) {
+            await loadCurrentUser().catch(() => {
+                // 세션은 유지하고 화면에서 권한 정보 재조회를 안내한다.
+            })
+        }
     }
 
     // 앱 시작 시 저장된 세션을 한 번 복원하고 중복 초기화 요청을 합친다.
@@ -167,7 +216,7 @@ export const useAuthStore = defineStore('auth', () => {
             throw new Error('이메일 또는 비밀번호가 올바르지 않습니다.')
         }
 
-        session.value = createMockSession(email)
+        setSession(createMockSession(email))
         window.localStorage.setItem(MOCK_SESSION_KEY, JSON.stringify(session.value))
         await loadCurrentUser()
     }
@@ -184,7 +233,7 @@ export const useAuthStore = defineStore('auth', () => {
 
         if (error) throw error
 
-        session.value = data.session
+        setSession(data.session)
         await loadCurrentUser()
     }
 
@@ -202,7 +251,7 @@ export const useAuthStore = defineStore('auth', () => {
 
             return currentUser.value
         } catch (error) {
-            errorMessage.value = error instanceof Error ? error.message : '로그인에 실패했습니다.'
+            errorMessage.value = profileError.value || (error instanceof Error ? error.message : '로그인에 실패했습니다.')
 
             throw error
         } finally {
@@ -224,8 +273,7 @@ export const useAuthStore = defineStore('auth', () => {
                 if (error) throw error
             }
 
-            session.value = null
-            currentUser.value = null
+            setSession(null)
         } finally {
             loading.value = false
         }
@@ -242,6 +290,8 @@ export const useAuthStore = defineStore('auth', () => {
         initialized,
         loading,
         errorMessage,
+        profileLoading,
+        profileError,
         isMockAuth,
         isAuthenticated,
         roles,
