@@ -1,6 +1,6 @@
 <script setup>
-import { computed, reactive, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute } from 'vue-router'
 import {
     getDatabaseConnection,
     getGitRepositoryConnection,
@@ -9,7 +9,10 @@ import {
     testDatabaseConnection,
     testGitRepositoryConnection,
 } from '@/api/projectConnectionApi'
-import { getProjectById, updateProject } from '@/api/projectApi'
+import { getProjectById, isProjectDemoMode, updateProject } from '@/api/projectApi'
+import { buildProjectUpdatePayload, projectErrorMessage, projectForm as metadataForm } from '@/lib/projectManagement'
+import { createProjectActionRunner, createProjectRequestScope } from '@/lib/projectRequests'
+import { useAuthStore } from '@/stores/authStore'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseInput from '@/components/base/BaseInput.vue'
 import BaseSelect from '@/components/base/BaseSelect.vue'
@@ -18,6 +21,8 @@ import ViewHeading from '@/components/common/ViewHeading.vue'
 import { DATABASE_TYPES, GIT_AUTH_TYPES, GIT_PROVIDER_TYPES, getDatabaseTypeOption } from '@/constants/projectConnectionOptions'
 
 const route = useRoute()
+const authStore = useAuthStore()
+const requests = createProjectRequestScope()
 const projectId = computed(() => String(route.params.projectId || ''))
 const project = ref(null)
 const gitConnection = ref(null)
@@ -36,7 +41,6 @@ const savingGit = ref(false)
 const testingDatabase = ref(false)
 const savingDatabase = ref(false)
 const busy = computed(() => savingMetadata.value || testingGit.value || savingGit.value || testingDatabase.value || savingDatabase.value)
-let loadSequence = 0
 let gitRevision = 0
 let databaseRevision = 0
 const testedGit = ref(null)
@@ -63,53 +67,108 @@ const gitTestValid = computed(() => testedGit.value?.revision === gitRevision &&
 const databaseTestValid = computed(() => testedDatabase.value === databaseRevision)
 const failureMessage = (error, fallback) => error?.response?.data?.message || error?.response?.data?.detail || error?.message || fallback
 
-watch(gitForm, () => {
-    gitRevision += 1
-    testedGit.value = null
-    gitNotice.value = ''
+watch(
+    gitForm,
+    () => {
+        gitRevision += 1
+        testedGit.value = null
+        gitNotice.value = ''
+    },
+    { flush: 'sync' }
+)
+watch(
+    databaseForm,
+    () => {
+        databaseRevision += 1
+        testedDatabase.value = null
+        databaseNotice.value = ''
+    },
+    { flush: 'sync' }
+)
+
+const baselines = reactive({ metadata: '', git: '', database: '' })
+const snapshot = (value) => JSON.stringify(value)
+const dirty = computed(() =>
+    Boolean(
+        project.value &&
+        !loading.value &&
+        (snapshot(projectForm) !== baselines.metadata || snapshot(gitForm) !== baselines.git || snapshot(databaseForm) !== baselines.database)
+    )
+)
+const runAction = createProjectActionRunner({
+    scope: requests,
+    canEdit: () => authStore.hasPermission('PROJECT_UPDATE'),
+    isReady: () => Boolean(project.value && !loading.value && project.value.id === projectId.value),
+    onDenied: () => {
+        metadataError.value = '프로젝트를 수정할 권한이 없습니다.'
+    },
 })
-watch(databaseForm, () => {
-    databaseRevision += 1
-    testedDatabase.value = null
-    databaseNotice.value = ''
+const action = (pending, error, execute, onSuccess) =>
+    runAction({
+        execute,
+        onSuccess,
+        onError: (failure) => {
+            error.value = projectErrorMessage(failure)
+        },
+        onPending: (value) => {
+            pending.value = value
+        },
+    })
+const confirmNavigation = () => {
+    if (busy.value) return false
+    return !dirty.value || window.confirm('저장하지 않은 변경사항이 있습니다. 이동하시겠습니까?')
+}
+const beforeUnload = (event) => {
+    if (!busy.value && !dirty.value) return
+    event.preventDefault()
+    event.returnValue = ''
+}
+window.addEventListener('beforeunload', beforeUnload)
+onBeforeRouteLeave(confirmNavigation)
+onBeforeRouteUpdate(confirmNavigation)
+onBeforeUnmount(() => {
+    requests.dispose()
+    window.removeEventListener('beforeunload', beforeUnload)
 })
 
 const loadProject = async () => {
-    const sequence = ++loadSequence
+    const ticket = requests.open(projectId.value)
+    if (!ticket) return
     loading.value = true
     loadError.value = ''
     project.value = null
     gitConnection.value = null
     databaseConnection.value = null
+    for (const field of [metadataError, metadataNotice, gitError, gitNotice, databaseError, databaseNotice]) field.value = ''
+    for (const field of [savingMetadata, testingGit, savingGit, testingDatabase, savingDatabase]) field.value = false
+    testedGit.value = null
+    testedDatabase.value = null
+    // 프로젝트를 바꿀 때 이전에 입력한 비밀번호·토큰과 연결 대상이 새 프로젝트에 섞이지 않도록 비운다.
+    Object.assign(gitForm, { providerType: 'AUTO', authType: 'NONE', username: '', secret: '', sshPrivateKey: '', sshPassphrase: '', knownHostsEntry: '' })
+    Object.assign(databaseForm, { dbType: 'POSTGRESQL', host: '', port: 5432, databaseName: '', schemaName: '', username: '', password: '' })
     try {
-        const result = await getProjectById(projectId.value)
-        if (sequence !== loadSequence) return
+        const result = await getProjectById(ticket.id, ticket.options)
+        if (!requests.isCurrent(ticket)) return
+        if (result.id !== ticket.id) throw new Error('프로젝트 응답이 요청한 프로젝트와 다릅니다.')
         project.value = result
-        Object.assign(projectForm, {
-            name: result.name || '',
-            description: result.description || '',
-            repositoryUrl: result.repositoryUrl || '',
-            defaultBranch: result.defaultBranch || 'main',
-            status: statusOptions.some(({ value }) => value === result.status) ? result.status : 'ACTIVE',
-        })
+        Object.assign(projectForm, metadataForm(result))
         const [gitResult, databaseResult] = await Promise.allSettled([
-            result.sourceType === 'GIT' ? getGitRepositoryConnection(projectId.value) : Promise.resolve(null),
-            getDatabaseConnection(projectId.value),
+            result.sourceType === 'GIT' ? getGitRepositoryConnection(ticket.id, ticket.options) : Promise.resolve(null),
+            getDatabaseConnection(ticket.id, ticket.options),
         ])
-        if (sequence !== loadSequence) return
+        if (!requests.isCurrent(ticket)) return
         if (gitResult.status === 'fulfilled') {
             gitConnection.value = gitResult.value
-            if (gitResult.value) {
+            if (gitResult.value)
                 Object.assign(gitForm, {
                     providerType: gitResult.value.providerType || 'AUTO',
                     authType: gitResult.value.authType || 'NONE',
                     username: gitResult.value.username || '',
                 })
-            }
-        } else gitError.value = failureMessage(gitResult.reason, 'Git 연결정보를 불러오지 못했습니다.')
+        } else gitError.value = failureMessage(gitResult.reason, '소스 저장소 연결정보를 불러오지 못했습니다.')
         if (databaseResult.status === 'fulfilled') {
             databaseConnection.value = databaseResult.value
-            if (databaseResult.value) {
+            if (databaseResult.value)
                 Object.assign(databaseForm, {
                     dbType: databaseResult.value.dbType,
                     host: databaseResult.value.host || '',
@@ -118,44 +177,46 @@ const loadProject = async () => {
                     schemaName: databaseResult.value.schemaName || '',
                     username: databaseResult.value.username || '',
                 })
-            }
-        } else databaseError.value = failureMessage(databaseResult.reason, 'DB 연결정보를 불러오지 못했습니다.')
+        } else databaseError.value = failureMessage(databaseResult.reason, '데이터베이스 연결정보를 불러오지 못했습니다.')
     } catch (error) {
-        if (sequence === loadSequence) loadError.value = failureMessage(error, '프로젝트를 불러오지 못했습니다.')
+        if (requests.isCurrent(ticket)) loadError.value = projectErrorMessage(error)
     } finally {
-        if (sequence === loadSequence) loading.value = false
+        if (requests.isCurrent(ticket)) {
+            baselines.metadata = snapshot(projectForm)
+            baselines.git = snapshot(gitForm)
+            baselines.database = snapshot(databaseForm)
+            loading.value = false
+        }
     }
 }
 
 const saveMetadata = async () => {
     metadataError.value = ''
     metadataNotice.value = ''
-    if (!projectForm.name.trim() || !projectForm.defaultBranch.trim() || (project.value.sourceType === 'GIT' && !projectForm.repositoryUrl.trim())) {
-        metadataError.value = '프로젝트명, 저장소 주소와 브랜치(해당하는 경우)를 확인하세요.'
-        return
-    }
-    savingMetadata.value = true
-    try {
-        const changedTarget = gitTargetChanged.value
-        const result = await updateProject(projectId.value, {
-            organizationId: project.value.organizationId,
-            name: projectForm.name.trim(),
-            description: projectForm.description.trim() || null,
-            repositoryUrl: project.value.sourceType === 'GIT' ? projectForm.repositoryUrl.trim() : project.value.repositoryUrl,
-            defaultBranch: projectForm.defaultBranch.trim(),
-            sourceType: project.value.sourceType,
-            status: projectForm.status,
-        })
-        project.value = result
-        testedGit.value = null
-        metadataNotice.value = changedTarget
-            ? '기본정보가 저장되었습니다. 저장소 주소·브랜치를 변경했으므로 아래에서 Git 연결을 다시 테스트하고 저장하세요.'
-            : '프로젝트 기본정보가 저장되었습니다.'
-    } catch (error) {
-        metadataError.value = failureMessage(error, '프로젝트 기본정보를 저장하지 못했습니다.')
-    } finally {
-        savingMetadata.value = false
-    }
+    const changedTarget = gitTargetChanged.value
+    await action(
+        savingMetadata,
+        metadataError,
+        async (ticket) => {
+            const payload = buildProjectUpdatePayload(project.value, projectForm)
+            const saved = await updateProject(ticket.id, payload, ticket.options)
+            if (!requests.isCurrent(ticket)) return null
+            if (saved.id !== ticket.id) throw new Error('저장 응답의 프로젝트를 확인할 수 없습니다.')
+            // 저장이 완료되면 서버에서 다시 조회해 실제로 저장된 값으로 화면을 갱신한다.
+            const loaded = await getProjectById(ticket.id, ticket.options)
+            if (loaded.id !== ticket.id) throw new Error('프로젝트 응답이 요청한 프로젝트와 다릅니다.')
+            return loaded
+        },
+        (result) => {
+            project.value = result
+            Object.assign(projectForm, metadataForm(result))
+            baselines.metadata = snapshot(projectForm)
+            testedGit.value = null
+            metadataNotice.value = changedTarget
+                ? '기본정보가 저장되었습니다. 저장소 주소·브랜치를 변경했으므로 아래에서 Git 연결을 다시 테스트하고 저장하세요.'
+                : '프로젝트 기본정보가 저장되었습니다.'
+        }
+    )
 }
 
 const gitPayload = () => ({
@@ -178,44 +239,47 @@ const validateGit = () => {
     return ''
 }
 const testGit = async () => {
-    gitError.value = validateGit()
+    gitError.value = ''
     gitNotice.value = ''
-    if (gitError.value) return
-    const revision = gitRevision
-    const target = currentGitTarget()
-    testingGit.value = true
-    try {
-        const result = await testGitRepositoryConnection(projectId.value, gitPayload())
-        if (!result.success) throw new Error(result.message || 'Git 연결에 실패했습니다.')
-        if (revision !== gitRevision || target !== currentGitTarget()) throw new Error('테스트 중 입력이 바뀌었습니다. 다시 테스트하세요.')
-        testedGit.value = { revision, target }
-        gitNotice.value = '연결 테스트에 성공했습니다. 이제 Git 연결정보를 저장하세요.'
-    } catch (error) {
-        gitError.value = failureMessage(error, 'Git 연결 테스트에 실패했습니다.')
-    } finally {
-        testingGit.value = false
-    }
+    await action(
+        testingGit,
+        gitError,
+        async (ticket) => {
+            const failure = validateGit()
+            if (failure) throw new Error(failure)
+            const revision = gitRevision
+            const target = currentGitTarget()
+            const result = await testGitRepositoryConnection(ticket.id, gitPayload(), ticket.options)
+            if (!result.success) throw new Error(result.message || '소스 저장소 연결에 실패했습니다.')
+            if (revision !== gitRevision || target !== currentGitTarget()) throw new Error('테스트 중 입력이 바뀌었습니다. 다시 테스트하세요.')
+            return { revision, target }
+        },
+        (result) => {
+            testedGit.value = result
+            gitNotice.value = '연결 테스트에 성공했습니다. 이제 Git 연결정보를 저장하세요.'
+        }
+    )
 }
 const saveGit = async () => {
     gitError.value = ''
-    if (!gitTestValid.value || gitTargetChanged.value) {
-        gitError.value = '현재 입력값으로 Git 연결 테스트를 먼저 완료하세요.'
-        return
-    }
-    savingGit.value = true
-    try {
-        gitConnection.value = await saveGitRepositoryConnection(projectId.value, gitPayload())
-        gitNotice.value = 'Git 연결정보를 저장했습니다. 새 인증정보가 적용되었습니다.'
-        gitForm.secret = ''
-        gitForm.sshPrivateKey = ''
-        gitForm.sshPassphrase = ''
-        gitForm.knownHostsEntry = ''
-        testedGit.value = null
-    } catch (error) {
-        gitError.value = failureMessage(error, 'Git 연결정보를 저장하지 못했습니다.')
-    } finally {
-        savingGit.value = false
-    }
+    await action(
+        savingGit,
+        gitError,
+        (ticket) => {
+            if (!gitTestValid.value || gitTargetChanged.value) throw new Error('현재 입력값으로 Git 연결 테스트를 먼저 완료하세요.')
+            return saveGitRepositoryConnection(ticket.id, gitPayload(), ticket.options)
+        },
+        (result) => {
+            gitConnection.value = result
+            gitForm.secret = ''
+            gitForm.sshPrivateKey = ''
+            gitForm.sshPassphrase = ''
+            gitForm.knownHostsEntry = ''
+            baselines.git = snapshot(gitForm)
+            testedGit.value = null
+            gitNotice.value = 'Git 연결정보를 저장했습니다. 새 인증정보가 적용되었습니다.'
+        }
+    )
 }
 
 const databasePayload = () => ({
@@ -230,47 +294,50 @@ const databasePayload = () => ({
 const testDatabase = async () => {
     databaseError.value = ''
     databaseNotice.value = ''
-    if (
-        !databaseForm.host.trim() ||
-        !databaseForm.databaseName.trim() ||
-        !databaseForm.schemaName.trim() ||
-        !databaseForm.username.trim() ||
-        !databaseForm.password
-    ) {
-        databaseError.value = 'DB 접속 정보와 새 비밀번호를 모두 입력하세요.'
-        return
-    }
-    const revision = databaseRevision
-    testingDatabase.value = true
-    try {
-        const result = await testDatabaseConnection(projectId.value, databasePayload())
-        if (!result.success) throw new Error(result.message || 'DB 연결에 실패했습니다.')
-        if (revision !== databaseRevision) throw new Error('테스트 중 입력이 바뀌었습니다. 다시 테스트하세요.')
-        testedDatabase.value = revision
-        databaseNotice.value = '연결 테스트에 성공했습니다. 이제 DB 연결정보를 저장하세요.'
-    } catch (error) {
-        databaseError.value = failureMessage(error, 'DB 연결 테스트에 실패했습니다.')
-    } finally {
-        testingDatabase.value = false
-    }
+    await action(
+        testingDatabase,
+        databaseError,
+        async (ticket) => {
+            const port = Number(databaseForm.port)
+            if (
+                !databaseForm.host.trim() ||
+                !databaseForm.databaseName.trim() ||
+                !databaseForm.schemaName.trim() ||
+                !databaseForm.username.trim() ||
+                !databaseForm.password
+            ) {
+                throw new Error('DB 접속 정보와 새 비밀번호를 모두 입력하세요.')
+            }
+            if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('포트는 1~65535 사이의 정수로 입력하세요.')
+            const revision = databaseRevision
+            const result = await testDatabaseConnection(ticket.id, databasePayload(), ticket.options)
+            if (!result.success) throw new Error(result.message || '데이터베이스 연결에 실패했습니다.')
+            if (revision !== databaseRevision) throw new Error('테스트 중 입력이 바뀌었습니다. 다시 테스트하세요.')
+            return revision
+        },
+        (revision) => {
+            testedDatabase.value = revision
+            databaseNotice.value = '연결 테스트에 성공했습니다. 이제 DB 연결정보를 저장하세요.'
+        }
+    )
 }
 const saveDatabase = async () => {
     databaseError.value = ''
-    if (!databaseTestValid.value) {
-        databaseError.value = '현재 입력값으로 DB 연결 테스트를 먼저 완료하세요.'
-        return
-    }
-    savingDatabase.value = true
-    try {
-        databaseConnection.value = await saveProjectConnection(projectId.value, databasePayload())
-        databaseForm.password = ''
-        testedDatabase.value = null
-        databaseNotice.value = 'DB 연결정보를 저장했습니다. 새 읽기 전용 계정 정보가 적용되었습니다.'
-    } catch (error) {
-        databaseError.value = failureMessage(error, 'DB 연결정보를 저장하지 못했습니다.')
-    } finally {
-        savingDatabase.value = false
-    }
+    await action(
+        savingDatabase,
+        databaseError,
+        (ticket) => {
+            if (!databaseTestValid.value) throw new Error('현재 입력값으로 DB 연결 테스트를 먼저 완료하세요.')
+            return saveProjectConnection(ticket.id, databasePayload(), ticket.options)
+        },
+        (result) => {
+            databaseConnection.value = result
+            databaseForm.password = ''
+            baselines.database = snapshot(databaseForm)
+            testedDatabase.value = null
+            databaseNotice.value = 'DB 연결정보를 저장했습니다. 새 읽기 전용 계정 정보가 적용되었습니다.'
+        }
+    )
 }
 
 watch(projectId, loadProject, { immediate: true })
@@ -280,10 +347,15 @@ watch(projectId, loadProject, { immediate: true })
     <div class="min-w-0">
         <ViewHeading title="프로젝트 수정" description="프로젝트 기본정보와 Git·DB 접속 계정을 관리합니다. 서비스 로그인 계정은 여기서 변경하지 않습니다.">
             <template #actions>
-                <BaseButton class="w-full sm:w-auto" variant="secondary" :to="{ name: 'project-detail', params: { projectId } }">상세로 돌아가기</BaseButton>
+                <BaseButton class="w-full sm:w-auto" variant="secondary" :disabled="busy" :to="{ name: 'project-detail', params: { projectId } }"
+                    >상세로 돌아가기</BaseButton
+                >
             </template>
         </ViewHeading>
 
+        <p v-if="isProjectDemoMode" role="status" class="mb-4 rounded-lg bg-blue-50 p-3 text-sm text-blue-800">
+            데모 모드입니다. 기본정보 변경은 이 브라우저에만 저장되며 연결 테스트는 모의 응답입니다.
+        </p>
         <p v-if="loading" role="status" class="rounded-xl border border-slate-200 bg-white p-6 text-sm dark:border-slate-700 dark:bg-slate-900">
             프로젝트를 불러오는 중입니다.
         </p>

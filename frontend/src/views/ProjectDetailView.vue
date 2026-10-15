@@ -1,9 +1,11 @@
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { getAnalysisHistory } from '@/api/appApi'
 import { getDatabaseConnection, getGitRepositoryConnection } from '@/api/projectConnectionApi'
-import { getProjectById } from '@/api/projectApi'
+import { getProjectById, isProjectDemoMode } from '@/api/projectApi'
+import { projectErrorMessage } from '@/lib/projectManagement'
+import { createProjectRequestScope } from '@/lib/projectRequests'
 import BaseButton from '@/components/base/BaseButton.vue'
 import StatusBadge from '@/components/common/StatusBadge.vue'
 import ViewHeading from '@/components/common/ViewHeading.vue'
@@ -19,7 +21,7 @@ const latestAnalysis = ref(null)
 const loading = ref(false)
 const error = ref('')
 const sectionErrors = ref({})
-let requestId = 0
+const requests = createProjectRequestScope()
 
 const projectId = computed(() => String(route.params.projectId || ''))
 const sourceTypeLabel = computed(() => ({ GIT: 'Git 저장소', ZIP: 'ZIP 업로드' })[project.value?.sourceType] || project.value?.sourceType || '정보 없음')
@@ -38,7 +40,8 @@ const display = (value) => value || '정보 없음'
 const failureMessage = (failure, fallback) => failure?.response?.data?.message || failure?.response?.data?.detail || failure?.message || fallback
 
 const loadProject = async () => {
-    const currentRequestId = ++requestId
+    const ticket = requests.open(projectId.value)
+    if (!ticket) return
     loading.value = true
     error.value = ''
     sectionErrors.value = {}
@@ -48,16 +51,19 @@ const loadProject = async () => {
     latestAnalysis.value = null
 
     try {
-        const result = await getProjectById(projectId.value)
-        if (currentRequestId !== requestId) return
+        const result = await getProjectById(ticket.id, ticket.options)
+        if (!requests.isCurrent(ticket)) return
+        if (result.id !== ticket.id) throw new Error('프로젝트 응답이 요청한 프로젝트와 다릅니다.')
         project.value = result
 
         const [gitResult, databaseResult, historyResult] = await Promise.allSettled([
-            result.sourceType === 'GIT' ? getGitRepositoryConnection(projectId.value) : Promise.resolve(null),
-            getDatabaseConnection(projectId.value),
-            authStore.hasPermission('ANALYSIS_READ') ? getAnalysisHistory({ page: 0, size: 1, projectId: projectId.value }) : Promise.resolve(null),
+            result.sourceType === 'GIT' ? getGitRepositoryConnection(ticket.id, ticket.options) : Promise.resolve(null),
+            getDatabaseConnection(ticket.id, ticket.options),
+            authStore.hasPermission('ANALYSIS_READ')
+                ? getAnalysisHistory({ page: 0, size: 1, projectId: ticket.id, ...ticket.options })
+                : Promise.resolve(null),
         ])
-        if (currentRequestId !== requestId) return
+        if (!requests.isCurrent(ticket)) return
 
         const errors = {}
         if (gitResult.status === 'fulfilled') gitConnection.value = gitResult.value
@@ -68,13 +74,14 @@ const loadProject = async () => {
         else errors.history = failureMessage(historyResult.reason, '최근 분석을 불러오지 못했습니다.')
         sectionErrors.value = errors
     } catch (failure) {
-        if (currentRequestId === requestId) error.value = failureMessage(failure, '프로젝트를 불러오지 못했습니다.')
+        if (requests.isCurrent(ticket)) error.value = projectErrorMessage(failure)
     } finally {
-        if (currentRequestId === requestId) loading.value = false
+        if (requests.isCurrent(ticket)) loading.value = false
     }
 }
 
 watch(projectId, loadProject, { immediate: true })
+onBeforeUnmount(() => requests.dispose())
 </script>
 
 <template>
@@ -103,6 +110,9 @@ watch(projectId, loadProject, { immediate: true })
             </template>
         </ViewHeading>
 
+        <p v-if="isProjectDemoMode" role="status" class="mb-4 rounded-lg bg-blue-50 p-3 text-sm text-blue-800">
+            데모 모드입니다. 이 브라우저에 저장된 프로젝트 기본정보를 표시합니다.
+        </p>
         <p
             v-if="loading"
             role="status"

@@ -1,4 +1,6 @@
 import { httpClient } from '@/api/httpClient'
+import { getProjects } from '@/api/projectApi'
+export { getProjects, deleteProject, restoreProject } from '@/api/projectApi'
 import { getAllRequirements } from '@/api/requirementApi'
 import { buildDashboardSummary } from '@/lib/dashboardSummary'
 import { analysisHistoryMock, changeRequestsMock, dashboardMock, documentsMock, modelsMock, projectsMock } from '@/mocks/appMock'
@@ -7,7 +9,6 @@ const useMock = import.meta.env.VITE_USE_MOCK !== 'false'
 
 const wait = (milliseconds = 220) => new Promise((resolve) => setTimeout(resolve, milliseconds))
 const clone = (value) => structuredClone(value)
-const deletedProjectIds = new Set()
 
 const mockResponse = async (value) => {
     await wait()
@@ -37,31 +38,6 @@ export const getDashboard = async () => {
     })
 }
 
-export const getProjects = async ({ deleted = false } = {}) => {
-    if (useMock) return mockResponse(projectsMock.filter((project) => deletedProjectIds.has(project.id) === deleted))
-
-    const { data } = await httpClient.get('/projects', { params: deleted ? { deleted: true } : {} })
-    return data
-}
-
-export const deleteProject = async (projectId) => {
-    if (useMock) {
-        deletedProjectIds.add(projectId)
-        await wait()
-        return
-    }
-    await httpClient.delete(`/projects/${projectId}`)
-}
-
-export const restoreProject = async (projectId) => {
-    if (useMock) {
-        deletedProjectIds.delete(projectId)
-        await wait()
-        return
-    }
-    await httpClient.post(`/projects/${projectId}/restore`)
-}
-
 export const getChangeRequests = async () => {
     if (useMock) return mockResponse(changeRequestsMock)
 
@@ -69,7 +45,7 @@ export const getChangeRequests = async () => {
     return data
 }
 
-export const getAnalysisHistory = async ({ page = 0, size = 10, projectId = null } = {}) => {
+export const getAnalysisHistory = async ({ page = 0, size = 10, projectId = null, ...options } = {}) => {
     if (useMock) {
         const rows = analysisHistoryMock.map((item) => ({
             jobId: item.id,
@@ -87,7 +63,7 @@ export const getAnalysisHistory = async ({ page = 0, size = 10, projectId = null
         return mockResponse({ items: filtered.slice(page * size, (page + 1) * size), total: filtered.length, page, size })
     }
 
-    const { data } = await httpClient.get('/analysis-jobs', { params: { page, size, ...(projectId ? { projectId } : {}) } })
+    const { data } = await httpClient.get('/analysis-jobs', { ...options, params: { page, size, ...(projectId ? { projectId } : {}) } })
     return data
 }
 
