@@ -2,6 +2,7 @@ export const activeAnalysisStage = (job) => {
     if (job?.status !== 'RUNNING') return null
     if ((job.sourceProgress ?? 0) < 40) return 'SRC'
     if ((job.databaseProgress ?? 0) < 100) return 'DB'
+    if ((job.sourceProgress ?? 0) < 100) return 'SRC'
     return 'AI'
 }
 
@@ -10,6 +11,7 @@ export const analysisActivity = (job) => {
     if (job?.status !== 'RUNNING') return null
     if ((job.sourceProgress ?? 0) < 40) return 'Git 소스를 수집하고 안전성을 확인하는 중'
     if ((job.databaseProgress ?? 0) < 100) return '읽기 전용 DB 구조를 수집하는 중'
+    if ((job.sourceProgress ?? 0) < 100) return '소스코드와 데이터베이스의 참조 관계를 조사하는 중'
     if ((job.relationProgress ?? 0) < 40) return '소스와 DB의 참조 관계를 분석하는 중'
     if ((job.relationProgress ?? 0) < 90) return 'AI 모델의 분석 응답을 기다리는 중'
     return '분석 결과를 저장하는 중'
@@ -25,7 +27,6 @@ export const analysisActivityEvents = (job) =>
                 typeof event.at === 'string' &&
                 ['STARTED', 'WAITING', 'COMPLETED', 'FAILED', 'CANCELLED'].includes(event.state)
         )
-        .slice(-14)
         .reverse()
 
 export const activeActivityEvent = (job) => {

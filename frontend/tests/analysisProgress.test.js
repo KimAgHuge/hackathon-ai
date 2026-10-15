@@ -19,10 +19,11 @@ test('shows the real active phase without inventing progress percentages', () =>
     assert.match(analysisActivity(job), /DB/)
 
     job.databaseProgress = 100
-    assert.equal(activeAnalysisStage(job), 'AI')
+    assert.equal(activeAnalysisStage(job), 'SRC')
     assert.match(analysisActivity(job), /참조 관계/)
 
     job.sourceProgress = 100
+    assert.equal(activeAnalysisStage(job), 'AI')
     job.relationProgress = 40
     assert.match(analysisActivity(job), /AI 모델/)
 
@@ -69,4 +70,16 @@ test('shows saved activity in newest-first order and only marks an unfinished st
     job.status = 'COMPLETED'
     assert.equal(activeActivityEvent(job), null)
     assert.deepEqual(analysisActivityEvents({}), [])
+})
+
+test('keeps older saved activity available for a collapsed history', () => {
+    const activityLog = Array.from({ length: 25 }, (_, index) => ({
+        label: `단계 ${index}`,
+        state: 'COMPLETED',
+        at: '2026-10-14T01:00:00Z',
+    }))
+    const events = analysisActivityEvents({ activityLog })
+    assert.equal(events.length, 25)
+    assert.equal(events[0].label, '단계 24')
+    assert.equal(events[24].label, '단계 0')
 })
