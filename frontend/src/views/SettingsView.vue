@@ -4,10 +4,12 @@ import { useSettingsStore } from '@/stores/settingsStore'
 import { useThemeStore } from '@/stores/themeStore'
 import StatusBadge from '@/components/common/StatusBadge.vue'
 import ViewHeading from '@/components/common/ViewHeading.vue'
+import BaseTextarea from '@/components/base/BaseTextarea.vue'
 
 const store = useSettingsStore()
 const themeStore = useThemeStore()
 const activeTab = ref('connections')
+const excludedSourcePatterns = ref('node_modules/**\ndist/**\nbuild/**\n*.min.js')
 
 const tabs = [
     { id: 'connections', label: '서버 연결' },
@@ -245,10 +247,7 @@ onMounted(() => {
                         <option>메타데이터 + 통계정보</option>
                     </select>
                 </div>
-                <div class="form-group sm:col-span-2">
-                    <label>소스 제외 패턴</label>
-                    <textarea rows="5" value="node_modules/**&#10;dist/**&#10;build/**&#10;*.min.js"></textarea>
-                </div>
+                <div class="sm:col-span-2"><BaseTextarea v-model="excludedSourcePatterns" label="소스 제외 패턴" rows="5" /></div>
             </div>
             <div class="mt-5 flex justify-end"><button class="button primary w-full sm:w-auto">분석 설정 저장</button></div>
         </section>

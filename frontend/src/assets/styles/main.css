@@ -1086,21 +1086,18 @@ html.theme-transition *::after {
 }
 
 .dark .form-group input,
-.dark .form-group select,
-.dark .form-group textarea {
+.dark .form-group select {
     border-color: #475569;
     background: #0f172a;
     color: #e2e8f0;
 }
 
-.dark .form-group input::placeholder,
-.dark .form-group textarea::placeholder {
+.dark .form-group input::placeholder {
     color: #64748b;
 }
 
 .dark .form-group input:focus,
-.dark .form-group select:focus,
-.dark .form-group textarea:focus {
+.dark .form-group select:focus {
     border-color: #60a5fa;
     box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.14);
 }
@@ -1127,13 +1124,6 @@ html.theme-transition *::after {
 
     .ui-input {
         @apply h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none;
-        @apply placeholder:text-slate-400 focus:border-brand-500 focus:ring-3 focus:ring-brand-500/10;
-        @apply disabled:cursor-not-allowed disabled:bg-slate-100 disabled:opacity-70;
-        @apply dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:disabled:bg-slate-800;
-    }
-
-    .ui-textarea {
-        @apply min-h-28 w-full resize-y rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none;
         @apply placeholder:text-slate-400 focus:border-brand-500 focus:ring-3 focus:ring-brand-500/10;
         @apply disabled:cursor-not-allowed disabled:bg-slate-100 disabled:opacity-70;
         @apply dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:disabled:bg-slate-800;

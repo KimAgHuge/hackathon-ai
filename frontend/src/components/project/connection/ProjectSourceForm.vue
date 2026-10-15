@@ -293,9 +293,11 @@ const createOrganization = () => {
                         :model-value="connectionModelValue.sshPrivateKey"
                         name="repositorySshPrivateKey"
                         label="SSH 개인키"
+                        mode="code"
                         rows="7"
                         required
                         placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
+                        spellcheck="false"
                         @update:model-value="updateConnectionValue({ sshPrivateKey: $event })"
                     />
                     <BaseInput
@@ -311,9 +313,11 @@ const createOrganization = () => {
                         :model-value="connectionModelValue.knownHostsEntry"
                         name="repositoryKnownHosts"
                         label="SSH known_hosts"
+                        mode="code"
                         rows="4"
                         required
                         placeholder="git.example.com ssh-ed25519 AAAAC3..."
+                        spellcheck="false"
                         hint="접속할 서버의 신뢰할 수 있는 호스트 공개키 한 줄 이상을 입력합니다."
                         @update:model-value="updateConnectionValue({ knownHostsEntry: $event })"
                     />

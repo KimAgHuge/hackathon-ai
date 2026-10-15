@@ -11,6 +11,7 @@ import BaseInput from '@/components/base/BaseInput.vue'
 import BasePagination from '@/components/base/BasePagination.vue'
 import BaseSelect from '@/components/base/BaseSelect.vue'
 import BaseTable from '@/components/base/BaseTable.vue'
+import BaseTextarea from '@/components/base/BaseTextarea.vue'
 import StatusBadge from '@/components/common/StatusBadge.vue'
 import ViewHeading from '@/components/common/ViewHeading.vue'
 import { useClientTable } from '@/composables/useClientTable'
@@ -394,35 +395,21 @@ onMounted(() => {
                 <BaseSelect v-model="form.priority" id="requirement-priority" label="우선순위" :options="priorityOptions" />
             </div>
             <BaseInput v-model="form.title" id="requirement-title" label="제목" placeholder="무엇을 변경할지 짧게 적어주세요" maxlength="300" required />
-            <div class="grid gap-2">
-                <label for="requirement-original" class="ui-label">요청 원문 <span class="text-rose-500">*</span></label>
-                <textarea
-                    id="requirement-original"
-                    v-model="form.originalContent"
-                    class="ui-input min-h-28"
-                    required
-                    placeholder="고객이나 담당자가 전달한 내용을 적어주세요."
-                ></textarea>
-            </div>
-            <div class="grid gap-2">
-                <label for="requirement-refined" class="ui-label">정리한 변경 내용 <span class="text-rose-500">*</span></label>
-                <textarea
-                    id="requirement-refined"
-                    v-model="form.refinedContent"
-                    class="ui-input min-h-28"
-                    required
-                    placeholder="변경할 동작·데이터·제외 범위를 구체적으로 적어주세요."
-                ></textarea>
-            </div>
-            <div class="grid gap-2">
-                <label for="requirement-criteria" class="ui-label">인수 조건 <span class="text-slate-400">(선택)</span></label>
-                <textarea
-                    id="requirement-criteria"
-                    v-model="form.acceptanceCriteriaText"
-                    class="ui-input min-h-24"
-                    placeholder="한 줄에 하나씩 입력하세요."
-                ></textarea>
-            </div>
+            <BaseTextarea
+                id="requirement-original"
+                v-model="form.originalContent"
+                label="요청 원문"
+                required
+                placeholder="고객이나 담당자가 전달한 내용을 적어주세요."
+            />
+            <BaseTextarea
+                id="requirement-refined"
+                v-model="form.refinedContent"
+                label="정리한 변경 내용"
+                required
+                placeholder="변경할 동작·데이터·제외 범위를 구체적으로 적어주세요."
+            />
+            <BaseTextarea id="requirement-criteria" v-model="form.acceptanceCriteriaText" label="인수 조건 (선택)" placeholder="한 줄에 하나씩 입력하세요." />
             <div class="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
                 <BaseButton class="w-full sm:w-auto" type="submit" :loading="creating" :disabled="requirementsLoading || (busy && !creating)"
                     >요구사항 저장</BaseButton

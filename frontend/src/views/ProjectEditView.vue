@@ -429,7 +429,16 @@ watch(projectId, loadProject, { immediate: true })
                         autocomplete="new-password"
                     />
                     <div v-if="gitForm.authType === 'SSH_KEY'" class="md:col-span-2">
-                        <BaseTextarea v-model="gitForm.sshPrivateKey" label="새 SSH 개인키" required :disabled="busy" rows="4" autocomplete="off" />
+                        <BaseTextarea
+                            v-model="gitForm.sshPrivateKey"
+                            label="새 SSH 개인키"
+                            mode="code"
+                            required
+                            :disabled="busy"
+                            rows="4"
+                            autocomplete="off"
+                            spellcheck="false"
+                        />
                     </div>
                     <BaseInput
                         v-if="gitForm.authType === 'SSH_KEY'"
@@ -440,7 +449,16 @@ watch(projectId, loadProject, { immediate: true })
                         autocomplete="new-password"
                     />
                     <div v-if="gitForm.authType === 'SSH_KEY'" class="md:col-span-2">
-                        <BaseTextarea v-model="gitForm.knownHostsEntry" label="known_hosts 항목" required :disabled="busy" rows="3" autocomplete="off" />
+                        <BaseTextarea
+                            v-model="gitForm.knownHostsEntry"
+                            label="known_hosts 항목"
+                            mode="code"
+                            required
+                            :disabled="busy"
+                            rows="3"
+                            autocomplete="off"
+                            spellcheck="false"
+                        />
                     </div>
                 </div>
                 <p v-if="gitError" role="alert" class="mt-4 text-sm text-rose-700 dark:text-rose-300">{{ gitError }}</p>
