@@ -37,7 +37,7 @@ const columns = [
     { key: 'requirementTitle', label: '분석 대상', minWidth: '190px' },
     { key: 'status', label: '상태', width: '110px' },
     { key: 'riskLevel', label: '위험도', width: '110px' },
-    { key: 'approved', label: '검토', width: '100px' },
+    { key: 'reviewStatus', label: '검토', width: '100px' },
     { key: 'evidenceReusedFromJobId', label: '근거', width: '100px' },
     { key: 'createdAt', label: '요청 시각', width: '180px' },
     {
@@ -153,7 +153,9 @@ onMounted(loadProjects)
         >
             <template #cell-requirementTitle="{ row }">{{ row.requirementTitle || '프로젝트 구조 분석' }}</template>
             <template #cell-riskLevel="{ value }">{{ riskLevelLabel(value) }}</template>
-            <template #cell-approved="{ row }">{{ row.status === 'COMPLETED' ? (row.approved ? '승인' : '미승인') : '—' }}</template>
+            <template #cell-reviewStatus="{ row }">{{
+                row.status === 'COMPLETED' ? { APPROVED: '승인', REJECTED: '반려' }[row.reviewStatus] || '검토 대기' : '—'
+            }}</template>
             <template #cell-evidenceReusedFromJobId="{ row }">{{
                 row.status === 'COMPLETED' ? (row.evidenceReusedFromJobId ? '재사용' : '새 수집') : '—'
             }}</template>

@@ -1,6 +1,7 @@
 package com.doenaai.analysis.repository;
 
 import com.doenaai.analysis.dto.AnalysisResultResponse;
+import com.doenaai.analysis.dto.AnalysisReviewDecision;
 import com.doenaai.analysis.dto.ReusableEvidence;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -47,19 +48,51 @@ public class AnalysisResultRepository {
     /** 완료된 jobId의 분석 결과와 당시 입력 근거를 조회한다; 없으면 Optional.empty(). */
     public Optional<AnalysisResultResponse> findByJobId(UUID jobId) {
         return jdbcTemplate.query("""
-                select r.analysis_job_id, j.project_id, r.original_result, r.inference_metadata, r.created_at
+                select r.analysis_job_id, j.project_id, r.original_result, r.corrected_result,
+                       r.inference_metadata, r.created_at, r.review_status, r.review_note,
+                       r.reviewed_by, r.reviewed_at, r.summary, r.risk_level
                 from public.analysis_results r join public.analysis_jobs j on j.id = r.analysis_job_id
                 where r.analysis_job_id = ? and j.status = 'COMPLETED'
                 """, (rs, row) -> {
             Map<String, Object> result = objectMapper.readValue(rs.getString("original_result"), MAP);
+            String correctedJson = rs.getString("corrected_result");
+            Map<String, Object> corrected = correctedJson == null ? null : objectMapper.readValue(correctedJson, MAP);
+            Map<String, Object> effective = corrected == null ? result : corrected;
             var metadata = objectMapper.readTree(rs.getString("inference_metadata"));
             Map<String, Object> facts = metadata.has("facts")
                     ? objectMapper.convertValue(metadata.get("facts"), MAP) : Map.of();
             return new AnalysisResultResponse(jobId, rs.getObject("project_id", UUID.class),
-                    (String) result.get("summary"), (String) result.get("riskLevel"),
-                    ((Number) result.getOrDefault("riskScore", 0)).intValue(), result, facts,
-                    rs.getObject("created_at", OffsetDateTime.class));
+                    rs.getString("summary"), rs.getString("risk_level"),
+                    ((Number) effective.getOrDefault("riskScore", 0)).intValue(), result, facts,
+                    rs.getObject("created_at", OffsetDateTime.class), rs.getString("review_status"),
+                    corrected, rs.getString("review_note"), rs.getObject("reviewed_by", UUID.class),
+                    rs.getObject("reviewed_at", OffsetDateTime.class));
         }, jobId).stream().findFirst();
+    }
+
+    /** 대기 중인 검토만 갱신해 중복 승인·반려 요청의 덮어쓰기를 막는다. */
+    public boolean review(UUID jobId, UUID reviewerId, AnalysisReviewDecision decision,
+                          String note, Map<String, Object> correctedResult) {
+        boolean approved = decision == AnalysisReviewDecision.APPROVED;
+        String correctedJson = correctedResult == null ? null : objectMapper.writeValueAsString(correctedResult);
+        int changed = jdbcTemplate.update("""
+                update public.analysis_results r
+                set review_status = ?, approved = ?, reviewed_by = ?, reviewed_at = now(),
+                    approved_by = case when ? then ? else null end,
+                    approved_at = case when ? then now() else null end,
+                    review_note = ?, corrected_result = cast(? as jsonb),
+                    summary = case when ? then ? else summary end,
+                    risk_level = case when ? then ? else risk_level end,
+                    updated_at = now()
+                where r.analysis_job_id = ? and r.review_status = 'PENDING'
+                  and exists (select 1 from public.analysis_jobs j
+                              where j.id = r.analysis_job_id and j.status = 'COMPLETED')
+                """, decision.name(), approved, reviewerId,
+                approved, reviewerId, approved, note, correctedJson,
+                correctedResult != null, correctedResult == null ? null : correctedResult.get("summary"),
+                correctedResult != null, correctedResult == null ? null : correctedResult.get("riskLevel"),
+                jobId);
+        return changed == 1;
     }
 
     /** 같은 프로젝트·고정 Git SHA의 완전한 이전 입력 근거를 찾는다. */

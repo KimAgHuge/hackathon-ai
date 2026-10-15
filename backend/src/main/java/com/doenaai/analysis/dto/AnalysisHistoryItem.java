@@ -15,6 +15,7 @@ public record AnalysisHistoryItem(
         String riskLevel,
         String summary,
         boolean approved,
+        String reviewStatus,
         UUID evidenceReusedFromJobId,
         boolean reusableEvidence,
         List<String> evidenceUnavailableReasons,

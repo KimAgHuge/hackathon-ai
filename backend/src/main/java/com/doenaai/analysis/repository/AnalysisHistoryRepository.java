@@ -31,7 +31,7 @@ public class AnalysisHistoryRepository {
         List<AnalysisHistoryItem> items = jdbc.query("""
                 select j.id, j.project_id, p.name as project_name, j.requirement_version_id,
                        rv.title as requirement_title, j.status, r.risk_level, r.summary,
-                       coalesce(r.approved, false) as approved,
+                       coalesce(r.approved, false) as approved, r.review_status,
                        j.analysis_options ->> 'evidenceReusedFromJobId' as evidence_reused_from_job_id,
                        j.input_snapshot ->> 'commitSha' as source_commit,
                        r.analysis_job_id as result_job_id,
@@ -70,7 +70,7 @@ public class AnalysisHistoryRepository {
                 rs.getObject("id", UUID.class), rs.getObject("project_id", UUID.class),
                 rs.getString("project_name"), rs.getObject("requirement_version_id", UUID.class),
                 rs.getString("requirement_title"), rs.getString("status"), rs.getString("risk_level"),
-                rs.getString("summary"), rs.getBoolean("approved"),
+                rs.getString("summary"), rs.getBoolean("approved"), rs.getString("review_status"),
                 reused == null ? null : UUID.fromString(reused),
                 reusable, reusable ? List.of() : evidenceUnavailableReasons(rs), rs.getString("source_commit"),
                 rs.getObject("created_at", OffsetDateTime.class),

@@ -55,7 +55,8 @@ export const getAnalysisHistory = async ({ page = 0, size = 10, projectId = null
             status: 'COMPLETED',
             riskLevel: item.risk,
             summary: '화면 확인용 샘플입니다.',
-            approved: item.result === 'APPROVED',
+            approved: ['APPROVED', 'CORRECTED'].includes(item.result),
+            reviewStatus: ['APPROVED', 'CORRECTED'].includes(item.result) ? 'APPROVED' : 'PENDING',
             createdAt: item.analyzedAt,
             completedAt: item.analyzedAt,
         }))

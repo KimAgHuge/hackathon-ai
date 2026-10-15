@@ -105,10 +105,22 @@ export const getAnalysisResult = async (analysisJobId, options = {}) => {
                 relations: [],
             },
             createdAt: new Date().toISOString(),
+            reviewStatus: 'PENDING',
+            correctedResult: null,
+            reviewNote: null,
+            reviewedBy: null,
+            reviewedAt: null,
         })
     }
 
     const { data } = await httpClient.get(`/analysis-jobs/${analysisJobId}/result`, options)
 
+    return data
+}
+
+/** 권한 있는 검토자가 완료된 분석을 한 번만 승인하거나 반려한다. */
+export const reviewAnalysisResult = async (analysisJobId, payload) => {
+    if (useMock) throw new Error('데모 분석은 승인하거나 반려할 수 없습니다.')
+    const { data } = await httpClient.put(`/analysis-jobs/${analysisJobId}/review`, payload)
     return data
 }

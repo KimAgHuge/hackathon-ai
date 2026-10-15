@@ -90,13 +90,11 @@ onMounted(() => {
 
         <section class="panel feedback-panel">
             <div>
-                <h2>분석 결과가 정확한가요?</h2>
-                <p>검수 결과는 향후 학습 후보 데이터로 축적됩니다.</p>
+                <h2>저장된 분석 결과를 검토하려면</h2>
+                <p>이 화면은 예시입니다. 실제 승인·반려는 저장된 분석 결과 화면에서 진행합니다.</p>
             </div>
             <div class="feedback-actions">
-                <button class="button secondary">부정확함</button>
-                <button class="button secondary">일부 수정</button>
-                <button class="button primary">정확함</button>
+                <RouterLink class="button primary" to="/analysis-history">분석 이력 열기</RouterLink>
             </div>
         </section>
     </div>
