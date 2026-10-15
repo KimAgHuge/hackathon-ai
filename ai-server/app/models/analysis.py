@@ -73,6 +73,43 @@ class RiskLevel(str, Enum):
     UNKNOWN = "UNKNOWN"
 
 
+class RiskFactor(ApiModel):
+    score: int = Field(ge=0, le=25)
+    reason: str = Field(min_length=1)
+
+
+class RiskAssessment(ApiModel):
+    """변경 자체의 위험과 아직 남은 불확실성을 분리한 근거별 점수다."""
+    change_scope: RiskFactor
+    data_impact: RiskFactor
+    security_impact: RiskFactor
+    delivery_complexity: RiskFactor
+    uncertainty: RiskFactor
+
+    @model_validator(mode="after")
+    def check_factor_ranges(self):
+        limits = {
+            "change_scope": 25,
+            "data_impact": 20,
+            "security_impact": 25,
+            "delivery_complexity": 20,
+            "uncertainty": 10,
+        }
+        for name, maximum in limits.items():
+            if getattr(self, name).score > maximum:
+                raise ValueError("A risk factor exceeds its scoring range.")
+        return self
+
+def risk_level_for_score(score: int) -> RiskLevel:
+    if score >= 75:
+        return RiskLevel.CRITICAL
+    if score >= 50:
+        return RiskLevel.HIGH
+    if score >= 25:
+        return RiskLevel.MEDIUM
+    return RiskLevel.LOW
+
+
 class DatabaseRelevance(str, Enum):
     RELATED = "RELATED"
     UNRELATED = "UNRELATED"
@@ -155,6 +192,7 @@ class GeneralAnalysisResponse(ApiModel):
     frameworks: List[str]
     risk_level: RiskLevel
     risk_score: int = Field(ge=0, le=100)
+    risk_assessment: RiskAssessment
     impact_areas: List[str]
     evidences: List[Dict[str, Any]]
     recommendations: List[str]

@@ -233,7 +233,7 @@ public class AiAnalysisClient {
             throw exception;
         } catch (IOException exception) {
             if (Set.of("Invalid AI progress stream.", "Invalid AI progress event.",
-                    "Invalid AI result JSON.", "Invalid AI result contract.", "Invalid AI plain-language summary.",
+                    "Invalid AI result JSON.", "Invalid AI result contract.", "Invalid AI risk assessment.", "Invalid AI plain-language summary.",
                     "Invalid AI database impact contract.", "Invalid AI database impact decision.",
                     "Ollama inference timed out.", "Ollama is unavailable.",
                     "The model response did not match the required schema.", "AI analysis failed.")
@@ -266,6 +266,9 @@ public class AiAnalysisClient {
                 || !(result.get("riskScore") instanceof Number score)
                 || score.doubleValue() != score.intValue() || score.intValue() < 0 || score.intValue() > 100) {
             throw new IOException("Invalid AI result contract.");
+        }
+        if (!RiskScorePolicy.matches(risk, score.intValue(), result.get("riskAssessment"))) {
+            throw new IOException("Invalid AI risk assessment.");
         }
         // 구버전 AI 서버와 저장 결과는 허용하되, 새 필드가 있으면 한 줄 계약을 지킨다.
         if (result.containsKey("plainLanguageSummary")

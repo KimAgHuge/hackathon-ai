@@ -21,6 +21,8 @@ from app.models.analysis import (
     ProjectAnalysisRequest,
     ProjectAnalysisResponse,
     RequirementGeneralAnalysisResponse,
+    RiskLevel,
+    risk_level_for_score,
 )
 
 logger = logging.getLogger(__name__)
@@ -64,6 +66,7 @@ Return one JSON object that exactly matches the supplied JSON Schema.
 Write the summary, plainLanguageSummary, impact areas, evidence descriptions, and recommendations in Korean.
 plainLanguageSummary is a single short sentence for a customer or project manager: explain the likely business/user impact in everyday Korean without file names, framework names, SQL terms, or implementation jargon. Keep it separate from the technical summary. For PROJECT_STRUCTURE_SCAN, explain that this is an overview rather than a requested change. For REQUIREMENT_IMPACT, if the outcome depends on missing information, say it needs confirmation; do not present unverified work or DB changes as certain. Do not say the result has been approved.
 If the supplied facts are insufficient, use riskLevel UNKNOWN and explain the limitation.
+Assess implementation risk by five independent factors in riskAssessment: changeScope 0-25, dataImpact 0-20, securityImpact 0-25, deliveryComplexity 0-20, uncertainty 0-10. For each factor, give a Korean reason grounded in the supplied facts; name an observed file or table when possible and say when the evidence is missing. Zero means no observed effect; low values mean a local reversible change; upper-range values mean broad architectural, data integrity, security, or rollout impact. Authentication, authorization, credential, and other security-sensitive changes deserve a substantial securityImpact even when the user has answered every question. Unanswered questions may raise uncertainty, but clarifying them must not lower the inherent changeScope, dataImpact, or securityImpact unless the actual requested change becomes smaller. A fundamental rewrite stays high-risk even when perfectly specified. Never infer that a concise or complete answer makes implementation safe. The service calculates riskScore from these factors and derives riskLevel from that score; do not use the numbers as a measure of answer completeness. For PROJECT_STRUCTURE_SCAN, return zero factors and UNKNOWN because no change has been requested.
 Never request or expose credentials, tokens, passwords, private keys, or secrets."""
 
 DB_SYSTEM_PROMPT = """You are a database impact analyst. Return all natural-language fields in Korean as JSON matching the supplied schema.
@@ -200,6 +203,35 @@ class LlmService:
         general_data = general.model_dump(mode="json", by_alias=True)
         general_data.pop("databaseRelevance", None)
         general_data.pop("databaseRelevanceReason", None)
+        if isinstance(requirement, dict):
+            risk_assessment = general_data["riskAssessment"]
+            if impact.status == DatabaseImpactStatus.CHANGE_REQUIRED:
+                data_factor = risk_assessment["dataImpact"]
+                minimum = 12 if any(change.change_type in {
+                    DatabaseChangeType.DROP_COLUMN, DatabaseChangeType.DATA_MIGRATION
+                } for change in impact.proposed_changes) else 5
+                if data_factor["score"] < minimum:
+                    data_factor["score"] = minimum
+                    data_factor["reason"] = "별도 DB 분석에서 저장 구조 또는 기존 데이터 변경이 필요하다고 판단했습니다."
+            if impact.status == DatabaseImpactStatus.NEEDS_CLARIFICATION:
+                risk_assessment["uncertainty"]["score"] = max(5, risk_assessment["uncertainty"]["score"])
+            elif impact.status == DatabaseImpactStatus.UNKNOWN:
+                risk_assessment["uncertainty"]["score"] = max(8, risk_assessment["uncertainty"]["score"])
+            score = sum(factor["score"] for factor in risk_assessment.values())
+            general_data["riskScore"] = score
+            unresolved_low_score = impact.status in {
+                DatabaseImpactStatus.NEEDS_CLARIFICATION, DatabaseImpactStatus.UNKNOWN
+            } and score < 25
+            general_data["riskLevel"] = (
+                RiskLevel.UNKNOWN.value if not score or unresolved_low_score
+                else risk_level_for_score(score).value
+            )
+        else:
+            for factor in general_data["riskAssessment"].values():
+                factor["score"] = 0
+                factor["reason"] = "변경 요구사항이 없어 구현 위험도를 산정하지 않았습니다."
+            general_data["riskScore"] = 0
+            general_data["riskLevel"] = RiskLevel.UNKNOWN.value
         return ProjectAnalysisResponse.model_validate({
             **general_data,
             "databaseImpact": impact.model_dump(mode="json", by_alias=True),

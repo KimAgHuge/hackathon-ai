@@ -158,6 +158,26 @@ CONCRETE_DB_JSON = """{
   }
 }"""
 
+
+ZERO_RISK_ASSESSMENT = {
+    "changeScope": {"score": 0, "reason": "변경 범위를 확인하지 못했습니다."},
+    "dataImpact": {"score": 0, "reason": "데이터 변경이 확인되지 않았습니다."},
+    "securityImpact": {"score": 0, "reason": "보안 변경이 확인되지 않았습니다."},
+    "deliveryComplexity": {"score": 0, "reason": "배포 변경이 확인되지 않았습니다."},
+    "uncertainty": {"score": 0, "reason": "추가 정보가 필요합니다."},
+}
+
+
+def with_risk_assessment(response):
+    payload = json.loads(response)
+    payload["riskAssessment"] = ZERO_RISK_ASSESSMENT
+    return json.dumps(payload, ensure_ascii=False)
+
+
+VALID_MODEL_JSON = with_risk_assessment(VALID_MODEL_JSON)
+AMBIGUOUS_DB_JSON = with_risk_assessment(AMBIGUOUS_DB_JSON)
+CONCRETE_DB_JSON = with_risk_assessment(CONCRETE_DB_JSON)
+
 GENERAL_MODEL_JSON = json.dumps({
     key: value for key, value in json.loads(VALID_MODEL_JSON).items() if key != "databaseImpact"
 }, ensure_ascii=False)
@@ -214,6 +234,49 @@ def test_requirement_analysis_requires_grounded_db_decision():
     assert result.database_impact.status.value == "NEEDS_CLARIFICATION"
     assert result.database_impact.observed_tables == ["public.projects", "public.project_members"]
     assert client.chat_calls == 2
+
+
+def test_risk_score_and_level_are_derived_from_independent_change_factors():
+    general = json.loads(REQUIREMENT_GENERAL_MODEL_JSON)
+    general["riskLevel"] = "HIGH"
+    general["riskScore"] = 8
+    general["riskAssessment"] = {
+        "changeScope": {"score": 20, "reason": "여러 구성요소의 변경이 필요합니다."},
+        "dataImpact": {"score": 12, "reason": "기존 데이터 이관 가능성이 있습니다."},
+        "securityImpact": {"score": 22, "reason": "인증 경로 변경으로 보안 검토가 필요합니다."},
+        "deliveryComplexity": {"score": 15, "reason": "배포 경로가 변경될 수 있습니다."},
+        "uncertainty": {"score": 3, "reason": "일부 업무 선택이 남았습니다."},
+    }
+    client = FakeClient(chat_responses=[json.dumps(general, ensure_ascii=False), db_only(AMBIGUOUS_DB_JSON)])
+
+    result = asyncio.run(LlmService(settings(), client=client).analyze(requirement_request()))
+
+    assert result.risk_score == 74
+    assert result.risk_level.value == "HIGH"
+    assert result.risk_assessment.uncertainty.score == 5
+    assert result.risk_assessment.security_impact.score == 22
+
+
+def test_answers_can_reduce_uncertainty_without_erasing_foundational_risk():
+    general = json.loads(REQUIREMENT_GENERAL_MODEL_JSON)
+    general["riskAssessment"] = {
+        "changeScope": {"score": 25, "reason": "핵심 구조를 변경합니다."},
+        "dataImpact": {"score": 18, "reason": "기존 데이터를 이관합니다."},
+        "securityImpact": {"score": 23, "reason": "권한 체계에 영향을 줍니다."},
+        "deliveryComplexity": {"score": 15, "reason": "여러 배포 단계를 거칩니다."},
+        "uncertainty": {"score": 0, "reason": "업무 조건이 명확합니다."},
+    }
+    resolved_client = FakeClient(chat_responses=[json.dumps(general, ensure_ascii=False), db_only(CONCRETE_DB_JSON)])
+    resolved = asyncio.run(LlmService(settings(), client=resolved_client).analyze(requirement_request()))
+
+    general["riskAssessment"]["uncertainty"] = {"score": 10, "reason": "핵심 업무 선택이 남았습니다."}
+    unresolved_client = FakeClient(chat_responses=[json.dumps(general, ensure_ascii=False), db_only(AMBIGUOUS_DB_JSON)])
+    unresolved = asyncio.run(LlmService(settings(), client=unresolved_client).analyze(requirement_request()))
+
+    assert resolved.risk_score == 81
+    assert unresolved.risk_score == 91
+    assert resolved.risk_level.value == unresolved.risk_level.value == "CRITICAL"
+    assert resolved.risk_assessment.uncertainty.score == 0
 
 
 def test_requirement_analysis_reports_real_general_and_database_phases():
@@ -372,6 +435,7 @@ def test_requirement_analysis_accepts_specific_new_column():
     result = asyncio.run(LlmService(settings(), client=client).analyze(requirement_request()))
 
     assert result.database_impact.proposed_changes[0].target_column == "team_id"
+    assert result.risk_assessment.data_impact.score >= 5
 
 
 def test_requirement_analysis_rejects_new_column_that_already_exists():

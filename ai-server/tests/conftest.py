@@ -41,6 +41,13 @@ class FakeLlmService:
             frameworks=["Vue", "Spring Boot", "Oracle"],
             risk_level="UNKNOWN",
             risk_score=0,
+            risk_assessment={
+                "changeScope": {"score": 0, "reason": "변경 요청이 없습니다."},
+                "dataImpact": {"score": 0, "reason": "변경 요청이 없습니다."},
+                "securityImpact": {"score": 0, "reason": "변경 요청이 없습니다."},
+                "deliveryComplexity": {"score": 0, "reason": "변경 요청이 없습니다."},
+                "uncertainty": {"score": 0, "reason": "변경 요청이 없습니다."},
+            },
             impact_areas=[],
             evidences=[],
             recommendations=["정적 분석 근거를 추가하세요."],

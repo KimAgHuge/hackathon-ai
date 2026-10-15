@@ -113,6 +113,33 @@ class AiAnalysisClientTest {
     }
 
     @Test
+    void contradictoryRiskLevelAndScoreAreRejected() {
+        serve(exchange -> respond(exchange, 200,
+                VALID_RESULT.replace("\"riskLevel\":\"LOW\"", "\"riskLevel\":\"HIGH\"")));
+
+        assertThatThrownBy(() -> client(Duration.ofSeconds(3)).analyze(PAYLOAD))
+                .isInstanceOf(IOException.class)
+                .hasMessage("Invalid AI risk assessment.");
+    }
+
+    @Test
+    void riskBreakdownMustAddUpToDisplayedScore() {
+        String assessment = """
+                "riskAssessment":{"changeScope":{"score":5,"reason":"범위"},
+                "dataImpact":{"score":0,"reason":"데이터 영향 없음"},
+                "securityImpact":{"score":0,"reason":"보안 영향 없음"},
+                "deliveryComplexity":{"score":0,"reason":"배포 영향 없음"},
+                "uncertainty":{"score":0,"reason":"불확실성 없음"}}
+                """;
+        serve(exchange -> respond(exchange, 200,
+                VALID_RESULT.replace("\"databaseImpact\":", assessment + ",\"databaseImpact\":")));
+
+        assertThatThrownBy(() -> client(Duration.ofSeconds(3)).analyze(PAYLOAD))
+                .isInstanceOf(IOException.class)
+                .hasMessage("Invalid AI risk assessment.");
+    }
+
+    @Test
     void invalidPlainLanguageSummaryIsRejected() {
         serve(exchange -> respond(exchange, 200,
                 VALID_RESULT.replace("변경 범위를 확인한 결과입니다.", " ")));
