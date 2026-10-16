@@ -165,9 +165,10 @@ class DatabaseMetadataCollectorTest {
 
         Map<String, Object> summary = collector.collect(PROJECT_ID);
 
-        assertThat(summary).containsOnlyKeys("type", "schema", "tables", "warnings", "truncated")
+        assertThat(summary).containsOnlyKeys("type", "schema", "tables", "warnings", "truncated", "capturedAt")
                 .containsEntry("type", "POSTGRESQL").containsEntry("schema", SCHEMA)
                 .containsEntry("warnings", List.of()).containsEntry("truncated", false);
+        assertThat(java.time.Instant.parse((String) summary.get("capturedAt"))).isNotNull();
         List<Map<String, Object>> tables = tables(summary);
         assertThat(tables).hasSize(1);
         assertThat(tables.getFirst())

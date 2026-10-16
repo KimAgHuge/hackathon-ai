@@ -124,3 +124,10 @@ export const reviewAnalysisResult = async (analysisJobId, payload) => {
     const { data } = await httpClient.put(`/analysis-jobs/${analysisJobId}/review`, payload)
     return data
 }
+
+/** 권한 있는 프로젝트 관리자가 승인 결과의 비식별 전 학습 사례 초안을 조회한다. */
+export const getTrainingCaseDraft = async (analysisJobId) => {
+    if (useMock) throw new Error('데모 분석에서는 학습 사례 초안을 만들 수 없습니다.')
+    const { data } = await httpClient.get(`/analysis-jobs/${analysisJobId}/training-case-draft`)
+    return data
+}

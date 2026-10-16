@@ -18,7 +18,10 @@ def case(group="p1", related=True):
     """테스트 메모리에서만 쓰는 합성 승인 사례를 만든다. 업무 데이터로 전달하지 않는다."""
     general = {"summary": "입력 근거를 확인하고 요구사항을 명확히 해야 합니다.",
                "plainLanguageSummary": "변경 범위를 정하려면 요청 내용을 더 확인해야 합니다.", "frameworks": [],
-               "riskLevel": "UNKNOWN", "riskScore": 0, "impactAreas": [], "evidences": [], "recommendations": [],
+               "riskLevel": "UNKNOWN", "riskScore": 0,
+               "riskAssessment": {key: {"score": 0, "reason": "합성 사례의 시험값입니다."}
+                                  for key in ("changeScope", "dataImpact", "securityImpact", "deliveryComplexity", "uncertainty")},
+               "impactAreas": [], "evidences": [], "recommendations": [],
                "databaseRelevance": "UNCERTAIN" if related else "UNRELATED",
                "databaseRelevanceReason": "팀 개념을 확인해야 합니다." if related else "화면 색상만 변경합니다."}
     answers = {"general": general}

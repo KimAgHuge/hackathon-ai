@@ -17,6 +17,33 @@ import static org.assertj.core.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 class AnalysisResultServiceTest {
+    @Test void trainingDraftRequiresProjectManagementAndApproval() {
+        var jobs = mock(AnalysisJobService.class);
+        var results = mock(AnalysisResultRepository.class);
+        var projects = mock(ProjectService.class);
+        var jobId = UUID.randomUUID();
+        var projectId = UUID.randomUUID();
+        var userId = UUID.randomUUID();
+        var versionId = UUID.randomUUID();
+        when(jobs.getAnalysisJob(jobId, userId)).thenReturn(AnalysisJobResponse.of(jobId, projectId, versionId,
+                "COMPLETED", 100, 100, 100, OffsetDateTime.now()));
+        doThrow(new org.springframework.security.access.AccessDeniedException("거부"))
+                .when(projects).assertCanManage(projectId, userId);
+        var service = new AnalysisResultService(jobs, results, projects, mock(AnalysisReviewValidator.class));
+
+        assertThatThrownBy(() -> service.trainingDraft(jobId, userId))
+                .isInstanceOf(org.springframework.security.access.AccessDeniedException.class);
+        verifyNoInteractions(results);
+
+        doNothing().when(projects).assertCanManage(projectId, userId);
+        when(results.findByJobId(jobId)).thenReturn(Optional.of(new AnalysisResultResponse(
+                jobId, projectId, "요약", "LOW", 10, Map.of("summary", "요약"),
+                Map.of(), OffsetDateTime.now(), "PENDING", null, null, null, null)));
+        assertThatThrownBy(() -> service.trainingDraft(jobId, userId))
+                .isInstanceOfSatisfying(ResponseStatusException.class,
+                        error -> assertThat(error.getStatusCode()).isEqualTo(HttpStatus.CONFLICT));
+    }
+
     @Test void rejectsUnauthorizedAccessBeforeLookingUpResult() {
         var jobs = mock(AnalysisJobService.class);
         var results = mock(AnalysisResultRepository.class);

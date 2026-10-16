@@ -3,6 +3,7 @@ package com.doenaai.analysis.service;
 import com.doenaai.analysis.dto.AnalysisResultResponse;
 import com.doenaai.analysis.dto.AnalysisReviewDecision;
 import com.doenaai.analysis.dto.AnalysisReviewRequest;
+import com.doenaai.analysis.dto.TrainingCaseDraftResponse;
 import com.doenaai.analysis.repository.AnalysisResultRepository;
 import com.doenaai.project.service.ProjectService;
 import lombok.RequiredArgsConstructor;
@@ -29,6 +30,21 @@ public class AnalysisResultService {
         }
         return results.findByJobId(jobId).orElseThrow(() ->
                 new ResponseStatusException(HttpStatus.NOT_FOUND, "분석 결과를 찾을 수 없습니다."));
+    }
+
+    /** 프로젝트 관리자가 승인한 변경 분석을 비식별 전 학습 사례 초안으로 조회한다. */
+    public TrainingCaseDraftResponse trainingDraft(UUID jobId, UUID userId) {
+        var job = jobs.getAnalysisJob(jobId, userId);
+        projects.assertCanManage(job.projectId(), userId);
+        if (!"COMPLETED".equals(job.status()) || job.requirementVersionId() == null) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "완료된 변경 요구사항 분석만 학습 초안으로 만들 수 있습니다.");
+        }
+        var result = results.findByJobId(jobId).orElseThrow(() ->
+                new ResponseStatusException(HttpStatus.NOT_FOUND, "분석 결과를 찾을 수 없습니다."));
+        if (!"APPROVED".equals(result.reviewStatus())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "사람이 승인한 분석 결과만 학습 초안으로 만들 수 있습니다.");
+        }
+        return TrainingCaseDraftBuilder.build(job, result);
     }
 
     /** 완료된 작업만 한 번 검토하고 AI 원본을 보존한 채 결정과 수정본을 저장한다. */

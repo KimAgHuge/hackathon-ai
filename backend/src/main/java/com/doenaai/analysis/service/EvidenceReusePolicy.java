@@ -35,6 +35,8 @@ final class EvidenceReusePolicy {
 
     private static Map<String, Object> normalizedDatabase(Map<String, Object> database) {
         var copy = new java.util.LinkedHashMap<>(database);
+        // 수집 시각은 구조 변경이 아니므로 재사용 가능성 비교에서는 제외한다.
+        copy.remove("capturedAt");
         if (database.get("tables") instanceof List<?> tables) {
             var sorted = new ArrayList<>(tables);
             sorted.sort(Comparator.comparing(item -> {

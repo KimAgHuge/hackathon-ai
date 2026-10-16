@@ -3,7 +3,15 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave, onBeforeRouteUpdate, RouterLink, useRoute, useRouter } from 'vue-router'
 import PageTitle from '@/components/common/PageTitle.vue'
 import BaseTextarea from '@/components/base/BaseTextarea.vue'
-import { cancelAnalysisJob, getAnalysisJob, getAnalysisResult, isAnalysisDemoMode, reviewAnalysisResult, startProjectAnalysis } from '@/api/analysisApi'
+import {
+    cancelAnalysisJob,
+    getAnalysisJob,
+    getAnalysisResult,
+    getTrainingCaseDraft,
+    isAnalysisDemoMode,
+    reviewAnalysisResult,
+    startProjectAnalysis,
+} from '@/api/analysisApi'
 import { getAllRequirements, createRequirementFollowUp } from '@/api/requirementApi'
 import { createAnalysisPoller } from '@/lib/analysisPolling'
 import {
@@ -42,6 +50,8 @@ const reviewCorrectedText = ref('')
 const reviewBusy = ref(false)
 const reviewError = ref('')
 const reviewNotice = ref('')
+const trainingDraftBusy = ref(false)
+const trainingDraftError = ref('')
 const lastCheckedAt = ref(null)
 const clock = ref(Date.now())
 let elapsedTimer = null
@@ -195,6 +205,33 @@ const submitReview = async (decision) => {
         reviewError.value = error.response?.data?.message || error.response?.data?.detail || error.message || '검토 결과를 저장하지 못했습니다.'
     } finally {
         reviewBusy.value = false
+    }
+}
+
+const downloadTrainingDraft = async () => {
+    if (
+        !window.confirm(
+            '이 파일에는 비식별화 전 소스·DB 근거가 들어갈 수 있습니다. 로컬에서 검토하고 비밀정보를 제거한 뒤에만 학습이나 공유 NAS 전송에 사용하세요. 초안을 내려받을까요?'
+        )
+    )
+        return
+    trainingDraftBusy.value = true
+    trainingDraftError.value = ''
+    try {
+        const draft = await getTrainingCaseDraft(job.value.jobId)
+        const content = new Blob([`${JSON.stringify(draft, null, 2)}\n`], { type: 'application/json;charset=utf-8' })
+        const url = URL.createObjectURL(content)
+        const link = document.createElement('a')
+        link.href = url
+        link.download = `training-case-draft-${job.value.jobId}.json`
+        document.body.appendChild(link)
+        link.click()
+        link.remove()
+        window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+    } catch (error) {
+        trainingDraftError.value = error.response?.data?.message || error.message || '학습 사례 초안을 만들지 못했습니다.'
+    } finally {
+        trainingDraftBusy.value = false
     }
 }
 
@@ -609,6 +646,18 @@ const evidenceEntries = (evidence) => (evidence && typeof evidence === 'object' 
                     <p v-else-if="analysis.reviewStatus === 'REJECTED'" class="mt-2 text-sm text-amber-800 dark:text-amber-300">
                         아래 내용은 반려된 AI 초안이며 승인된 결론이 아닙니다.
                     </p>
+                    <div
+                        v-if="analysis.reviewStatus === 'APPROVED' && authStore.hasPermission('ANALYSIS_APPROVE')"
+                        class="mt-4 flex flex-col items-start gap-2"
+                    >
+                        <button type="button" class="button secondary w-full sm:w-auto" :disabled="trainingDraftBusy" @click="downloadTrainingDraft">
+                            {{ trainingDraftBusy ? '초안 준비 중…' : '학습 사례 초안 내려받기' }}
+                        </button>
+                        <p class="text-xs text-amber-800 dark:text-amber-300">
+                            비식별화 전 초안입니다. 검토 항목을 채우고 검사하기 전에는 학습·공유 NAS 전송에 사용하지 마세요.
+                        </p>
+                        <p v-if="trainingDraftError" role="alert" class="break-words text-sm text-rose-700 dark:text-rose-300">{{ trainingDraftError }}</p>
+                    </div>
                 </template>
                 <template v-else-if="authStore.hasPermission('ANALYSIS_APPROVE')">
                     <p class="mb-3 text-sm text-amber-800 dark:text-amber-300">
@@ -690,7 +739,11 @@ const evidenceEntries = (evidence) => (evidence && typeof evidence === 'object' 
                     확인되지 않은 조건이 남아 있어 잠정 점수입니다. 변경 자체의 위험과 남은 불확실성을 구분해 보세요.
                 </p>
                 <dl v-if="riskFactors.length" class="mb-4 grid gap-2 sm:grid-cols-2">
-                    <div v-for="factor in riskFactors" :key="factor.label" class="rounded-lg border border-slate-200 p-3 dark:border-slate-700">
+                    <div
+                        v-for="factor in riskFactors"
+                        :key="factor.label"
+                        class="risk-factor-card rounded-lg border border-slate-200 p-3 dark:border-slate-700"
+                    >
                         <dt class="text-xs font-bold text-slate-700 dark:text-slate-200">{{ factor.label }} · {{ factor.score }}/{{ factor.maximum }}</dt>
                         <dd class="mt-1 text-xs leading-relaxed text-slate-600 dark:text-slate-300">{{ factor.reason }}</dd>
                     </div>
@@ -1368,6 +1421,13 @@ const evidenceEntries = (evidence) => (evidence && typeof evidence === 'object' 
 }
 .database-change-reason {
     color: #667188;
+}
+.risk-factor-card {
+    min-width: 0;
+}
+.risk-factor-card dt,
+.risk-factor-card dd {
+    overflow-wrap: anywhere;
 }
 .result-text,
 .result-list,

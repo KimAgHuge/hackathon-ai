@@ -106,6 +106,7 @@ public class DatabaseMetadataCollector {
         summary.put("tables", state.tables);
         summary.put("warnings", new ArrayList<>(state.warnings));
         summary.put("truncated", state.truncated);
+        summary.put("capturedAt", java.time.Instant.now().toString());
         return summary;
     }
 

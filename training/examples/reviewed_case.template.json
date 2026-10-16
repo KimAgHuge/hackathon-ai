@@ -34,6 +34,13 @@
       "frameworks": [],
       "riskLevel": "UNKNOWN",
       "riskScore": 0,
+      "riskAssessment": {
+        "changeScope": {"score": 0, "reason": "실제 근거에 따른 변경 범위 평가를 작성합니다."},
+        "dataImpact": {"score": 0, "reason": "실제 근거에 따른 데이터 영향을 작성합니다."},
+        "securityImpact": {"score": 0, "reason": "실제 근거에 따른 보안 영향을 작성합니다."},
+        "deliveryComplexity": {"score": 0, "reason": "실제 근거에 따른 구현·배포 난도를 작성합니다."},
+        "uncertainty": {"score": 0, "reason": "미확정 조건과 그 영향을 작성합니다."}
+      },
       "impactAreas": [],
       "evidences": [],
       "recommendations": [],

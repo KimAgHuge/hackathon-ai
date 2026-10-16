@@ -18,6 +18,11 @@ class EvidenceReusePolicyTest {
     @Test void completeMatchingFactsAreReusable() {
         assertThat(EvidenceReusePolicy.canReuse(evidence(false, DB), DB, SHA)).isTrue();
         assertThat(EvidenceReusePolicy.canUseSavedSnapshot(evidence(false, DB), SHA)).isTrue();
+        var earlier = new java.util.LinkedHashMap<>(DB);
+        earlier.put("capturedAt", "2026-10-15T10:00:00Z");
+        var later = new java.util.LinkedHashMap<>(DB);
+        later.put("capturedAt", "2026-10-16T10:00:00Z");
+        assertThat(EvidenceReusePolicy.canReuse(evidence(false, earlier), later, SHA)).isTrue();
     }
 
     @Test void incompleteOrChangedFactsAreNotReusable() {

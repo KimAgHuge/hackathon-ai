@@ -2,12 +2,15 @@ package com.doenaai.analysis.controller;
 
 import com.doenaai.analysis.dto.AnalysisResultResponse;
 import com.doenaai.analysis.dto.AnalysisReviewRequest;
+import com.doenaai.analysis.dto.TrainingCaseDraftResponse;
 import com.doenaai.analysis.service.AnalysisResultService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.http.CacheControl;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.UUID;
@@ -31,5 +34,14 @@ public class AnalysisResultController {
                                          @Valid @RequestBody AnalysisReviewRequest request,
                                          @AuthenticationPrincipal Jwt jwt) {
         return results.review(jobId, UUID.fromString(jwt.getSubject()), request);
+    }
+
+    /** 승인된 결과의 비식별 전 학습 사례 초안을 권한 있는 프로젝트 관리자에게만 반환한다. */
+    @GetMapping("/api/analysis-jobs/{jobId}/training-case-draft")
+    @PreAuthorize("@permissionChecker.has(authentication, 'ANALYSIS_APPROVE')")
+    public ResponseEntity<TrainingCaseDraftResponse> trainingDraft(@PathVariable UUID jobId,
+                                                                    @AuthenticationPrincipal Jwt jwt) {
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore())
+                .body(results.trainingDraft(jobId, UUID.fromString(jwt.getSubject())));
     }
 }
