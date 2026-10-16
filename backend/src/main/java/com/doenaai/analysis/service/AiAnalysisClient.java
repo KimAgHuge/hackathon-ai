@@ -45,7 +45,7 @@ public class AiAnalysisClient {
     public AiAnalysisClient(ObjectMapper mapper,
                             @Value("${doenaai.ai-server.base-url:http://localhost:8000}") String baseUrl,
                             @Value("${doenaai.ai-server.internal-api-key:}") String apiKey,
-                            @Value("${doenaai.ai-server.timeout-seconds:660}") int timeoutSeconds) {
+                            @Value("${doenaai.ai-server.timeout-seconds:3900}") int timeoutSeconds) {
         this(mapper, baseUrl, apiKey, Duration.ofSeconds(timeoutSeconds));
     }
 

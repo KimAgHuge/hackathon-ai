@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     ollama_url: AnyHttpUrl = "http://127.0.0.1:11434"
     ai_model: str = Field(default="qwen3.8:27b", min_length=1)
     ai_internal_api_key: SecretStr = Field(min_length=32)
-    ai_request_timeout_seconds: float = Field(default=300, gt=0)
+    ai_request_timeout_seconds: float = Field(default=900, gt=0)
     ai_keep_alive: str = "30m"
     ai_max_validation_retries: int = Field(default=1, ge=0, le=3)
 

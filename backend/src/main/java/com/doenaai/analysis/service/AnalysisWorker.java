@@ -69,10 +69,10 @@ public class AnalysisWorker {
     private final AiAnalysisClient ai;
     private final AnalysisNodeIdentity nodeIdentity;
     private final ConcurrentMap<UUID, Thread> activeThreads = new ConcurrentHashMap<>();
-    @Value("${doenaai.analysis.stale-timeout-seconds:1800}")
-    private int staleTimeoutSeconds = 1800;
-    @Value("${doenaai.ai-server.timeout-seconds:660}")
-    private int aiTimeoutSeconds = 660;
+    @Value("${doenaai.analysis.stale-timeout-seconds:4500}")
+    private int staleTimeoutSeconds = 4500;
+    @Value("${doenaai.ai-server.timeout-seconds:3900}")
+    private int aiTimeoutSeconds = 3900;
 
     @PostConstruct
     void logWorkerReady() {

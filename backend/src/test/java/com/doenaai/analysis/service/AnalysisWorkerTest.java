@@ -60,7 +60,7 @@ class AnalysisWorkerTest {
     @Test void onlyReceivingBackendInstancePollsItsOwnQueue() {
         worker.logWorkerReady();
         worker.poll();
-        verify(jobs).failStale(1800);
+        verify(jobs).failStale(4500);
         verify(jobs).claimNext();
     }
 

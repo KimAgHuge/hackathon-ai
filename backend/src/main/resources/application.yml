@@ -37,12 +37,12 @@ doenaai:
   ai-server:
     base-url: ${DOENAAI_AI_BASE_URL:http://localhost:8000}
     internal-api-key: ${DOENAAI_AI_INTERNAL_API_KEY:}
-    # FastAPI can retry one model response validation (2 x 300 seconds).
-    timeout-seconds: ${DOENAAI_AI_TIMEOUT_SECONDS:660}
+    # 일반 분석과 DB 분석이 각각 최대 한 번 재시도하는 4회의 모델 호출을 기다린다.
+    timeout-seconds: ${DOENAAI_AI_TIMEOUT_SECONDS:3900}
   analysis:
     worker-enabled: ${DOENAAI_ANALYSIS_WORKER_ENABLED:true}
     max-prompt-chars: ${DOENAAI_ANALYSIS_MAX_PROMPT_CHARS:90000}
     poll-delay-ms: ${DOENAAI_ANALYSIS_POLL_DELAY_MS:2500}
-    stale-timeout-seconds: ${DOENAAI_ANALYSIS_STALE_TIMEOUT_SECONDS:1800}
+    stale-timeout-seconds: ${DOENAAI_ANALYSIS_STALE_TIMEOUT_SECONDS:4500}
   git:
     connection-timeout-seconds: ${DOENAAI_GIT_CONNECTION_TIMEOUT_SECONDS:10}

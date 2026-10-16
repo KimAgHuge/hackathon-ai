@@ -236,6 +236,29 @@ def test_requirement_analysis_requires_grounded_db_decision():
     assert client.chat_calls == 2
 
 
+def test_general_stage_uses_table_overview_and_database_stage_keeps_details():
+    request = requirement_request()
+    request.database_summary["tables"][0].update({
+        "primaryKey": ["id"],
+        "foreignKeys": [{"column": "organization_id", "referencedTable": "organizations"}],
+        "indexes": [{"name": "projects_organization_idx"}],
+    })
+    original_tables = json.loads(json.dumps(request.database_summary["tables"]))
+    client = FakeClient(chat_responses=[REQUIREMENT_GENERAL_MODEL_JSON, db_only(AMBIGUOUS_DB_JSON)])
+
+    asyncio.run(LlmService(settings(), client=client).analyze(request))
+
+    general_input = client.chat_kwargs[0]["messages"][1]["content"]
+    database_input = client.chat_kwargs[1]["messages"][1]["content"]
+    assert '"detailLevel":"TABLE_OVERVIEW_ONLY"' in general_input
+    assert '"name":"projects"' in general_input
+    assert '"organization_id"' not in general_input
+    assert '"projects_organization_idx"' not in general_input
+    assert '"organization_id"' in database_input
+    assert '"projects_organization_idx"' in database_input
+    assert request.database_summary["tables"] == original_tables
+
+
 def test_risk_score_and_level_are_derived_from_independent_change_factors():
     general = json.loads(REQUIREMENT_GENERAL_MODEL_JSON)
     general["riskLevel"] = "HIGH"
