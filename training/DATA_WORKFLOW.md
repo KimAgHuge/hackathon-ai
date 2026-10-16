@@ -27,6 +27,99 @@
 `sanitized=true`는 사람이 비식별화했다고 확인하는 표시이며 도구가 개인정보를 자동 제거하지 않는다.
 승인 표시의 진위·검토자 권한도 로컬 도구가 인증하지 않는다. 승인 책임자는 별도로 정해야 한다.
 
+### 승인 결과에서 초안 만들기
+
+분석 결과 화면에서 프로젝트 관리 권한과 분석 승인 권한이 있는 사용자는 승인된 변경 분석의
+`학습 사례 초안 내려받기`를 선택할 수 있다. Backend는 같은 권한을 검사하며,
+`GET /api/analysis-jobs/{jobId}/training-case-draft`의 응답을 브라우저 캐시에 보관하지 않는다.
+구조 분석이나 미승인·반려 결과는 초안을 만들 수 없다.
+
+다운로드한 JSON의 `caseDraft`는 학습 사례 후보이고 `reviewRequired`는 보완 목록이다.
+`humanApproved=false`, `sanitized=false`, `projectGroup=null`, 비식별 검토자 ID와
+최종 응답에 저장되지 않은 DB 관련성 판단은 빈칸으로 남는다. 사람이 승인한 수정본이
+있으면 AI 원본 대신 수정본을 후보로 사용하지만, 최종 위험도는 DB 단계에서 조정됐을
+수 있으므로 단계별 정답을 다시 검토한다. 이전 분석에는 DB 구조 수집 시각이 없을 수
+있다. 새 분석은 구조 수집 완료 시각을 근거에 저장한다. 시각이나 판단을 추측해 채우지 않는다.
+
+초안은 로컬에서 열어 `reviewRequired`를 기준으로 근거·정답·비식별화를 확인한다.
+검토자가 책임지고 `caseDraft`를 보완한 뒤에만 `humanApproved`와 `sanitized`를
+`true`로 설정한다. 초안 JSON 전체를 그대로 공유 NAS에 올리거나 학습 입력으로 쓰지 않는다.
+확정 도구는 기존 파일을 덮지 않으며 사례 계약이 맞지 않으면 출력하지 않는다.
+
+```bash
+ai-server/.venv/bin/python training/finalize_draft.py \
+  --input '/로컬/경로/training-case-draft-<jobId>.json' \
+  --output training/datasets/reviewed_case_001.jsonl
+```
+
+여러 사례는 검증된 JSONL 한 줄씩을 별도 승인 데이터 파일에 모은다. `caseId`와
+실제 분석 입력이 중복되면 이후 `stage`에서 거부한다.
+
+## Mac Studio → MacBook 안전 전송
+
+검토 API의 승인은 전송을 시작하지 않는다. 먼저 승인된 결과와 실제 분석 입력·snapshot을 위 양식으로 묶어
+`reviewed_cases.jsonl`을 만든 뒤 사람이 비식별화해야 한다. `training/datasets/`는 Git에 포함되지 않는다.
+현재 운영 DB에서 승인 사례를 JSONL로 자동 추출하는 기능은 없으므로 이 입력 파일을 별도로 준비해야 한다.
+
+두 장비에 같은 버전의 `training/transfer_cases.py`가 있어야 하며, SSH 접속·호스트 키 확인을 먼저 설정한다.
+비밀번호·토큰을 명령행 인자로 넣거나 호스트 키 검증을 끄지 않는다. 맥북 저장소 경로에는 공백이 없어야 한다.
+Mac Studio에서는 AI 서버 가상환경의 Python을 사용한다.
+
+```bash
+# Mac Studio: 원본을 검사한 뒤 Git 무시 outbox에 해시 이름으로 보관한다.
+ai-server/.venv/bin/python training/transfer_cases.py stage \
+  --input training/datasets/reviewed_cases.jsonl
+
+# 출력의 package 경로와 SHA-256을 확인해 실제 값으로 바꾼다.
+ai-server/.venv/bin/python training/transfer_cases.py send \
+  --package 'training/datasets/outbox/<SHA256>.jsonl' \
+  --remote '사용자@맥북-SSH-주소' \
+  --remote-repo '/Users/사용자/IdeaProjects/hackathon-ai'
+```
+
+`send`는 SSH와 rsync로 최대 5회 재시도한다. 맥북은 `transfer-staging/*.part`에서
+SHA-256·사례 계약·중복을 검사하고, 성공한 파일만 `incoming/<SHA256>.jsonl`로 원자적으로 이동한다.
+맥북의 해시·건수 수신 확인이 발신값과 같을 때만 성공을 출력한다. 연결이 끊기거나 수신 확인이 유실되면
+**같은 send 명령을 다시 실행**한다. Mac Studio의 원본·outbox는 삭제되지 않고, 이미 수신한 동일 파일은
+`already_received`로 처리한다. 실패한 `.part`는 확정 데이터로 취급하지 않는다.
+
+맥북에서는 수신 확정 파일을 다시 검사한다.
+
+```bash
+training/.venv/bin/python training/export_dataset.py \
+  --input 'training/datasets/incoming/<SHA256>.jsonl' --validate-only
+```
+
+SSH 연결이 없는 경우에도 outbox의 해시 파일을 다른 안전한 경로로 맥북의
+`training/datasets/transfer-staging/<SHA256>.jsonl.part`에 복사한 뒤, 맥북에서
+`training/.venv/bin/python training/transfer_cases.py receive --staged 'training/datasets/transfer-staging/<SHA256>.jsonl.part'`
+를 실행하면 같은 검증·원자적 확정이 적용된다. 단, 이 수동 복사는 자동 재시도되지 않는다.
+
+### 임시 공유 NAS 경유 방식
+
+현재 두 장비 사이에 SSH 연결이 되지 않아, 양쪽에서 접근 가능한 공통 NAS가 있다는
+전제로 공유 폴더 경유 방식을 임시 채택했다. 지금 검증한 구현 환경은 동일 Apple 계정의
+**iCloud Drive 폴더를 공유 NAS 경로처럼 사용하는 방식**이다. iCloud Drive가 별도의
+물리 NAS 장비라는 뜻은 아니다. 두 Mac의 동기화가 켜져 있고 승인·비식별화된 사례를
+개인 클라우드에 보관해도 되는 경우에만 사용한다. 비밀번호·토큰·실제 업무 행은 올리지
+않는다. Studio의 원본과 outbox는 그대로 보존한다. 현재 SSH 전송 도구가 공유 폴더를
+자동 감시하는 것은 아니며, 아래 복사와 맥북 수신 확인은 수동 작업이다.
+
+1. Studio에서 위 `stage` 명령으로 해시 이름의 outbox 파일을 만든다.
+2. 그 파일을 현재 공유 NAS 역할을 하는 iCloud Drive의 `DoenaaiTrainingTransfer` 폴더에 복사한다. 복사 중인
+   파일은 `<SHA256>.jsonl.uploading`으로 두고, 로컬 복사·해시 확인 후
+   `<SHA256>.jsonl`로 이름을 바꾼다. Finder의 iCloud 상태에서 업로드 완료도 확인한다.
+3. 맥북에서 파일을 명시적으로 다운로드하고 로컬
+   `training/datasets/transfer-staging/<SHA256>.jsonl.part`로 복사한다.
+4. 맥북의 `receive --staged ...`를 실행한다. 이 명령은 SHA-256과 사례 계약을
+   검사한 뒤에만 로컬 `incoming`에 확정한다. 성공 수신증의 해시·건수를 Studio의
+   `stage` 출력과 비교한다. 이름만 보이거나 업로드 대기 중인 파일은 수신 완료가 아니다.
+
+중간에 끊기면 Studio의 원본과 outbox는 지우지 말고 같은 해시 파일을 다시 복사한다.
+맥북에서 `receive`가 실패하면 불완전한 `.part`는 확정되지 않는다. 수신증까지 확인하기
+전에는 공유 폴더의 파일이나 Studio 사본을 삭제하지 않는다. 현재 공유 폴더 방식은 이 도구의
+실시간 전송 확인/자동 재시도를 제공하지 않으므로 SSH 방식과 동일한 자동화로 취급하지 않는다.
+
 기존 DB의 `original_result`·`corrected_result`는 최종 조합 응답이다.
 새 계약의 `answers.general.plainLanguageSummary`는 기술 요약과 별도로 고객·PM이 이해할 수 있는 한 줄이다. AI 초안을 그대로 승인하지 말고, 영향이나 확정 여부를 과장하지 않는지 사람이 검토한다.
 최종 응답에서 제거된 `databaseRelevance`, `databaseRelevanceReason`을 임의로 복원하지 않는다.
