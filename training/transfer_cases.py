@@ -123,10 +123,14 @@ def receive(staged, inbox=DEFAULT_INBOX):
     if destination.exists():
         if destination.is_symlink() or content_hash(destination)[0] != expected:
             raise TransferError("이미 수신한 파일의 무결성이 맞지 않습니다.")
+        with destination.open("rb") as source:
+            os.fchmod(source.fileno(), 0o600)
+            os.fsync(source.fileno())
         status = "already_received"
         staged.unlink()
     else:
         with staged.open("rb") as source:
+            os.fchmod(source.fileno(), 0o600)
             os.fsync(source.fileno())
         os.replace(staged, destination)
         sync_directory(inbox)
@@ -175,7 +179,11 @@ def send(package, remote, remote_repo, attempts=5, timeout=300, runner=subproces
             if not receipt_lines:
                 raise TransferError("맥북의 수신 확인을 받지 못했습니다.")
             receipt = json.loads(receipt_lines[-1])
-            if receipt.get("sha256") != checksum or receipt.get("cases") != cases or receipt.get("status") not in {"received", "already_received"}:
+            if (not isinstance(receipt, dict)
+                    or receipt.get("sha256") != checksum
+                    or type(receipt.get("cases")) is not int
+                    or receipt["cases"] != cases
+                    or receipt.get("status") not in ("received", "already_received")):
                 raise TransferError("맥북의 수신 확인 값이 발신 파일과 다릅니다.")
             return {"sha256": checksum, "cases": cases, "status": receipt["status"], "attempts": attempt}
         except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError, TransferError):

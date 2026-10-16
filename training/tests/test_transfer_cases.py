@@ -2,6 +2,7 @@
 
 import json
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -56,6 +57,21 @@ class TransferCaseTests(unittest.TestCase):
         self.assertFalse(self.inbox.exists())
         shutil.copyfile(package["package"], staged)
         self.assertEqual(receive(staged, self.inbox)["status"], "received")
+
+    def test_manual_copy_is_private_after_first_and_repeated_receive(self):
+        package = stage(self.input, self.outbox)
+        staged = self.staging / f'{package["sha256"]}.jsonl.part'
+        shutil.copyfile(package["package"], staged)
+        staged.chmod(0o644)
+        received = receive(staged, self.inbox)
+        destination = Path(received["file"])
+        self.assertEqual(stat.S_IMODE(destination.stat().st_mode), 0o600)
+        self.assertEqual(stat.S_IMODE(self.inbox.stat().st_mode), 0o700)
+
+        destination.chmod(0o644)
+        shutil.copyfile(package["package"], staged)
+        self.assertEqual(receive(staged, self.inbox)["status"], "already_received")
+        self.assertEqual(stat.S_IMODE(destination.stat().st_mode), 0o600)
 
     @unittest.skipUnless(shutil.which("rsync"), "rsync 실행 파일이 필요합니다.")
     def test_local_rsync_uses_supported_resume_flags(self):
@@ -121,6 +137,36 @@ class TransferCaseTests(unittest.TestCase):
             send(package["package"], "user@host", "/Users/user/project", attempts=2,
                  runner=runner, sleeper=lambda _: None)
         self.assertNotIn("secret-error", str(context.exception))
+        self.assertTrue(Path(package["package"]).exists())
+
+    def test_invalid_receipt_is_retried_without_exposing_contents(self):
+        package = stage(self.input, self.outbox)
+        valid = {"sha256": package["sha256"], "cases": 1, "status": "received"}
+        malformed = [None, [], "private-receipt", 1, {**valid, "cases": True},
+                     {**valid, "cases": 1.0}, {**valid, "sha256": "wrong"},
+                     {**valid, "status": "pending"}, {**valid, "status": []}]
+        for receipt in malformed:
+            with self.subTest(receipt=receipt):
+                receipts = iter([receipt, valid])
+                delays = []
+
+                def runner(command, **_):
+                    output = json.dumps(next(receipts)) if command[0] == "ssh" and "receive" in command[-1] else ""
+                    return SimpleNamespace(returncode=0, stdout=output, stderr="")
+
+                result = send(package["package"], "user@host", "/Users/user/project", attempts=2,
+                              runner=runner, sleeper=delays.append)
+                self.assertEqual(result["attempts"], 2)
+                self.assertEqual(delays, [1])
+                self.assertTrue(Path(package["package"]).exists())
+
+        def runner(command, **_):
+            output = json.dumps("private-receipt") if command[0] == "ssh" and "receive" in command[-1] else ""
+            return SimpleNamespace(returncode=0, stdout=output, stderr="")
+
+        with self.assertRaises(TransferError) as context:
+            send(package["package"], "user@host", "/Users/user/project", attempts=1, runner=runner)
+        self.assertNotIn("private-receipt", str(context.exception))
         self.assertTrue(Path(package["package"]).exists())
 
     def test_lost_receipt_can_be_retried_without_duplicate_commit(self):
