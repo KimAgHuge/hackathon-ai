@@ -131,3 +131,17 @@ export const getTrainingCaseDraft = async (analysisJobId) => {
     const { data } = await httpClient.get(`/analysis-jobs/${analysisJobId}/training-case-draft`)
     return data
 }
+
+/** 검토와 비식별화를 확인한 사례를 공유 폴더 전송 경로로 보낸다. */
+export const publishTrainingCase = async (analysisJobId, caseDraft) => {
+    if (useMock) throw new Error('데모 분석에서는 학습 사례를 전송할 수 없습니다.')
+    const { data } = await httpClient.post(`/analysis-jobs/${analysisJobId}/training-transfer`, { caseDraft, reviewConfirmed: true })
+    return data
+}
+
+/** 분석 화면을 다시 열었을 때도 파일 동기화와 수신 상태를 확인한다. */
+export const getTrainingTransferStatus = async (analysisJobId) => {
+    if (useMock) return null
+    const { data } = await httpClient.get(`/analysis-jobs/${analysisJobId}/training-transfer`)
+    return data
+}

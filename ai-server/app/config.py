@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     ai_request_timeout_seconds: float = Field(default=900, gt=0)
     ai_keep_alive: str = "30m"
     ai_max_validation_retries: int = Field(default=1, ge=0, le=3)
+    training_shared_dir: str = ""
+    training_receiver_url: str = ""
+    training_transfer_key: SecretStr = SecretStr("")
 
 
 @lru_cache

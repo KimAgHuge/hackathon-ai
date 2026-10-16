@@ -8,8 +8,10 @@ import {
     getAnalysisJob,
     getAnalysisResult,
     getTrainingCaseDraft,
+    getTrainingTransferStatus,
     isAnalysisDemoMode,
     reviewAnalysisResult,
+    publishTrainingCase,
     startProjectAnalysis,
 } from '@/api/analysisApi'
 import { getAllRequirements, createRequirementFollowUp } from '@/api/requirementApi'
@@ -51,7 +53,15 @@ const reviewBusy = ref(false)
 const reviewError = ref('')
 const reviewNotice = ref('')
 const trainingDraftBusy = ref(false)
+const trainingStatusBusy = ref(false)
 const trainingDraftError = ref('')
+const trainingEditorOpen = ref(false)
+const trainingCaseText = ref('')
+const trainingReviewRequired = ref([])
+const trainingAnswerChecked = ref(false)
+const trainingSanitizedChecked = ref(false)
+const trainingTransfer = ref(null)
+let trainingTimer = null
 const lastCheckedAt = ref(null)
 const clock = ref(Date.now())
 let elapsedTimer = null
@@ -168,6 +178,11 @@ watch(analysis, async (value, previous) => {
     reviewError.value = ''
     reviewNotice.value = ''
     reviewCorrectedText.value = JSON.stringify(analysis.value?.correctedResult || analysis.value?.result || {}, null, 2)
+    trainingEditorOpen.value = false
+    trainingCaseText.value = ''
+    trainingReviewRequired.value = []
+    trainingTransfer.value = null
+    if (value?.reviewStatus === 'APPROVED' && authStore.hasPermission('ANALYSIS_APPROVE')) checkTrainingTransfer()
     if (!value?.jobId || !job.value?.requirementVersionId) return
     try {
         const requirements = await getAllRequirements()
@@ -235,16 +250,93 @@ const downloadTrainingDraft = async () => {
     }
 }
 
+const openTrainingEditor = async () => {
+    trainingDraftBusy.value = true
+    trainingDraftError.value = ''
+    try {
+        const draft = await getTrainingCaseDraft(job.value.jobId)
+        trainingCaseText.value = JSON.stringify(draft.caseDraft, null, 2)
+        trainingReviewRequired.value = draft.reviewRequired || []
+        trainingAnswerChecked.value = false
+        trainingSanitizedChecked.value = false
+        trainingEditorOpen.value = true
+    } catch (error) {
+        trainingDraftError.value = error.response?.data?.message || error.message || '학습 사례 초안을 불러오지 못했습니다.'
+    } finally {
+        trainingDraftBusy.value = false
+    }
+}
+
+const checkTrainingTransfer = async () => {
+    const jobId = job.value?.jobId
+    if (!jobId || analysis.value?.reviewStatus !== 'APPROVED' || trainingStatusBusy.value) return
+    trainingStatusBusy.value = true
+    try {
+        const value = await getTrainingTransferStatus(jobId)
+        if (job.value?.jobId === jobId) {
+            trainingTransfer.value = value
+            trainingDraftError.value = ''
+        }
+    } catch (error) {
+        if (error.response?.status !== 404) trainingDraftError.value = '전송 상태를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.'
+    } finally {
+        trainingStatusBusy.value = false
+    }
+}
+
+const submitTrainingCase = async () => {
+    trainingDraftError.value = ''
+    if (!trainingAnswerChecked.value || !trainingSanitizedChecked.value) {
+        trainingDraftError.value = '정답·근거 검토와 비식별화 확인을 모두 선택해 주세요.'
+        return
+    }
+    let caseDraft
+    try {
+        caseDraft = JSON.parse(trainingCaseText.value)
+    } catch {
+        trainingDraftError.value = '학습 사례 JSON 문법을 확인해 주세요.'
+        return
+    }
+    if (caseDraft?.humanApproved !== true || caseDraft?.sanitized !== true) {
+        trainingDraftError.value = '검토한 JSON에서 humanApproved와 sanitized를 true로 설정해 주세요.'
+        return
+    }
+    if (!window.confirm('검토·비식별화한 학습 사례를 공유 폴더에 게시하고 맥북 수신 서버에 알릴까요?')) return
+    trainingDraftBusy.value = true
+    try {
+        trainingTransfer.value = await publishTrainingCase(job.value.jobId, caseDraft)
+        trainingEditorOpen.value = false
+    } catch (error) {
+        trainingDraftError.value = error.response?.data?.message || error.response?.data?.detail?.message || error.message || '학습 사례를 전송하지 못했습니다.'
+    } finally {
+        trainingDraftBusy.value = false
+    }
+}
+
+const trainingTransferLabel = computed(
+    () =>
+        ({
+            WAITING_FOR_RECEIVER: '공유 폴더 게시 완료 · 맥북 알림 재시도 중',
+            WAITING_FOR_SYNC: '맥북 알림 완료 · 파일 동기화 대기 중',
+            VERIFIED: '맥북 수신·검증 완료',
+            REJECTED: '맥북 검증 실패 · 사례와 공유 파일 확인 필요',
+        })[trainingTransfer.value?.status] || '전송 상태 확인 중'
+)
+
 onMounted(() => {
     window.addEventListener('beforeunload', warnBeforeUnload)
     elapsedTimer = setInterval(() => {
         if (job.value?.status === 'PENDING' || job.value?.status === 'RUNNING') clock.value = Date.now()
     }, 1000)
+    trainingTimer = setInterval(() => {
+        if (trainingTransfer.value && !['VERIFIED', 'REJECTED'].includes(trainingTransfer.value.status)) checkTrainingTransfer()
+    }, 5000)
 })
 onBeforeUnmount(() => {
     window.removeEventListener('beforeunload', warnBeforeUnload)
     poller.stop()
     if (elapsedTimer !== null) clearInterval(elapsedTimer)
+    if (trainingTimer !== null) clearInterval(trainingTimer)
 })
 
 const asList = (value) => (Array.isArray(value) ? value : [])
@@ -653,8 +745,53 @@ const evidenceEntries = (evidence) => (evidence && typeof evidence === 'object' 
                         <button type="button" class="button secondary w-full sm:w-auto" :disabled="trainingDraftBusy" @click="downloadTrainingDraft">
                             {{ trainingDraftBusy ? '초안 준비 중…' : '학습 사례 초안 내려받기' }}
                         </button>
+                        <button
+                            v-if="!trainingTransfer"
+                            type="button"
+                            class="button secondary w-full sm:w-auto"
+                            :disabled="trainingDraftBusy"
+                            @click="openTrainingEditor"
+                        >
+                            {{ trainingDraftBusy ? '초안 준비 중…' : '검토 후 학습 서버로 전송' }}
+                        </button>
+                        <p v-if="trainingTransfer" class="text-sm text-blue-700 dark:text-blue-300" role="status">{{ trainingTransferLabel }}</p>
+                        <p v-if="trainingTransfer?.status === 'REJECTED'" class="text-sm text-rose-700 dark:text-rose-300">
+                            같은 분석 작업의 전송 사례는 덮어쓰지 않습니다. 오류 원인을 확인하고 새 분석 사례로 다시 검토해 주세요.
+                        </p>
+                        <button type="button" class="button secondary w-full sm:w-auto" :disabled="trainingStatusBusy" @click="checkTrainingTransfer">
+                            {{ trainingStatusBusy ? '상태 확인 중…' : '전송 상태 확인' }}
+                        </button>
+                        <div v-if="trainingEditorOpen" class="grid w-full min-w-0 gap-3 rounded-xl border border-slate-200 p-4 dark:border-slate-700">
+                            <h3 class="font-semibold">학습 사례 검토</h3>
+                            <p class="text-sm text-amber-800 dark:text-amber-300">
+                                아래 항목을 확인하고 JSON의 빈 값과 정답을 수정하세요. 공유 폴더 게시 후에는 내용을 덮어쓸 수 없습니다.
+                            </p>
+                            <ul class="list-disc space-y-1 pl-5 text-sm text-slate-700 dark:text-slate-300">
+                                <li v-for="item in trainingReviewRequired" :key="item">{{ item }}</li>
+                            </ul>
+                            <BaseTextarea
+                                id="training-case-json"
+                                v-model="trainingCaseText"
+                                label="학습 사례 JSON"
+                                mode="code"
+                                rows="12"
+                                :disabled="trainingDraftBusy"
+                            />
+                            <label class="flex items-start gap-2 text-sm"
+                                ><input v-model="trainingAnswerChecked" type="checkbox" :disabled="trainingDraftBusy" />정답·소스·DB 근거의 일치를 사람이
+                                확인했습니다.</label
+                            >
+                            <label class="flex items-start gap-2 text-sm"
+                                ><input v-model="trainingSanitizedChecked" type="checkbox" :disabled="trainingDraftBusy" />비밀키·개인정보·고객 원문을
+                                제거했습니다.</label
+                            >
+                            <div class="flex flex-wrap gap-2">
+                                <button type="button" class="button primary" :disabled="trainingDraftBusy" @click="submitTrainingCase">검토한 사례 전송</button>
+                                <button type="button" class="button secondary" :disabled="trainingDraftBusy" @click="trainingEditorOpen = false">닫기</button>
+                            </div>
+                        </div>
                         <p class="text-xs text-amber-800 dark:text-amber-300">
-                            비식별화 전 초안입니다. 검토 항목을 채우고 검사하기 전에는 학습·공유 NAS 전송에 사용하지 마세요.
+                            내려받는 파일은 비식별화 전 초안입니다. 검토 항목을 채우고 검사하기 전에는 학습·공유 NAS 전송에 사용하지 마세요.
                         </p>
                         <p v-if="trainingDraftError" role="alert" class="break-words text-sm text-rose-700 dark:text-rose-300">{{ trainingDraftError }}</p>
                     </div>

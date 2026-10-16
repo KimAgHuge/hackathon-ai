@@ -74,6 +74,10 @@ mlx_lm.lora \
 Mac Studio/Ollama 배포에는 모델별 변환·호환성 검증이 추가로 필요합니다.
 
 `export_dataset.py`는 승인된 로컬 사례를 검사해 JSONL로 변환합니다.
+승인 화면의 자동 전달을 사용할 경우 맥북에서 `receiver_service.py`를 실행하면
+공유 폴더에 사례가 도착할 때까지 대기하고 검증 후 `datasets/incoming`에 확정합니다.
+필요한 환경변수·수신 상태·보안 조건은 [데이터·평가 안내](DATA_WORKFLOW.md)의
+자동 전달 절을 먼저 확인하세요. 파일 수신은 학습 실행이 아닙니다.
 `evaluate_model.py`는 같은 시험 세트의 원본 모델·학습 어댑터 답변을 생성하고 비교합니다.
 전달 양식과 명령은 [데이터·평가 안내](DATA_WORKFLOW.md)를 참고합니다.
 원격 DB의 승인 API/추출과 `train_lora.py` 자동화는 아직 구현하지 않았습니다.
