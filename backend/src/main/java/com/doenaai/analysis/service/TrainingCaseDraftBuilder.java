@@ -4,10 +4,15 @@ import com.doenaai.analysis.dto.AnalysisJobResponse;
 import com.doenaai.analysis.dto.AnalysisResultResponse;
 import com.doenaai.analysis.dto.TrainingCaseDraftResponse;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 /** 저장된 최종 결과를 검토가 필요한 학습 사례 후보로만 변환한다. */
 final class TrainingCaseDraftBuilder {
@@ -18,7 +23,7 @@ final class TrainingCaseDraftBuilder {
     private TrainingCaseDraftBuilder() {}
 
     /** 누락된 단계 판단과 비식별화 여부를 임의로 확정하지 않는다. */
-    static TrainingCaseDraftResponse build(AnalysisJobResponse job, AnalysisResultResponse result) {
+    static TrainingCaseDraftResponse build(AnalysisJobResponse job, AnalysisResultResponse result, UUID requestingUserId) {
         Map<String, Object> effective = result.correctedResult() == null
                 ? result.result() : result.correctedResult();
         Map<String, Object> facts = result.facts() == null ? Map.of() : result.facts();
@@ -54,10 +59,13 @@ final class TrainingCaseDraftBuilder {
         }
 
         var approval = new LinkedHashMap<String, Object>();
-        approval.put("reviewerId", null);
+        approval.put("reviewerId", pseudonym("reviewer", requestingUserId));
         approval.put("approvedAt", result.reviewedAt() == null ? null : result.reviewedAt().toString());
         approval.put("note", result.reviewNote());
-        reviewRequired.add("approval: 비식별 검토자 ID와 승인 이유·시각을 다시 확인해야 합니다.");
+        if (result.reviewedAt() == null) reviewRequired.add("approval.approvedAt: 승인 시각을 확인해야 합니다.");
+        if (result.reviewNote() == null || result.reviewNote().isBlank()) {
+            reviewRequired.add("approval.note: 승인 이유를 작성해야 합니다.");
+        }
 
         var general = new LinkedHashMap<String, Object>();
         for (String field : GENERAL_FIELDS) {
@@ -83,15 +91,24 @@ final class TrainingCaseDraftBuilder {
 
         var draft = new LinkedHashMap<String, Object>();
         draft.put("caseId", "analysis-" + job.jobId());
-        draft.put("projectGroup", null);
+        draft.put("projectGroup", pseudonym("project", result.projectId()));
         draft.put("humanApproved", false);
         draft.put("sanitized", false);
         draft.put("approval", approval);
         draft.put("snapshot", snapshot);
         draft.put("request", request);
         draft.put("answers", answers);
-        reviewRequired.add("projectGroup: 동일 프로젝트 사례에 사용할 비식별 그룹명을 지정해야 합니다.");
-        reviewRequired.add("humanApproved, sanitized: 학습 정답 검토와 비식별화 후에만 true로 바꿔야 합니다.");
+        reviewRequired.add("humanApproved, sanitized: 정답 검토와 비식별화가 필요합니다. 전송 화면의 확인란을 선택하면 자동으로 반영됩니다.");
         return new TrainingCaseDraftResponse(draft, List.copyOf(reviewRequired));
+    }
+
+    /** 같은 프로젝트와 로그인 사용자는 모든 사례에서 같은 비식별 식별자를 사용한다. */
+    private static String pseudonym(String kind, UUID id) {
+        try {
+            var value = ("doenaai-training:" + kind + ":" + id).getBytes(StandardCharsets.UTF_8);
+            return kind + "-" + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value));
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("학습 사례 식별자를 생성할 수 없습니다.", exception);
+        }
     }
 }

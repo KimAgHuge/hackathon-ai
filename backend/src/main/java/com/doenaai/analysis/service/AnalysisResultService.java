@@ -44,7 +44,7 @@ public class AnalysisResultService {
         if (!"APPROVED".equals(result.reviewStatus())) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "사람이 승인한 분석 결과만 학습 초안으로 만들 수 있습니다.");
         }
-        return TrainingCaseDraftBuilder.build(job, result);
+        return TrainingCaseDraftBuilder.build(job, result, userId);
     }
 
     /** 완료된 작업만 한 번 검토하고 AI 원본을 보존한 채 결정과 수정본을 저장한다. */

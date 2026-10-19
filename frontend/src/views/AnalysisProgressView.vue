@@ -27,6 +27,7 @@ import {
 import { shouldConfirmAnalysisExit, warnOnAnalysisUnload } from '@/lib/analysisNavigation'
 import { buildFollowUpPayload, canContinueFromAnalysis, savedFollowUpDraft } from '@/lib/followUpWorkflow'
 import { buildAnalysisReviewPayload } from '@/lib/analysisReview'
+import { applyTrainingReviewConfirmations } from '@/lib/trainingReview'
 import { riskPresentation } from '@/lib/riskLevel'
 import { useAuthStore } from '@/stores/authStore'
 
@@ -88,7 +89,7 @@ const statusDescription = computed(() => {
     if (job.value?.status === 'COMPLETED') return '분석이 완료되었습니다. 아래에서 저장된 결과와 수집 근거를 확인할 수 있습니다.'
     if (job.value?.status === 'FAILED') return '작업이 실패하여 자동 조회를 중지했습니다. 이전 완료 분석의 질문으로 돌아가 답변을 수정할 수 있습니다.'
     if (job.value?.status === 'CANCELLED') return '취소된 분석 작업입니다. 이전 완료 분석의 질문에서 다시 이어갈 수 있습니다.'
-    if (job.value?.status === 'PENDING') return '분석 서버가 작업을 시작하기를 기다리고 있습니다.'
+    if (job.value?.status === 'PENDING') return '서비스 서버가 분석 작업을 시작하기를 기다리고 있습니다.'
     return '서버에서 소스코드와 DB 구조를 수집하고 분석하고 있습니다.'
 })
 
@@ -181,6 +182,8 @@ watch(analysis, async (value, previous) => {
     trainingEditorOpen.value = false
     trainingCaseText.value = ''
     trainingReviewRequired.value = []
+    trainingAnswerChecked.value = false
+    trainingSanitizedChecked.value = false
     trainingTransfer.value = null
     if (value?.reviewStatus === 'APPROVED' && authStore.hasPermission('ANALYSIS_APPROVE')) checkTrainingTransfer()
     if (!value?.jobId || !job.value?.requirementVersionId) return
@@ -284,6 +287,16 @@ const checkTrainingTransfer = async () => {
     }
 }
 
+const syncTrainingReviewFlags = () => {
+    try {
+        const draft = applyTrainingReviewConfirmations(trainingCaseText.value, trainingAnswerChecked.value, trainingSanitizedChecked.value)
+        trainingCaseText.value = JSON.stringify(draft, null, 2)
+        trainingDraftError.value = ''
+    } catch (error) {
+        trainingDraftError.value = error.message
+    }
+}
+
 const submitTrainingCase = async () => {
     trainingDraftError.value = ''
     if (!trainingAnswerChecked.value || !trainingSanitizedChecked.value) {
@@ -292,16 +305,13 @@ const submitTrainingCase = async () => {
     }
     let caseDraft
     try {
-        caseDraft = JSON.parse(trainingCaseText.value)
-    } catch {
-        trainingDraftError.value = '학습 사례 JSON 문법을 확인해 주세요.'
+        caseDraft = applyTrainingReviewConfirmations(trainingCaseText.value, trainingAnswerChecked.value, trainingSanitizedChecked.value)
+        trainingCaseText.value = JSON.stringify(caseDraft, null, 2)
+    } catch (error) {
+        trainingDraftError.value = error.message
         return
     }
-    if (caseDraft?.humanApproved !== true || caseDraft?.sanitized !== true) {
-        trainingDraftError.value = '검토한 JSON에서 humanApproved와 sanitized를 true로 설정해 주세요.'
-        return
-    }
-    if (!window.confirm('검토·비식별화한 학습 사례를 공유 폴더에 게시하고 맥북 수신 서버에 알릴까요?')) return
+    if (!window.confirm('검토·비식별화한 학습 사례를 공유 폴더에 게시하고 AI 학습 서버에 알릴까요?')) return
     trainingDraftBusy.value = true
     try {
         trainingTransfer.value = await publishTrainingCase(job.value.jobId, caseDraft)
@@ -316,10 +326,10 @@ const submitTrainingCase = async () => {
 const trainingTransferLabel = computed(
     () =>
         ({
-            WAITING_FOR_RECEIVER: '공유 폴더 게시 완료 · 맥북 알림 재시도 중',
-            WAITING_FOR_SYNC: '맥북 알림 완료 · 파일 동기화 대기 중',
-            VERIFIED: '맥북 수신·검증 완료',
-            REJECTED: '맥북 검증 실패 · 사례와 공유 파일 확인 필요',
+            WAITING_FOR_RECEIVER: '공유 폴더 게시 완료 · AI 학습 서버 알림 재시도 중',
+            WAITING_FOR_SYNC: 'AI 학습 서버 알림 완료 · 파일 동기화 대기 중',
+            VERIFIED: 'AI 학습 서버 수신·검증 완료',
+            REJECTED: 'AI 학습 서버 검증 실패 · 사례와 공유 파일 확인 필요',
         })[trainingTransfer.value?.status] || '전송 상태 확인 중'
 )
 
@@ -752,7 +762,7 @@ const evidenceEntries = (evidence) => (evidence && typeof evidence === 'object' 
                             :disabled="trainingDraftBusy"
                             @click="openTrainingEditor"
                         >
-                            {{ trainingDraftBusy ? '초안 준비 중…' : '검토 후 학습 서버로 전송' }}
+                            {{ trainingDraftBusy ? '초안 준비 중…' : '검토 후 AI 학습 서버로 전송' }}
                         </button>
                         <p v-if="trainingTransfer" class="text-sm text-blue-700 dark:text-blue-300" role="status">{{ trainingTransferLabel }}</p>
                         <p v-if="trainingTransfer?.status === 'REJECTED'" class="text-sm text-rose-700 dark:text-rose-300">
@@ -766,6 +776,9 @@ const evidenceEntries = (evidence) => (evidence && typeof evidence === 'object' 
                             <p class="text-sm text-amber-800 dark:text-amber-300">
                                 아래 항목을 확인하고 JSON의 빈 값과 정답을 수정하세요. 공유 폴더 게시 후에는 내용을 덮어쓸 수 없습니다.
                             </p>
+                            <p class="text-sm text-slate-600 dark:text-slate-300">
+                                프로젝트 그룹과 현재 로그인한 검토자의 식별자는 자동으로 입력됩니다. 아래 검토 확인란의 선택도 JSON에 자동으로 반영됩니다.
+                            </p>
                             <ul class="list-disc space-y-1 pl-5 text-sm text-slate-700 dark:text-slate-300">
                                 <li v-for="item in trainingReviewRequired" :key="item">{{ item }}</li>
                             </ul>
@@ -778,12 +791,20 @@ const evidenceEntries = (evidence) => (evidence && typeof evidence === 'object' 
                                 :disabled="trainingDraftBusy"
                             />
                             <label class="flex items-start gap-2 text-sm"
-                                ><input v-model="trainingAnswerChecked" type="checkbox" :disabled="trainingDraftBusy" />정답·소스·DB 근거의 일치를 사람이
-                                확인했습니다.</label
+                                ><input
+                                    v-model="trainingAnswerChecked"
+                                    type="checkbox"
+                                    :disabled="trainingDraftBusy"
+                                    @change="syncTrainingReviewFlags"
+                                />정답·소스·DB 근거의 일치를 사람이 확인했습니다.</label
                             >
                             <label class="flex items-start gap-2 text-sm"
-                                ><input v-model="trainingSanitizedChecked" type="checkbox" :disabled="trainingDraftBusy" />비밀키·개인정보·고객 원문을
-                                제거했습니다.</label
+                                ><input
+                                    v-model="trainingSanitizedChecked"
+                                    type="checkbox"
+                                    :disabled="trainingDraftBusy"
+                                    @change="syncTrainingReviewFlags"
+                                />비밀키·개인정보·고객 원문을 제거했습니다.</label
                             >
                             <div class="flex flex-wrap gap-2">
                                 <button type="button" class="button primary" :disabled="trainingDraftBusy" @click="submitTrainingCase">검토한 사례 전송</button>

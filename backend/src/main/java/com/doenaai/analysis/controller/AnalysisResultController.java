@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.UUID;
 import java.util.Map;
+import java.util.LinkedHashMap;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -51,13 +52,13 @@ public class AnalysisResultController {
                 .body(results.trainingDraft(jobId, UUID.fromString(jwt.getSubject())));
     }
 
-    /** 승인한 분석과 연결된 검토 사례만 학습 서버로 보낸다. */
+    /** 승인한 분석과 연결된 검토 사례만 AI 학습 서버로 보낸다. */
     @PostMapping("/api/analysis-jobs/{jobId}/training-transfer")
     @PreAuthorize("@permissionChecker.has(authentication, 'ANALYSIS_APPROVE')")
     public ResponseEntity<Map<String, Object>> publishTrainingCase(@PathVariable UUID jobId,
             @Valid @RequestBody TrainingTransferRequest request, @AuthenticationPrincipal Jwt jwt) {
         var draft = results.trainingDraft(jobId, UUID.fromString(jwt.getSubject()));
-        var value = request.caseDraft();
+        var value = new LinkedHashMap<>(request.caseDraft());
         var expectedProjectId = ((Map<?, ?>) draft.caseDraft().get("request")).get("projectId");
         var expectedVersionId = ((Map<?, ?>) draft.caseDraft().get("snapshot")).get("requirementVersionId");
         if (!request.reviewConfirmed() || !Boolean.TRUE.equals(value.get("humanApproved"))
@@ -66,9 +67,20 @@ public class AnalysisResultController {
                 || !(value.get("request") instanceof Map<?, ?> input)
                 || !expectedProjectId.equals(input.get("projectId"))
                 || !(value.get("snapshot") instanceof Map<?, ?> snapshot)
-                || !expectedVersionId.equals(snapshot.get("requirementVersionId"))) {
+                || !expectedVersionId.equals(snapshot.get("requirementVersionId"))
+                || !(value.get("approval") instanceof Map<?, ?> approval)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "학습 사례의 검토 확인 또는 분석 연결 정보가 올바르지 않습니다.");
         }
+        // 사용자가 편집한 식별자 대신 저장된 프로젝트와 현재 로그인 사용자에서 만든 값을 사용한다.
+        value.put("projectGroup", draft.caseDraft().get("projectGroup"));
+        var expectedApproval = (Map<?, ?>) draft.caseDraft().get("approval");
+        var confirmedApproval = new LinkedHashMap<String, Object>();
+        approval.forEach((key, fieldValue) -> confirmedApproval.put((String) key, fieldValue));
+        confirmedApproval.put("reviewerId", expectedApproval.get("reviewerId"));
+        if (expectedApproval.get("approvedAt") != null) {
+            confirmedApproval.put("approvedAt", expectedApproval.get("approvedAt"));
+        }
+        value.put("approval", confirmedApproval);
         return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(trainingTransfers.publish(jobId, value));
     }
 
