@@ -27,6 +27,10 @@ SECRET_VALUE = re.compile(
 
 class DatasetError(ValueError):
     """원문이나 비밀값을 포함하지 않는 데이터 검증 오류다."""
+    def __init__(self, message, *, code="CASE_CONTRACT_INVALID", field="caseDraft"):
+        super().__init__(message)
+        self.code = code
+        self.field = field
 
 
 def strict_json(text):
@@ -90,7 +94,7 @@ def prompt_contract():
 def ensure_sanitized(value):
     """민감 필드명과 알려진 토큰·이메일 패턴을 거부한다. 사람의 비식별 검토를 대체하지 않는다."""
     if find_forbidden_key(value) or SECRET_VALUE.search(json.dumps(value, ensure_ascii=False)):
-        raise DatasetError("비밀정보 필드 또는 비식별화가 필요한 문자열을 발견했습니다.")
+        raise DatasetError("비밀정보 필드 또는 비식별화가 필요한 문자열을 발견했습니다.", code="CASE_NOT_SANITIZED")
 
 
 def validate_response(stage, answer):
@@ -101,7 +105,7 @@ def validate_response(stage, answer):
     try:
         parsed = STAGES[stage].model_validate(answer)
     except (ValidationError, ValueError, TypeError):
-        raise DatasetError("응답이 AI 분석/추론 서버의 JSON 계약을 통과하지 못했습니다.") from None
+        raise DatasetError("응답이 AI 분석/추론 서버의 JSON 계약을 통과하지 못했습니다.", code="CASE_RESPONSE_INVALID", field=f"answers.{stage}") from None
     canonical = parsed.model_dump(mode="json", by_alias=True)
     if answer != canonical:
         raise DatasetError("응답은 모든 필수 필드와 camelCase 이름만 포함해야 합니다.")
@@ -235,7 +239,8 @@ def validate_case(record):
     for stage, answer in answers.items():
         answer = validate_response(stage, answer)
         if grounding_issues(stage, answer, request):
-            raise DatasetError("승인 정답의 파일·DB 근거 또는 분석 분기가 입력과 일치하지 않습니다.")
+            raise DatasetError("승인 정답의 파일·DB 근거 또는 분석 분기가 입력과 일치하지 않습니다.",
+                               code="GROUNDING_MISMATCH", field=f"answers.{stage}")
     return record
 
 

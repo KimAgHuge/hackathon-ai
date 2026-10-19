@@ -26,6 +26,18 @@ public class AnalysisJobRepository {
     private final AnalysisNodeIdentity nodeIdentity;
     private static final TypeReference<List<AnalysisActivityEvent>> ACTIVITY_LOG = new TypeReference<>() {};
 
+    /** 승인 사례의 보완 근거를 읽을 때 당시 저장소와 커밋만 사용한다. */
+    public Optional<TrainingSource> findTrainingSource(UUID jobId) {
+        return jdbcTemplate.query("""
+                select input_snapshot ->> 'repositoryUrl' as url, input_snapshot ->> 'branch' as branch,
+                       input_snapshot ->> 'commitSha' as revision
+                from public.analysis_jobs where id = ? and status = 'COMPLETED'
+                """, (rs, row) -> new TrainingSource(rs.getString("url"), rs.getString("branch"),
+                rs.getString("revision")), jobId).stream().findFirst();
+    }
+
+    public record TrainingSource(String url, String branch, String revision) {}
+
     /** 프로젝트·요구사항 버전·Git 커밋을 고정한 PENDING 작업을 생성해 반환한다. */
     public AnalysisJobResponse createProjectScan(
             UUID projectId,

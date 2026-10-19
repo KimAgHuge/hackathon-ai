@@ -74,4 +74,20 @@ class TrainingTransferClientTest {
         return new TrainingTransferClient(JsonMapper.builder().build(),
                 "http://127.0.0.1:" + server.getAddress().getPort(), key);
     }
+
+    @Test void keepsOnlyKnownValidationCodeAndNeverRemoteMessage() throws Exception {
+        server.createContext("/api/training/transfers", exchange -> {
+            var answer = "{\"detail\":{\"code\":\"GROUNDING_MISMATCH\",\"field\":\"answers.general\",\"message\":\"private-customer-value\"}}".getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(422, answer.length);
+            exchange.getResponseBody().write(answer);
+            exchange.close();
+        });
+        server.start();
+        assertThatThrownBy(() -> client(KEY).validateCase(UUID.randomUUID(), Map.of("caseId", "sample")))
+                .isInstanceOfSatisfying(TrainingTransferClient.CaseValidationException.class, error -> {
+                    assertThat(error.code).isEqualTo("GROUNDING_MISMATCH");
+                    assertThat(error.field).isEqualTo("answers.general");
+                    assertThat(error.getReason()).doesNotContain("private-customer-value");
+                });
+    }
 }

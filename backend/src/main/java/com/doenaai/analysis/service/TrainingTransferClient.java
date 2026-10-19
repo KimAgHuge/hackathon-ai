@@ -14,6 +14,7 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.Map;
 import java.util.UUID;
+import java.util.Set;
 
 @Service
 public class TrainingTransferClient {
@@ -21,6 +22,25 @@ public class TrainingTransferClient {
     private final URI endpoint;
     private final String apiKey;
     private final HttpClient client;
+
+    /** 검증 오류는 고정 코드와 안내만 보존하고 원격 원문을 포함하지 않는다. */
+    public static final class CaseValidationException extends ResponseStatusException {
+        public final String code;
+        public final String field;
+        public CaseValidationException(String code, String field) {
+            super(HttpStatus.UNPROCESSABLE_ENTITY, switch (code) {
+                case "GROUNDING_MISMATCH" -> "승인 정답의 근거가 학습 입력과 일치하지 않습니다. 원본 커밋의 근거 확인·보강 후 다시 검토해 주세요.";
+                case "CASE_RESPONSE_INVALID" -> "단계별 정답의 JSON 형식이 올바르지 않습니다.";
+                case "CASE_NOT_SANITIZED" -> "비밀정보 또는 비식별화가 필요한 문자열이 있습니다. 원문을 검토해 주세요.";
+                case "EVIDENCE_SOURCE_UNAVAILABLE" -> "분석 당시 Git 커밋을 확인하지 못했습니다. 저장소 연결·커밋·파일과 줄 번호를 확인해 주세요.";
+                case "EVIDENCE_INVALID_REFERENCE" -> "학습 사례의 분석 연결 정보나 근거 파일·줄 번호가 올바르지 않습니다.";
+                case "EVIDENCE_LIMIT" -> "보완할 근거가 20개를 초과했습니다. 정답 근거를 검토하거나 새 분석을 사용해 주세요.";
+                default -> "학습 사례의 필수 항목과 승인·스냅샷 정보를 확인해 주세요.";
+            });
+            this.code = code;
+            this.field = field;
+        }
+    }
 
     public TrainingTransferClient(ObjectMapper mapper,
                                   @Value("${doenaai.ai-server.base-url:http://localhost:8000}") String baseUrl,
@@ -47,7 +67,21 @@ public class TrainingTransferClient {
         }
     }
 
-    /** 같은 작업의 수신 상태를 확인하며 AI 분석/추론 서버가 실패한 알림을 재시도하게 한다. */
+    /** 파일 게시와 수신 알림 없이 사례 계약만 검사한다. */
+    public Map<String, Object> validateCase(UUID jobId, Map<String, Object> caseDraft) {
+        try {
+            var body = mapper.writeValueAsString(Map.of("job_id", jobId.toString(), "case_draft", caseDraft));
+            return exchange(HttpRequest.newBuilder(URI.create(endpoint + "/validate"))
+                    .timeout(Duration.ofSeconds(30)).header("Content-Type", "application/json")
+                    .header("X-Internal-Api-Key", key()).POST(HttpRequest.BodyPublishers.ofString(body)).build());
+        } catch (ResponseStatusException error) {
+            throw error;
+        } catch (Exception error) {
+            throw unavailable();
+        }
+    }
+
+    /** 같은 작업의 수신 상태를 확인하며 실패한 알림의 재시도를 요청한다. */
     public Map<String, Object> status(UUID jobId) {
         try {
             var request = HttpRequest.newBuilder(URI.create(endpoint + "/by-job/" + jobId))
@@ -71,7 +105,17 @@ public class TrainingTransferClient {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "학습 전송 내역이 없습니다.");
         }
         if (response.statusCode() == 422) {
-            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "학습 사례 형식·근거 또는 비식별화를 확인하세요.");
+            String code = "CASE_CONTRACT_INVALID", field = "caseDraft";
+            try {
+                var detail = mapper.readTree(response.body()).path("detail");
+                String supplied = detail.path("code").asText("");
+                if (Set.of("GROUNDING_MISMATCH", "CASE_RESPONSE_INVALID", "CASE_NOT_SANITIZED", "CASE_CONTRACT_INVALID").contains(supplied)) code = supplied;
+                String suppliedField = detail.path("field").asText("");
+                if (Set.of("caseDraft", "answers.general", "answers.database").contains(suppliedField)) field = suppliedField;
+            } catch (Exception ignored) {
+                // 알 수 없는 원격 응답과 원문은 사용자 안내에 포함하지 않는다.
+            }
+            throw new CaseValidationException(code, field);
         }
         if (response.statusCode() != 200) throw unavailable();
         return mapper.readValue(response.body(), new TypeReference<>() {});

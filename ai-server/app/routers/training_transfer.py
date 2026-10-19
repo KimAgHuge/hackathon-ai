@@ -1,6 +1,7 @@
 """Backend만 호출할 수 있는 승인 학습 사례 전송 API다."""
 
 from uuid import UUID
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict
@@ -8,18 +9,45 @@ from pydantic import BaseModel, ConfigDict
 from app.config import Settings, get_settings
 from app.dependencies import require_internal_api_key
 from app.services.training_transfer_service import (
-    DatasetError, TrainingTransferService, TransferConfigurationError, TransferError,
+    DatasetError, TrainingTransferService, TransferConfigurationError, TransferError, validate_case,
 )
 
 
 router = APIRouter(prefix="/api/training/transfers", tags=["training"],
                    dependencies=[Depends(require_internal_api_key)])
+logger = logging.getLogger("doenaai.training")
+
+
+def case_error(error, job_id):
+    """원문 대신 고정 오류 코드와 검사 단계만 응답·로그에 남긴다."""
+    messages = {
+        "GROUNDING_MISMATCH": "승인 정답의 근거가 학습 입력과 일치하지 않습니다. 원본 커밋의 근거 보강 후 다시 검토해 주세요.",
+        "CASE_RESPONSE_INVALID": "단계별 정답의 JSON 형식이 올바르지 않습니다.",
+        "CASE_NOT_SANITIZED": "비밀정보 또는 비식별화가 필요한 문자열이 있습니다. 원문을 검토해 주세요.",
+        "CASE_CONTRACT_INVALID": "학습 사례의 필수 항목과 승인·스냅샷 정보를 확인해 주세요.",
+    }
+    code = error.code if error.code in messages else "CASE_CONTRACT_INVALID"
+    field = error.field if error.field in {"caseDraft", "answers.general", "answers.database"} else "caseDraft"
+    logger.warning("training_case_validation_failed job_id=%s code=%s field=%s", job_id, code, field)
+    return HTTPException(status_code=422, detail={"code": code, "field": field, "message": messages[code]})
 
 
 class TransferRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     job_id: UUID
     case_draft: dict
+
+
+@router.post("/validate")
+def validate_training_case(request: TransferRequest):
+    """파일 게시·알림·학습 없이 전체 사례 계약만 검사한다."""
+    try:
+        if request.case_draft.get("caseId") != f"analysis-{request.job_id}":
+            raise DatasetError("분석 작업과 사례가 일치하지 않습니다.")
+        validate_case(request.case_draft)
+        return {"valid": True}
+    except DatasetError as error:
+        raise case_error(error, request.job_id) from None
 
 
 @router.post("")
@@ -30,7 +58,9 @@ def publish_training_case(request: TransferRequest, settings: Settings = Depends
     except TransferConfigurationError:
         raise HTTPException(status_code=503, detail={"code": "TRANSFER_NOT_CONFIGURED",
                                                       "message": "공유 폴더·AI 학습 서버 주소·전송 키를 먼저 설정하세요."}) from None
-    except (DatasetError, TransferError, ValueError):
+    except DatasetError as error:
+        raise case_error(error, request.job_id) from None
+    except (TransferError, ValueError):
         raise HTTPException(status_code=422, detail={"code": "INVALID_TRAINING_CASE",
                                                       "message": "학습 사례 계약·비식별 확인 또는 전송 설정을 확인하세요."}) from None
     except OSError:

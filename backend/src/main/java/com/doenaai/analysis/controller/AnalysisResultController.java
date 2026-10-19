@@ -6,6 +6,7 @@ import com.doenaai.analysis.dto.TrainingCaseDraftResponse;
 import com.doenaai.analysis.dto.TrainingTransferRequest;
 import com.doenaai.analysis.service.AnalysisResultService;
 import com.doenaai.analysis.service.TrainingTransferClient;
+import com.doenaai.analysis.service.TrainingEvidenceService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -26,6 +27,7 @@ import org.springframework.web.server.ResponseStatusException;
 public class AnalysisResultController {
     private final AnalysisResultService results;
     private final TrainingTransferClient trainingTransfers;
+    private final TrainingEvidenceService trainingEvidence;
 
     /** 인증된 사용자가 접근 가능한 완료 작업의 AI 결과와 입력 근거를 반환한다. */
     @GetMapping("/api/analysis-jobs/{jobId}/result")
@@ -81,7 +83,8 @@ public class AnalysisResultController {
             confirmedApproval.put("approvedAt", expectedApproval.get("approvedAt"));
         }
         value.put("approval", confirmedApproval);
-        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(trainingTransfers.publish(jobId, value));
+        var verified = trainingEvidence.verifiedCase(jobId, UUID.fromString(jwt.getSubject()), value);
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(trainingTransfers.publish(jobId, verified));
     }
 
     /** 화면을 다시 열어도 같은 승인 분석의 수신 상태를 확인한다. */

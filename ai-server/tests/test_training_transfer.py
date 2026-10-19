@@ -6,6 +6,9 @@ import threading
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from uuid import uuid4
+import copy
+
+from tests.conftest import TEST_API_KEY
 
 import httpx
 import pytest
@@ -87,3 +90,58 @@ def test_studio_to_macbook_receiver_over_local_http(tmp_path):
         server.shutdown()
         server.server_close()
         worker.join(timeout=2)
+
+
+def test_validation_only_needs_no_transfer_configuration(client):
+    job_id = uuid4()
+    record = case()
+    record["caseId"] = f"analysis-{job_id}"
+    response = client.post("/api/training/transfers/validate", headers={"X-Internal-Api-Key": TEST_API_KEY},
+                           json={"job_id": str(job_id), "case_draft": record})
+    assert response.status_code == 200
+    assert response.json() == {"valid": True}
+
+
+def test_validation_reports_grounding_code_without_original_text(client, caplog):
+    job_id = uuid4()
+    record = case()
+    record["caseId"] = f"analysis-{job_id}"
+    record["answers"]["general"]["summary"] = "private-customer-value"
+    record["answers"]["general"]["evidences"] = [{"file": "src/project.py", "line": 999}]
+    response = client.post("/api/training/transfers/validate", headers={"X-Internal-Api-Key": TEST_API_KEY},
+                           json={"job_id": str(job_id), "case_draft": record})
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "GROUNDING_MISMATCH"
+    assert response.json()["detail"]["field"] == "answers.general"
+    assert "private-customer-value" not in response.text
+    assert "private-customer-value" not in caplog.text
+    assert "GROUNDING_MISMATCH" in caplog.text
+
+
+def test_verified_supplement_is_part_of_training_input_and_passes_same_validator(client):
+    job_id = uuid4()
+    record = case()
+    record["caseId"] = f"analysis-{job_id}"
+    record["answers"]["general"]["evidences"] = [{"file": "src/project.py", "line": 999}]
+    original = copy.deepcopy(record)
+    record["request"]["sourceSummary"]["reviewedEvidence"] = [{
+        "file": "src/project.py", "line": 999, "sourceRevision": "a" * 40,
+        "excerpt": "확인한 소스 조각", "origin": "VERIFIED_GIT_SNAPSHOT",
+    }]
+    response = client.post("/api/training/transfers/validate", headers={"X-Internal-Api-Key": TEST_API_KEY},
+                           json={"job_id": str(job_id), "case_draft": record})
+    assert response.status_code == 200
+    assert "reviewedEvidence" not in original["request"]["sourceSummary"]
+
+
+def test_validation_is_authenticated_and_sanitization_is_not_bypassed(client):
+    job_id = uuid4()
+    record = case()
+    record["caseId"] = f"analysis-{job_id}"
+    request = {"job_id": str(job_id), "case_draft": record}
+    assert client.post("/api/training/transfers/validate", json=request).status_code == 401
+    record["approval"]["note"] = "private@example.test"
+    response = client.post("/api/training/transfers/validate", headers={"X-Internal-Api-Key": TEST_API_KEY}, json=request)
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "CASE_NOT_SANITIZED"
+    assert "private@example.test" not in response.text

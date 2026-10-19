@@ -4,6 +4,7 @@ import com.doenaai.analysis.dto.TrainingCaseDraftResponse;
 import com.doenaai.analysis.dto.TrainingTransferRequest;
 import com.doenaai.analysis.service.AnalysisResultService;
 import com.doenaai.analysis.service.TrainingTransferClient;
+import com.doenaai.analysis.service.TrainingEvidenceService;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.security.oauth2.jwt.Jwt;
@@ -23,7 +24,9 @@ class AnalysisTrainingTransferControllerTest {
     void fillsServerOwnedIdentityAndApprovalTimeWithoutChangingReviewContent() {
         var results = mock(AnalysisResultService.class);
         var client = mock(TrainingTransferClient.class);
-        var controller = new AnalysisResultController(results, client);
+        var evidence = mock(TrainingEvidenceService.class);
+        when(evidence.verifiedCase(any(), any(), anyMap())).thenAnswer(call -> call.getArgument(2));
+        var controller = new AnalysisResultController(results, client, evidence);
         var jobId = UUID.randomUUID();
         var userId = UUID.randomUUID();
         var expected = Map.<String, Object>of(
@@ -60,7 +63,7 @@ class AnalysisTrainingTransferControllerTest {
     void rejectsCaseFromAnotherProjectOrRequirement() {
         var results = mock(AnalysisResultService.class);
         var client = mock(TrainingTransferClient.class);
-        var controller = new AnalysisResultController(results, client);
+        var controller = new AnalysisResultController(results, client, mock(TrainingEvidenceService.class));
         var jobId = UUID.randomUUID();
         var userId = UUID.randomUUID();
         var expected = Map.<String, Object>of(
@@ -85,7 +88,7 @@ class AnalysisTrainingTransferControllerTest {
     void rejectsUnconfirmedReviewEvenWhenFlagsAreTrue() {
         var results = mock(AnalysisResultService.class);
         var client = mock(TrainingTransferClient.class);
-        var controller = new AnalysisResultController(results, client);
+        var controller = new AnalysisResultController(results, client, mock(TrainingEvidenceService.class));
         var jobId = UUID.randomUUID();
         var userId = UUID.randomUUID();
         var record = Map.<String, Object>of(

@@ -14,7 +14,7 @@ from app.config import Settings
 TRAINING_ROOT = Path(__file__).resolve().parents[3] / "training"
 sys.path.insert(0, str(TRAINING_ROOT))
 
-from dataset_contract import DatasetError  # noqa: E402
+from dataset_contract import DatasetError, validate_case  # noqa: E402
 from shared_transfer import (  # noqa: E402
     locked_directory, publish_case, read_job_status, signed_headers, write_json_atomic,
 )
