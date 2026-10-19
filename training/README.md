@@ -1,7 +1,9 @@
-# training
+# AI 학습 서버 · training
 
-M4 Max MacBook에서 사용하는 MLX-LM / LoRA 학습 환경입니다.
-AI 서버의 Python 환경과 별도로 `training/.venv`를 사용합니다.
+검토한 분석 사례로 모델을 학습·평가하는 MLX-LM / LoRA 기반 AI 학습 서버 환경입니다.
+현재 기준 장비는 MacBook Pro M4 Max이며, 서버 역할의 명칭은 장비와 구분합니다.
+2026-10-19 사용자 전달 사양은 CPU 16코어·GPU 40코어·통합 메모리 64GB입니다.
+AI 분석/추론 서버의 Python 환경과 별도로 `training/.venv`를 사용합니다.
 
 ## 준비된 환경
 
@@ -73,8 +75,13 @@ mlx_lm.lora \
 실제 학습 후 고정 시험 세트로 DB 판단 정확도, 잘못된 변경 제안, 한국어 품질과 지연시간을 비교합니다.
 Mac Studio/Ollama 배포에는 모델별 변환·호환성 검증이 추가로 필요합니다.
 
+평가된 모델도 SSH 직접 전송 대신 공유 NAS 역할의 iCloud Drive에 게시하고,
+AI 분석/추론 서버가 가져와 검증한 뒤 적용하는 방향을 채택했습니다.
+[모델 배포 방침](MODEL_DELIVERY.md)에 중단 시 재시도, 배포 승인, 기존 모델 유지와
+되돌리기 기준을 정리했습니다. 자동 모델 배포 기능이 구현됐다는 뜻은 아닙니다.
+
 `export_dataset.py`는 승인된 로컬 사례를 검사해 JSONL로 변환합니다.
-승인 화면의 자동 전달을 사용할 경우 맥북에서 `receiver_service.py`를 실행하면
+승인 화면의 자동 전달을 사용할 경우 AI 학습 서버에서 `receiver_service.py`를 실행하면
 공유 폴더에 사례가 도착할 때까지 대기하고 검증 후 `datasets/incoming`에 확정합니다.
 필요한 환경변수·수신 상태·보안 조건은 [데이터·평가 안내](DATA_WORKFLOW.md)의
 자동 전달 절을 먼저 확인하세요. 파일 수신은 학습 실행이 아닙니다.

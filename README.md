@@ -6,16 +6,37 @@
 
 ## 모듈
 
-- `frontend`: Vue 3 + Vite + Vue Router + Pinia + Axios + Supabase
-- `backend`: Java 25 + Spring Boot 4.1
-- `ai-server`: Python FastAPI
-- `training`: MLX-LM / LoRA 학습 영역
+- `frontend`: 웹 화면 · 프론트엔드(Web), Vue 3 + Vite + Vue Router + Pinia + Axios + Supabase
+- `backend`: 서비스 서버 · 백엔드(WAS), Java 25 + Spring Boot 4.1
+- `ai-server`: AI 분석/추론 서버, Python FastAPI + Ollama
+- `training`: AI 학습 서버, MLX-LM / LoRA 학습·평가 영역
 - `shared`: 공통 JSON Schema
 - `supabase`: DB 마이그레이션
 - `docs`: 프로젝트 개요, 시스템 아키텍처, 현재 진행상황, 다른 PC 작업 인수인계
 
 현재 프론트엔드는 화면 검토를 위해 하드코딩 데이터를 기본값으로 사용합니다.
 `VITE_USE_MOCK=false`로 변경하면 Spring Boot API 호출 구조로 전환됩니다.
+
+## 구성 요소 명칭
+
+| 화면·공유 자료의 명칭 | 개발 명칭 | 역할 |
+|---|---|---|
+| 웹 화면 | 프론트엔드(Web) | 사용자의 입력, 분석 요청, 상태와 결과 표시 |
+| 서비스 서버 | 백엔드(WAS) | 인증·권한, 프로젝트 관리, Git·DB 근거 수집, 분석 작업과 결과 관리 |
+| AI 분석/추론 서버 | `ai-server` · FastAPI + Ollama | 수집된 근거를 모델에 전달하고 영향도·위험도 분석 응답 생성 |
+| AI 학습 서버 | `training` · MLX-LM / LoRA | 검토된 사례 수신, 데이터셋 구성, 모델 학습·평가 |
+
+Mac Studio와 MacBook은 현재 기준 장비명이며 서버 역할을 대신하는 이름으로 쓰지 않습니다.
+Vue 프론트엔드는 브라우저에서 실행되는 웹 화면이고, 운영 배포 시 웹 서버가 빌드 파일을 제공합니다.
+Spring Boot 백엔드는 WAS에서 업무 API를 처리합니다. 개발자끼리는 프론트엔드·백엔드로,
+비개발자에게는 웹 화면·서비스 서버로 설명하면 됩니다.
+
+![웹 화면, 서비스 서버, AI 분석/추론 서버와 AI 학습 서버의 구성](docs/assets/doenaai-server-roles.png)
+
+기준 장비는 AI 분석/추론 서버가 Mac Studio M1 Max·CPU 10코어·GPU 32코어·통합 메모리 64GB,
+AI 학습 서버가 MacBook Pro M4 Max·CPU 16코어·GPU 40코어·통합 메모리 64GB입니다.
+그림의 공유 NAS는 별도 NAS 장비가 아니라 **iCloud Drive 공유 폴더로 구현한 파일 전달 공간**입니다.
+SSH로 직접 전송하기 어려운 환경에서 공통 저장 공간을 사용하는 방식이며, Supabase 서비스 저장소와는 별개입니다.
 
 ## 공식 문서
 
@@ -29,7 +50,7 @@ MacBook의 학습 환경·QLoRA 검증·데이터 변환·평가 도구 진행�
 1. `docs/01_프로젝트_개요.md`
    - 프로젝트 목적, 기술 스택, 저장소와 기능 구조
 2. `docs/02_시스템_아키텍처.md`
-   - Frontend, Backend, AI 서버, 학습 서버, Supabase 구성과 흐름
+   - Frontend, Backend, AI 분석/추론 서버, AI 학습 서버, Supabase 구성과 흐름
 3. `docs/03_현재_진행상황.md`
    - 완료/미완료 기능, 검증 결과, 알려진 문제, 다음 작업
 4. `docs/04_다른_PC_Backend_작업_인수인계.md`
@@ -72,7 +93,7 @@ cd backend
 
 Windows PowerShell에서는 `./gradlew` 대신 `.\gradlew.bat`을 사용합니다.
 
-## AI 서버 실행
+## AI 분석/추론 서버 실행
 
 ```bash
 cd ai-server

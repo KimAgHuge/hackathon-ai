@@ -4,7 +4,12 @@
 실제 업무 정답은 아직 확보되지 않았으며 양식과 테스트 사례를 업무 데이터로 쓰지 않는다.
 주석·함수 설명·사용 안내는 한글로 작성했다. 운영 시스템 프롬프트는 기존 값을 재사용한다.
 
-## Mac Studio에서 전달할 사례
+학습 사례 전달 이후의 모델 배포도 같은 공유 NAS 역할의 iCloud Drive를 거치는 방향을 채택했다.
+모델 파일은 AI 분석/추론 서버가 가져와 로컬에서 검증하고 승인 후 전환한다.
+학습 사례 수신과 모델 배포는 별도 작업이며, 모델 자동 배포는 아직 구현하지 않았다.
+구체적인 안전장치와 다음 구현 순서는 [모델 배포 방침](MODEL_DELIVERY.md)을 따른다.
+
+## AI 분석/추론 서버에서 전달할 사례
 
 `examples/reviewed_case.template.json`의 구조로 사례 한 건을 만든다.
 여러 건은 `reviewed_cases.jsonl` 파일에 JSON 객체 한 건씩 한 줄로 저장한다.
@@ -35,8 +40,9 @@
 구조 분석이나 미승인·반려 결과는 초안을 만들 수 없다.
 
 다운로드한 JSON의 `caseDraft`는 학습 사례 후보이고 `reviewRequired`는 보완 목록이다.
-`humanApproved=false`, `sanitized=false`, `projectGroup=null`, 비식별 검토자 ID와
-최종 응답에 저장되지 않은 DB 관련성 판단은 빈칸으로 남는다. 사람이 승인한 수정본이
+`projectGroup`과 비식별 검토자 ID는 저장된 프로젝트와 현재 로그인한 사용자에서 자동으로 만든다.
+`humanApproved=false`, `sanitized=false`로 시작하고, 최종 응답에 저장되지 않은
+DB 관련성 판단은 빈칸으로 남는다. 사람이 승인한 수정본이
 있으면 AI 원본 대신 수정본을 후보로 사용하지만, 최종 위험도는 DB 단계에서 조정됐을
 수 있으므로 단계별 정답을 다시 검토한다. 이전 분석에는 DB 구조 수집 시각이 없을 수
 있다. 새 분석은 구조 수집 완료 시각을 근거에 저장한다. 시각이나 판단을 추측해 채우지 않는다.
@@ -57,19 +63,24 @@ ai-server/.venv/bin/python training/finalize_draft.py \
 
 ## 승인 화면에서 공유 폴더로 자동 전달
 
-승인된 변경 분석 화면에서 **검토 후 학습 서버로 전송**을 누르면 초안과 보완 목록을 볼 수 있다.
+승인된 변경 분석 화면에서 **검토 후 AI 학습 서버로 전송**을 누르면 초안과 보완 목록을 볼 수 있다.
+`projectGroup`과 `approval.reviewerId`는 서버가 프로젝트와 현재 로그인한 사용자의
+ID를 해시해 자동으로 채운다. 같은 프로젝트와 사용자는 여러 분석 사례에서도 같은
+비식별 식별자를 사용한다. 사용자 이름과 이메일은 이 식별자에 포함하지 않는다.
+전송 시에도 서버가 현재 로그인 정보를 기준으로 이 값을 다시 맞추므로 직접 작성할 필요가 없다.
 검토자가 소스·DB 근거와 정답을 수정하고 비밀값·개인정보를 제거한 다음
-`humanApproved=true`, `sanitized=true`로 표시해야 한다. 두 확인란을 선택하고
-전송을 다시 확인해야 게시된다. 서버는 학습 사례 계약을 재검증하므로 표시만 바꿔서는
+두 확인란을 선택하면 `humanApproved`와 `sanitized`가 JSON에도 자동으로 반영된다.
+두 확인란을 해제하면 해당 값도 `false`로 바뀐다. 전송을 다시 확인해야 게시된다.
+서버는 학습 사례 계약을 재검증하므로 표시만 바꿔서는
 잘못된 사례를 전송할 수 없다. 전송한 사례는 같은 분석 작업에서 다른 내용으로
 덮어쓰지 못한다. 검토 중인 JSON은 브라우저에 저장하지 않으므로 화면을 닫기 전
 필요한 경우 초안 파일을 별도로 보관한다.
 
 ```text
-브라우저 → Backend 권한·승인 검사 → AI 서버 사례 검사·outbox 보존
-         → 공유 NAS 역할의 폴더에 SHA-256 파일 게시 → 맥북 수신 API에 해시·건수·크기 알림
-         → 맥북은 파일이 없으면 대기 → 동기화 후 해시·사례 계약 검사
-         → 맥북 incoming에 확정 → Studio 화면에서 검증 완료 표시
+브라우저 → Backend 권한·승인 검사 → AI 분석/추론 서버 사례 검사·outbox 보존
+         → 공유 NAS 역할의 폴더에 SHA-256 파일 게시 → AI 학습 서버 수신 API에 해시·건수·크기 알림
+         → AI 학습 서버는 파일이 없으면 대기 → 동기화 후 해시·사례 계약 검사
+         → AI 학습 서버 incoming에 확정 → 웹 화면에서 수신·검증 완료 표시
 ```
 
 이 환경의 임시 공유 NAS는 **두 Mac의 iCloud Drive 동기화 폴더**다. SSH 접속이
@@ -77,17 +88,17 @@ ai-server/.venv/bin/python training/finalize_draft.py \
 클라우드 반입 정책을 먼저 확인한다. HTTP 알림에는 사례 원문을 넣지 않고,
 별도의 32자 이상 전송 키로 요청을 서명한다. 두 기기의 시계가 5분 이상
 어긋나지 않아야 한다. iCloud 동기화는 비동기식이므로 화면에 게시 완료가
-떠도 맥북 검증 완료 전에는 전달이 끝난 것이 아니다.
+떠도 AI 학습 서버 검증 완료 전에는 전달이 끝난 것이 아니다.
 
-Mac Studio의 `ai-server/.env`에 다음 세 값을 설정한다.
+AI 분석/추론 서버의 `ai-server/.env`에 다음 세 값을 설정한다.
 
 ```text
 DOENAAI_TRAINING_SHARED_DIR=<Studio에서 보이는 공유 폴더 절대 경로>
-DOENAAI_TRAINING_RECEIVER_URL=http://<맥북에서 접근 가능한 주소>:8011
+DOENAAI_TRAINING_RECEIVER_URL=http://<AI 분석/추론 서버에서 접근 가능한 AI 학습 서버 주소>:8011
 DOENAAI_TRAINING_TRANSFER_KEY=<두 Mac에서 동일한 별도 전송 키>
 ```
 
-맥북에는 같은 공유 폴더의 **맥북 측 절대 경로**와 같은 전송 키를 환경변수로
+AI 학습 서버에는 같은 공유 폴더의 **AI 학습 서버 측 절대 경로**와 같은 전송 키를 환경변수로
 설정하고 저장소 루트에서 다음을 실행한다. 키는 Git에 기록하지 않는다.
 
 ```bash
@@ -96,20 +107,20 @@ training/.venv/bin/python training/receiver_service.py --host 0.0.0.0 --port 801
 
 수신 서비스는 알림을 영속 저장하고 5초마다 공유 폴더를 확인한다. 파일이 아직
 없으면 `WAITING_FOR_FILE`로 대기하고, 동기화 후 해시·크기·사례 수·계약을
-검사해 `training/datasets/incoming/<SHA256>.jsonl`에 확정한다. Studio AI 서버는
+검사해 `training/datasets/incoming/<SHA256>.jsonl`에 확정한다. AI 분석/추론 서버는
 알림이 끊겨도 상태를 보존하고 15초마다 미완료 알림을 재시도한다. Backend와
-AI 서버, 맥북 수신 서비스를 새 설정으로 재시작해야 한다. 전송 API는 조회·게시
+AI 분석/추론 서버, AI 학습 서버 수신 서비스를 새 설정으로 재시작해야 한다. 전송 API는 조회·게시
 모두 기존 프로젝트 관리 및 `ANALYSIS_APPROVE` 권한을 확인한다.
 
 수신 완료는 **학습 대기 자료가 생겼다**는 뜻이지 모델 학습 시작이나 정답의
-사실 검증 완료를 뜻하지 않는다. 맥북에서 프로젝트별 분할·최소 사례 수·평가
+사실 검증 완료를 뜻하지 않는다. AI 학습 서버에서 프로젝트별 분할·최소 사례 수·평가
 기준을 확인한 뒤 학습을 별도로 실행한다. 파일이 없으면 학습은 시작하지 않고
-수신 서비스만 대기한다. 맥북 수신 컨트롤러의 서명된
+수신 서비스만 대기한다. AI 학습 서버 수신 컨트롤러의 서명된
 `GET /api/training/intake`는 검증 파일이 없으면 `WAITING_FOR_DATA`, 있으면
 `READY_FOR_DATASET`과 파일·사례 수를 반환한다. 수신함을 처리하는 자동 모델
 학습 작업은 아직 연결하지 않았다.
 
-## Mac Studio → MacBook 수동 안전 전송
+## AI 분석/추론 서버 → AI 학습 서버 수동 안전 전송
 
 검토 API의 승인은 전송을 시작하지 않는다. 먼저 승인된 결과와 실제 분석 입력·snapshot을 위 양식으로 묶어
 `reviewed_cases.jsonl`을 만든 뒤 사람이 비식별화해야 한다. `training/datasets/`는 Git에 포함되지 않는다.
@@ -117,11 +128,11 @@ AI 서버, 맥북 수신 서비스를 새 설정으로 재시작해야 한다. �
 JSONL로 일괄 추출하는 기능은 없으므로 이 입력 파일을 별도로 준비해야 한다.
 
 두 장비에 같은 버전의 `training/transfer_cases.py`가 있어야 하며, SSH 접속·호스트 키 확인을 먼저 설정한다.
-비밀번호·토큰을 명령행 인자로 넣거나 호스트 키 검증을 끄지 않는다. 맥북 저장소 경로에는 공백이 없어야 한다.
-Mac Studio에서는 AI 서버 가상환경의 Python을 사용한다.
+비밀번호·토큰을 명령행 인자로 넣거나 호스트 키 검증을 끄지 않는다. AI 학습 서버 저장소 경로에는 공백이 없어야 한다.
+전달할 사례를 보관한 AI 분석/추론 서버에서는 `ai-server` 가상환경의 Python을 사용한다.
 
 ```bash
-# Mac Studio: 원본을 검사한 뒤 Git 무시 outbox에 해시 이름으로 보관한다.
+# AI 분석/추론 서버: 원본을 검사한 뒤 Git 무시 outbox에 해시 이름으로 보관한다.
 ai-server/.venv/bin/python training/transfer_cases.py stage \
   --input training/datasets/reviewed_cases.jsonl
 
@@ -132,25 +143,25 @@ ai-server/.venv/bin/python training/transfer_cases.py send \
   --remote-repo '/Users/사용자/IdeaProjects/hackathon-ai'
 ```
 
-`send`는 SSH와 rsync로 최대 5회 재시도한다. 맥북은 `transfer-staging/*.part`에서
+`send`는 SSH와 rsync로 최대 5회 재시도한다. AI 학습 서버는 `transfer-staging/*.part`에서
 SHA-256·사례 계약·중복을 검사하고, 성공한 파일만 `incoming/<SHA256>.jsonl`로 원자적으로 이동한다.
 수신 폴더는 소유자만 접근할 수 있는 `700`, 확정 파일은 소유자만 읽고 쓸 수 있는
 `600` 권한으로 맞춘다. 수동 복사로 권한이 넓어진 파일과 동일 파일의 재수신에도 적용한다.
-맥북의 해시·건수 수신 확인이 발신값과 같을 때만 성공을 출력한다. 연결이 끊기거나 수신 확인이 유실되면
-**같은 send 명령을 다시 실행**한다. Mac Studio의 원본·outbox는 삭제되지 않고, 이미 수신한 동일 파일은
+AI 학습 서버의 해시·건수 수신 확인이 발신값과 같을 때만 성공을 출력한다. 연결이 끊기거나 수신 확인이 유실되면
+**같은 send 명령을 다시 실행**한다. AI 분석/추론 서버의 원본·outbox는 삭제되지 않고, 이미 수신한 동일 파일은
 `already_received`로 처리한다. 실패한 `.part`는 확정 데이터로 취급하지 않는다.
 수신 확인이 JSON 객체가 아니거나 건수가 정수가 아니면 성공으로 처리하지 않고 재시도한다.
 재시도 한도에 도달해도 원본과 outbox를 보존하며 수신 확인 원문을 오류에 표시하지 않는다.
 
-맥북에서는 수신 확정 파일을 다시 검사한다.
+AI 학습 서버에서는 수신 확정 파일을 다시 검사한다.
 
 ```bash
 training/.venv/bin/python training/export_dataset.py \
   --input 'training/datasets/incoming/<SHA256>.jsonl' --validate-only
 ```
 
-SSH 연결이 없는 경우에도 outbox의 해시 파일을 다른 안전한 경로로 맥북의
-`training/datasets/transfer-staging/<SHA256>.jsonl.part`에 복사한 뒤, 맥북에서
+SSH 연결이 없는 경우에도 outbox의 해시 파일을 다른 안전한 경로로 AI 학습 서버의
+`training/datasets/transfer-staging/<SHA256>.jsonl.part`에 복사한 뒤, AI 학습 서버에서
 `training/.venv/bin/python training/transfer_cases.py receive --staged 'training/datasets/transfer-staging/<SHA256>.jsonl.part'`
 를 실행하면 같은 검증·원자적 확정이 적용된다. 단, 이 수동 복사는 자동 재시도되지 않는다.
 
@@ -162,20 +173,20 @@ SSH 연결이 없는 경우에도 outbox의 해시 파일을 다른 안전한 �
 물리 NAS 장비라는 뜻은 아니다. 두 Mac의 동기화가 켜져 있고 승인·비식별화된 사례를
 개인 클라우드에 보관해도 되는 경우에만 사용한다. 비밀번호·토큰·실제 업무 행은 올리지
 않는다. Studio의 원본과 outbox는 그대로 보존한다. 현재 SSH 전송 도구가 공유 폴더를
-자동 감시하는 것은 아니며, 아래 복사와 맥북 수신 확인은 수동 작업이다.
+자동 감시하는 것은 아니며, 아래 복사와 AI 학습 서버 수신 확인은 수동 작업이다.
 
 1. Studio에서 위 `stage` 명령으로 해시 이름의 outbox 파일을 만든다.
 2. 그 파일을 현재 공유 NAS 역할을 하는 iCloud Drive의 `DoenaaiTrainingTransfer` 폴더에 복사한다. 복사 중인
    파일은 `<SHA256>.jsonl.uploading`으로 두고, 로컬 복사·해시 확인 후
    `<SHA256>.jsonl`로 이름을 바꾼다. Finder의 iCloud 상태에서 업로드 완료도 확인한다.
-3. 맥북에서 파일을 명시적으로 다운로드하고 로컬
+3. AI 학습 서버에서 파일을 명시적으로 다운로드하고 로컬
    `training/datasets/transfer-staging/<SHA256>.jsonl.part`로 복사한다.
-4. 맥북의 `receive --staged ...`를 실행한다. 이 명령은 SHA-256과 사례 계약을
+4. AI 학습 서버의 `receive --staged ...`를 실행한다. 이 명령은 SHA-256과 사례 계약을
    검사한 뒤에만 로컬 `incoming`에 확정한다. 성공 수신증의 해시·건수를 Studio의
    `stage` 출력과 비교한다. 이름만 보이거나 업로드 대기 중인 파일은 수신 완료가 아니다.
 
 중간에 끊기면 Studio의 원본과 outbox는 지우지 말고 같은 해시 파일을 다시 복사한다.
-맥북에서 `receive`가 실패하면 불완전한 `.part`는 확정되지 않는다. 수신증까지 확인하기
+AI 학습 서버에서 `receive`가 실패하면 불완전한 `.part`는 확정되지 않는다. 수신증까지 확인하기
 전에는 공유 폴더의 파일이나 Studio 사본을 삭제하지 않는다. 이 절의 수동 복사는
 실시간 수신 확인과 자동 재시도를 제공하지 않는다. 위 승인 화면의 자동 전달과 혼동하지 않는다.
 

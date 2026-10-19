@@ -11,11 +11,11 @@
 | 모델 메타데이터 | 27.3B, `qwen35` 내부 아키텍처, `Q4_K_M` 양자화, 최대 컨텍스트 262144토큰, text/vision/tools/thinking 지원 (`ollama show qwen3.8:27b`) |
 | 학습 원본 계열 | [Qwen/Qwen3.8-27B](https://huggingface.co/Qwen/Qwen3.8-27B). 운영용 Ollama GGUF 파일과 별도이다. |
 | MLX 4비트 후보 | [mlx-community/Qwen3.8-27B-4bit](https://huggingface.co/mlx-community/Qwen3.8-27B-4bit). MacBook MLX-LM 0.32.0에서 짧은 QLoRA 역전파·업데이트·어댑터 재로딩을 확인했다. 긴 업무 입력·품질·Ollama 배포는 미검증. [MacBook 최신 결과](12_2026-10-14_MacBook_학습_도구_진행상황.md) |
-| AI 서버 모델 설정 | 로컬 `ai-server/.env`와 [설정 기본값](../ai-server/app/config.py)은 `qwen3.8:27b` |
+| AI 분석/추론 서버 모델 설정 | 로컬 `ai-server/.env`와 [설정 기본값](../ai-server/app/config.py)은 `qwen3.8:27b` |
 | 추론 방식 | [호출 코드](../ai-server/app/services/llm_service.py)는 `think`를 **명시하지 않는다**. Qwen/Ollama의 기본 thinking 동작을 사용한다. 짧은 직접 호출에서 thinking 필드가 생성되는 것을 확인했다. 이전 비교에서는 이를 ‘추론 켬’으로 기록했다. |
-| 컨텍스트 | 모델 지원 최대 262144토큰. AI 서버는 `num_ctx`를 지정하지 않는다. 실제 로드 시 값은 `ollama ps`로 재확인해야 한다. |
-| 출력 토큰 상한 | AI 서버는 `num_predict`를 지정하지 않는다. **운영 코드에 고정된 출력 상한은 없다.** |
-| 샘플링 | 모델 Modelfile의 `temperature=1`, `top_k=20`, `top_p=0.95`, `min_p=0` 중 AI 서버가 매 호출 `temperature=0`으로 덮어쓴다. 나머지는 호출 코드에서 재지정하지 않는다. |
+| 컨텍스트 | 모델 지원 최대 262144토큰. AI 분석/추론 서버는 `num_ctx`를 지정하지 않는다. 실제 로드 시 값은 `ollama ps`로 재확인해야 한다. |
+| 출력 토큰 상한 | AI 분석/추론 서버는 `num_predict`를 지정하지 않는다. **운영 코드에 고정된 출력 상한은 없다.** |
+| 샘플링 | 모델 Modelfile의 `temperature=1`, `top_k=20`, `top_p=0.95`, `min_p=0` 중 AI 분석/추론 서버가 매 호출 `temperature=0`으로 덮어쓴다. 나머지는 호출 코드에서 재지정하지 않는다. |
 | 시간·재시도 | 초기 비교 시험은 Ollama 호출당 300초였다. 실제 전체 경로 검증에서는 이 Mac의 Git 무시 로컬 `.env`에서 600초로 늘렸다. 검증 실패 시 1회 재시도, `keep_alive=30m`. 다른 PC에는 자동 적용되지 않는다. |
 | 구조화 출력 | 두 호출 모두 `format=response_type.model_json_schema(by_alias=True)`로 JSON Schema를 Ollama에 전달하고 Pydantic으로 다시 검증한다. |
 
@@ -54,11 +54,11 @@ PARAMETER temperature 1
 
 ## 4. 학습 전 Qwen 기준 결과
 
-2026-10-14에 같은 저장소 발췌 근거로 ‘한 팀만 프로젝트를 관리’ 질문을 [실제 AI 서버의 두 단계 로직](../ai-server/app/services/llm_service.py)에 직접 보낸 이전 시험이 있다. 정확한 입력 snapshot과 원본 응답은 [Qwen 기준 JSON](evaluation/qwen3.8_27b_team_management_baseline.json)에 보관했다. 일반 분석 **144.26초**, DB 분석 **204.69초**, 합계 **348.95초**였다. 최종 JSON 검증은 통과했고, 위험도는 `HIGH` 78점, DB 판단은 `NEEDS_CLARIFICATION`이었다. 재시도 횟수와 출력 토큰 수는 그때 별도로 기록하지 않아 **미확인**이다.
+2026-10-14에 같은 저장소 발췌 근거로 ‘한 팀만 프로젝트를 관리’ 질문을 [실제 AI 분석/추론 서버의 두 단계 로직](../ai-server/app/services/llm_service.py)에 직접 보낸 이전 시험이 있다. 정확한 입력 snapshot과 원본 응답은 [Qwen 기준 JSON](evaluation/qwen3.8_27b_team_management_baseline.json)에 보관했다. 일반 분석 **144.26초**, DB 분석 **204.69초**, 합계 **348.95초**였다. 최종 JSON 검증은 통과했고, 위험도는 `HIGH` 78점, DB 판단은 `NEEDS_CLARIFICATION`이었다. 재시도 횟수와 출력 토큰 수는 그때 별도로 기록하지 않아 **미확인**이다.
 
 DB 분석은 ‘팀=기존 조직’과 ‘팀=별도 엔티티’ 경로를 분리하고, `projects.organization_id`의 NULL 가능성과 기존 데이터 이관 위험을 언급했다. 반면 **공통 분석은 팀을 조직으로 먼저 단정하고, 이미 조직 구성원을 조인하는 접근 로직의 변경을 권하는 등 근거가 약했다.** 기존 프로젝트 삭제를 선택지에 넣은 문장도 있었다. 이 응답은 비교용 **미승인 원본**이지 학습 정답이 아니다.
 
-시험은 실제 Frontend → Backend → AI 서버의 운영 작업이 아니라, 저장소에서 발췌한 네 테이블·두 관계·세 구성요소를 `LlmService`에 직접 보낸 재현이다. 실제 DB 업무 행은 조회하지 않았고 Git 커밋 SHA도 당시 기록하지 않았다. MacBook에서 같은 질문을 평가에 사용하려면 입력 snapshot과 모델·코드 버전을 고정해 새 기준 시험을 만드는 것이 좋다.
+시험은 실제 Frontend → Backend → AI 분석/추론 서버의 운영 작업이 아니라, 저장소에서 발췌한 네 테이블·두 관계·세 구성요소를 `LlmService`에 직접 보낸 재현이다. 실제 DB 업무 행은 조회하지 않았고 Git 커밋 SHA도 당시 기록하지 않았다. MacBook에서 같은 질문을 평가에 사용하려면 입력 snapshot과 모델·코드 버전을 고정해 새 기준 시험을 만드는 것이 좋다.
 
 이후 실제 Frontend → Backend → FastAPI → Ollama → 결과 저장 경로도 완료했다. 단, 약 14분 22초가 걸렸고 DB 응답 검증 재시도가 있었으며, 일반 분석에는 단일 FK의 의미를 잘못 해석하거나 이미 구현된 필수 입력을 다시 제안하는 오류가 있었다. 성공 결과는 **사람 미승인**이며 학습 정답으로 사용하지 않는다. 실행 이력과 교정 사항은 [실제 전체 분석 검토](evaluation/2026-10-14_qwen_실제_전체분석_검토.md)에 기록했다.
 

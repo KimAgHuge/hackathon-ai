@@ -1,6 +1,7 @@
-# ai-server
+# AI 분석/추론 서버 · ai-server
 
-Mac Studio에서 Ollama의 로컬 모델을 호출하는 FastAPI 내부 분석 서버다.
+Ollama의 로컬 모델을 호출해 분석 요청을 처리하는 FastAPI 기반 AI 분석/추론 서버다.
+현재 기준 장비는 Mac Studio이며, 장비를 바꿔도 서버 역할의 명칭은 동일하게 사용한다.
 
 현재 범위는 다음 두 부분이다.
 
@@ -79,7 +80,7 @@ dependency 디렉터리를 제외하고 파일 수, 탐색 깊이, manifest 크�
 
 ```text
 Spring Boot -> FastAPI:8000       사설 LAN
-FastAPI -> Ollama:11434           Mac Studio localhost
+FastAPI -> Ollama:11434           AI 분석/추론 서버 localhost
 외부 PC -> Ollama:11434           금지
 ```
 

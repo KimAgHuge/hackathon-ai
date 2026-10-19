@@ -19,7 +19,7 @@
 ```text
 Frontend
   -> Spring Boot Backend (다른 PC, port 8080)
-  -> FastAPI AI Server (Mac Studio, port 8000)
+  -> FastAPI AI 분석/추론 서버 (Mac Studio, port 8000)
   -> Ollama + Devstral (Mac Studio localhost, port 11434)
 ```
 
@@ -393,7 +393,7 @@ POST /api/estimates/{estimateId}/publish
 - 잘못된 작업량/기간/비용 범위를 거부함
 - 역할별 작성, 검토, 승인, 공개 권한이 검증됨
 
-## 11. 작업 5: Spring Boot에서 Mac AI 서버 호출
+## 11. 작업 5: Spring Boot에서 AI 분석/추론 서버 호출
 
 현재 Backend 설정에는 다음 값만 선언되어 있고 실제 HTTP client는 없다.
 
@@ -557,7 +557,7 @@ feat: 조직 및 tenant API 구현
 feat: 프로젝트 조직 소유 관계 연결
 feat: 요구사항 버전 관리 API 구현
 feat: 견적 검토 및 공개 API 구현
-feat: Mac AI 서버 클라이언트 연동
+feat: AI 분석/추론 서버 클라이언트 연동
 feat: 분석 Worker 상태 모델 추가
 ```
 
