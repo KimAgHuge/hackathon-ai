@@ -8,6 +8,7 @@ import {
     updateTrainingDraftField,
     unmatchedTrainingEvidence,
     trainingValidationMessage,
+    trainingReviewWarnings,
 } from '../src/lib/trainingDraftCompletion.js'
 
 const validDraft = () => ({
@@ -94,4 +95,28 @@ test('알려진 오류 코드는 안내하되 원격 오류 원문은 표시하�
     assert.match(message, /GROUNDING_MISMATCH/)
     assert.doesNotMatch(message, /private-customer-value/)
     assert.doesNotMatch(trainingValidationMessage({ response: { status: 422, data: { message: 'private-customer-value' } } }), /private-customer-value/)
+})
+
+test('파일 단위 인용은 실제 입력 파일과 비교하고 명시한 줄 번호는 정확하게 검사한다', () => {
+    const draft = validDraft()
+    draft.request = { sourceSummary: { components: [{ path: 'known.vue', line: 7 }] }, relations: [] }
+    draft.request.sourceSummary.changeRequirement = { title: '화면 변경', userClaim: { file: 'not-collected.vue', line: 3 } }
+    draft.answers.general.evidences = [
+        { file: 'known.vue' },
+        { file: 'known.vue', line: null },
+        { file: 'known.vue', line: 8 },
+        { file: 'not-collected.vue' },
+        { file: 'known.vue', line: 0 },
+    ]
+    assert.deepEqual(unmatchedTrainingEvidence(JSON.stringify(draft)), [
+        { file: 'known.vue', line: 8 },
+        { file: 'not-collected.vue', line: null },
+        { file: 'known.vue', line: '?' },
+    ])
+})
+
+test('DB 범위 확인 안내는 정해진 코드만 표시하고 검증 실패로 바꾸지 않는다', () => {
+    assert.equal(trainingReviewWarnings({ valid: true, reviewWarnings: ['DATABASE_SCOPE_REVIEW'] }).length, 1)
+    assert.deepEqual(trainingReviewWarnings({ valid: true, reviewWarnings: ['private-customer-value'] }), [])
+    assert.deepEqual(trainingReviewWarnings({ valid: true }), [])
 })

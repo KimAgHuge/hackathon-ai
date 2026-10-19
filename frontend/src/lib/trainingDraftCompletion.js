@@ -3,7 +3,7 @@ const isEmpty = (value) => value === null || value === undefined || (typeof valu
 const relevanceValues = ['RELATED', 'UNRELATED', 'UNCERTAIN']
 const completionPaths = ['snapshot.databaseCapturedAt', 'answers.general.databaseRelevance', 'answers.general.databaseRelevanceReason']
 
-// 현재 학습 입력에 없는 파일·줄 번호를 원문 코드 없이 찾아 표시한다.
+// 파일 단위 인용과 정확한 줄 인용을 구분한다. 사용자가 적은 확인 문장은 소스 근거로 취급하지 않는다.
 export const unmatchedTrainingEvidence = (text) => {
     let draft
     try {
@@ -12,24 +12,43 @@ export const unmatchedTrainingEvidence = (text) => {
         return []
     }
     const references = new Set()
+    const files = new Set()
     const collect = (value) => {
         if (Array.isArray(value)) value.forEach(collect)
         else if (isObject(value)) {
             const file = value.file ?? value.path
-            if (typeof file === 'string' && Number.isInteger(value.line)) references.add(`${file}:${value.line}`)
+            if (typeof file === 'string' && file.trim()) {
+                files.add(file)
+                if (Number.isInteger(value.line) && value.line > 0) references.add(`${file}:${value.line}`)
+            }
             Object.values(value).forEach(collect)
         }
     }
-    collect(draft.request)
+    collect(Object.fromEntries(Object.entries(draft.request?.sourceSummary || {}).filter(([key]) => key !== 'changeRequirement')))
+    collect(draft.request?.relations || [])
     return (Array.isArray(draft.answers?.general?.evidences) ? draft.answers.general.evidences : [])
-        .filter((item) => !references.has(`${item?.file}:${item?.line}`))
+        .filter((item) =>
+            item?.line == null ? !files.has(item?.file) : !Number.isInteger(item.line) || item.line < 1 || !references.has(`${item.file}:${item.line}`)
+        )
         .slice(0, 100)
-        .map((item) => ({ file: typeof item?.file === 'string' ? item.file : '파일 정보 없음', line: Number.isInteger(item?.line) ? item.line : '?' }))
+        .map((item) => ({
+            file: typeof item?.file === 'string' ? item.file : '파일 정보 없음',
+            line: item?.line == null ? null : Number.isInteger(item.line) && item.line > 0 ? item.line : '?',
+        }))
 }
+
+// 서버가 반환한 정해진 검토 코드만 화면 안내로 바꾸며 원문 메시지는 노출하지 않는다.
+export const trainingReviewWarnings = (response) =>
+    Array.isArray(response?.reviewWarnings) && response.reviewWarnings.includes('DATABASE_SCOPE_REVIEW')
+        ? [
+              '요구사항에 DB 관련 표현이 있습니다. 변경을 요구한 내용인지 제외 범위를 설명한 것인지와 DB 관련성 판단이 맞는지 확인해 주세요. 단어만으로 분석 단계를 강제하지 않습니다.',
+          ]
+        : []
 
 export const trainingValidationMessage = (error) => {
     const code = error?.response?.data?.code
     const messages = {
+        RECEIVER_UPDATE_REQUIRED: 'AI 학습 서버의 검증 규칙 업데이트 또는 연결 확인이 필요합니다. 파일은 아직 게시하지 않았습니다.',
         GROUNDING_MISMATCH: '승인 정답의 근거가 학습 입력과 일치하지 않습니다. 원본 커밋 근거 확인·보강 후 다시 검토해 주세요.',
         CASE_RESPONSE_INVALID: '단계별 정답의 JSON 형식이 올바르지 않습니다.',
         CASE_NOT_SANITIZED: '비밀정보 또는 비식별화가 필요한 문자열이 있습니다. 원문을 검토해 주세요.',

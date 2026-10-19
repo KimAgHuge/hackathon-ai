@@ -6,6 +6,8 @@ import BaseTextarea from '@/components/base/BaseTextarea.vue'
 import BaseModal from '@/components/base/BaseModal.vue'
 import TrainingDraftCompletion from '@/components/analysis/TrainingDraftCompletion.vue'
 import TrainingDataGuide from '@/components/analysis/TrainingDataGuide.vue'
+import AnalysisCorrectionEditor from '@/components/analysis/AnalysisCorrectionEditor.vue'
+import AnalysisJsonGuide from '@/components/analysis/AnalysisJsonGuide.vue'
 import {
     cancelAnalysisJob,
     getAnalysisJob,
@@ -32,6 +34,7 @@ import {
 import { shouldConfirmAnalysisExit, warnOnAnalysisUnload } from '@/lib/analysisNavigation'
 import { buildFollowUpPayload, canContinueFromAnalysis, savedFollowUpDraft } from '@/lib/followUpWorkflow'
 import { buildAnalysisReviewPayload } from '@/lib/analysisReview'
+import { analysisCorrectionIssues } from '@/lib/analysisCorrection'
 import { analysisReviewLabel, trainingTransferPresentation } from '@/lib/analysisReviewPresentation'
 import { applyTrainingReviewConfirmations } from '@/lib/trainingReview'
 import {
@@ -40,6 +43,7 @@ import {
     trainingDraftIssues,
     unmatchedTrainingEvidence,
     trainingValidationMessage,
+    trainingReviewWarnings,
 } from '@/lib/trainingDraftCompletion'
 import { riskPresentation } from '@/lib/riskLevel'
 import { useAuthStore } from '@/stores/authStore'
@@ -63,6 +67,7 @@ const previousQuestionJobId = ref('')
 const reviewNote = ref('')
 const reviewUseCorrection = ref(false)
 const reviewCorrectedText = ref('')
+const reviewCorrectionIssues = computed(() => (reviewUseCorrection.value ? analysisCorrectionIssues(reviewCorrectedText.value) : []))
 const reviewBusy = ref(false)
 const reviewError = ref('')
 const reviewNotice = ref('')
@@ -76,6 +81,7 @@ const trainingReviewRequired = ref([])
 const trainingAutoFilled = ref([])
 const trainingCompletionNotice = ref('')
 const trainingValidationNotice = ref('')
+const trainingValidationWarnings = ref([])
 const trainingBlockingIssues = computed(() => trainingDraftIssues(trainingCaseText.value))
 const trainingUnmatchedEvidence = computed(() => unmatchedTrainingEvidence(trainingCaseText.value))
 const trainingVisibleReviewNotes = computed(() => remainingTrainingReviewNotes(trainingReviewRequired.value, trainingCaseText.value))
@@ -307,6 +313,7 @@ const openTrainingEditor = async () => {
 
 // 편집이나 보완 후에는 기존의 사람 확인 표시를 재사용하지 않는다.
 const editTrainingCase = (text) => {
+    trainingValidationWarnings.value = []
     trainingValidationNotice.value = ''
     trainingAnswerChecked.value = false
     trainingSanitizedChecked.value = false
@@ -365,6 +372,7 @@ const checkTrainingTransfer = async () => {
 }
 
 const syncTrainingReviewFlags = () => {
+    trainingValidationWarnings.value = []
     trainingValidationNotice.value = ''
     try {
         const draft = applyTrainingReviewConfirmations(trainingCaseText.value, trainingAnswerChecked.value, trainingSanitizedChecked.value)
@@ -406,6 +414,7 @@ const supplementTrainingEvidence = async () => {
 }
 
 const checkFullTrainingCase = async () => {
+    trainingValidationWarnings.value = []
     trainingDraftError.value = ''
     trainingValidationNotice.value = ''
     if (trainingBlockingIssues.value.length || !trainingAnswerChecked.value || !trainingSanitizedChecked.value) {
@@ -418,6 +427,7 @@ const checkFullTrainingCase = async () => {
         const draft = applyTrainingReviewConfirmations(trainingCaseText.value, true, true)
         const checked = await validateTrainingCase(jobId, draft)
         if (job.value?.jobId !== jobId || checked?.valid !== true) return false
+        trainingValidationWarnings.value = trainingReviewWarnings(checked)
         trainingValidationNotice.value =
             '전체 형식·근거·비식별화 패턴 검사를 통과했습니다. 파일은 아직 게시하지 않았습니다. 내용의 사실 여부와 모든 개인정보를 자동 보증하는 것은 아닙니다.'
         return true
@@ -995,12 +1005,12 @@ const evidenceEntries = (evidence) => (evidence && typeof evidence === 'object' 
                                         학습 입력에 없는 근거 {{ trainingUnmatchedEvidence.length }}개
                                     </h4>
                                     <p class="text-sm text-amber-900 dark:text-amber-200">
-                                        파일이 있어도 해당 줄의 참조가 원래 입력에 없으면 전체 검증에서 거부됩니다. 원본 커밋에서 확인한 코드 조각을 학습 사례
-                                        사본에 추가할 수 있습니다.
+                                        입력에 없는 파일이나 정확한 줄 인용은 원본 커밋에서 확인해야 합니다. 줄 번호가 없는 인용은 파일 단위로 검사하며 임의 줄
+                                        번호를 붙이지 않습니다.
                                     </p>
                                     <ul class="list-disc space-y-1 break-all pl-5 text-sm text-amber-900 dark:text-amber-200">
                                         <li v-for="(item, index) in trainingUnmatchedEvidence" :key="`${item.file}:${item.line}:${index}`">
-                                            {{ item.file }} · {{ item.line }}줄
+                                            {{ item.file }} · {{ item.line === null ? '파일 단위 근거' : `${item.line}줄` }}
                                         </li>
                                     </ul>
                                     <button
@@ -1015,6 +1025,7 @@ const evidenceEntries = (evidence) => (evidence && typeof evidence === 'object' 
                                 <ul class="list-disc space-y-1 pl-5 text-sm text-slate-700 dark:text-slate-300">
                                     <li v-for="item in trainingVisibleReviewNotes" :key="item">{{ item }}</li>
                                 </ul>
+                                <AnalysisJsonGuide training />
                                 <BaseTextarea
                                     id="training-case-json"
                                     :model-value="trainingCaseText"
@@ -1077,6 +1088,13 @@ const evidenceEntries = (evidence) => (evidence && typeof evidence === 'object' 
                                 <p v-if="trainingValidationNotice" class="break-words text-sm text-emerald-700 dark:text-emerald-300" role="status">
                                     {{ trainingValidationNotice }}
                                 </p>
+                                <ul
+                                    v-if="trainingValidationNotice && trainingValidationWarnings.length"
+                                    class="list-disc space-y-2 rounded-lg bg-amber-50 p-4 pl-8 text-sm text-amber-900 dark:bg-amber-950/30 dark:text-amber-200"
+                                    role="status"
+                                >
+                                    <li v-for="warning in trainingValidationWarnings" :key="warning">{{ warning }}</li>
+                                </ul>
                             </div>
                             <details class="w-full rounded-lg border border-slate-200 p-3 text-sm dark:border-slate-700">
                                 <summary class="cursor-pointer font-medium text-slate-700 dark:text-slate-200">파일로 따로 검토하기 (선택)</summary>
@@ -1114,21 +1132,12 @@ const evidenceEntries = (evidence) => (evidence && typeof evidence === 'object' 
                         />
                         <label class="mt-4 flex items-start gap-2 text-sm text-slate-700 dark:text-slate-300">
                             <input v-model="reviewUseCorrection" type="checkbox" class="mt-1" :disabled="reviewBusy" />
-                            AI 결과를 수정한 전체 JSON을 승인합니다.
+                            분석 결과를 수정한 뒤 승인합니다.
                         </label>
                         <div v-if="reviewUseCorrection" class="mt-3">
-                            <BaseTextarea
-                                id="review-corrected-result"
-                                v-model="reviewCorrectedText"
-                                label="수정 결과 JSON"
-                                mode="code"
-                                rows="15"
-                                maxlength="200000"
-                                spellcheck="false"
-                                :disabled="reviewBusy"
-                            />
+                            <AnalysisCorrectionEditor v-model="reviewCorrectedText" :disabled="reviewBusy" />
                             <p class="mt-1 text-xs text-slate-600 dark:text-slate-400">
-                                필수 필드와 DB 판단 형식은 유지해야 합니다. 검토하지 않은 근거나 비밀정보를 추가하지 마세요.
+                                수정 결과 승인은 이 분석의 검토 결과를 저장하는 동작입니다. DB 변경을 실행하거나 학습 서버로 자동 전송하지 않습니다.
                             </p>
                         </div>
                         <p v-if="reviewError" role="alert" class="mt-3 break-words text-sm text-rose-700 dark:text-rose-300">{{ reviewError }}</p>
@@ -1136,7 +1145,7 @@ const evidenceEntries = (evidence) => (evidence && typeof evidence === 'object' 
                             <button
                                 type="button"
                                 class="button primary w-full sm:w-auto"
-                                :disabled="reviewBusy || (Boolean(displayedRisk.warning) && !reviewUseCorrection)"
+                                :disabled="reviewBusy || reviewCorrectionIssues.length > 0 || (Boolean(displayedRisk.warning) && !reviewUseCorrection)"
                                 @click="submitReview('APPROVED')"
                             >
                                 {{ reviewBusy ? '저장 중…' : reviewUseCorrection ? '수정 결과 승인' : '분석 결과 승인' }}
