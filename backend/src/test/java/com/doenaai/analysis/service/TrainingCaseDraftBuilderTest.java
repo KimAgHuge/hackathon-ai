@@ -145,6 +145,26 @@ class TrainingCaseDraftBuilderTest {
                 now, null, now, now.plusMinutes(5), events);
     }
 
+    @Test void restoresUnrelatedCandidateOnlyWhenOriginalStageAndUnchangedDbDecisionAgree() {
+        var legacy = legacyResult("NOT_APPLICABLE");
+        var facts = new java.util.LinkedHashMap<>(legacy.facts());
+        facts.put("generalAnalysis", Map.of("databaseRelevance", "UNRELATED", "databaseRelevanceReason", "표시 설정만 바꿉니다."));
+        var corrected = new java.util.LinkedHashMap<>(legacy.result());
+        corrected.put("summary", "검토한 문장 수정본");
+        var approved = new AnalysisResultResponse(jobId, projectId, "수정본", "LOW", 10,
+                legacy.result(), facts, now, "APPROVED", corrected, "문장을 검토했습니다.", reviewerId, now);
+        var draft = TrainingCaseDraftBuilder.build(jobWithActivity(List.of()), approved, reviewerId);
+        var general = (Map<?, ?>) ((Map<?, ?>) draft.caseDraft().get("answers")).get("general");
+        assertThat(general.get("summary")).isEqualTo("검토한 문장 수정본");
+        assertThat(general.get("databaseRelevance")).isEqualTo("UNRELATED");
+        assertThat(draft.autoFilled()).anyMatch(item -> item.contains("검토용 후보로 복원"));
+        assertThat(draft.caseDraft().get("humanApproved")).isEqualTo(false);
+
+        corrected.put("databaseImpact", Map.of("status", "NOT_APPLICABLE", "explanation", "DB 결론을 수정했습니다."));
+        var changedDecision = TrainingCaseDraftBuilder.build(jobWithActivity(List.of()), approved, reviewerId);
+        assertThat(((Map<?, ?>) ((Map<?, ?>) changedDecision.caseDraft().get("answers")).get("general")).get("databaseRelevance")).isNull();
+    }
+
     private AnalysisResultResponse legacyResult(String databaseStatus) {
         return new AnalysisResultResponse(jobId, projectId, "최종 요약", "LOW", 10,
                 Map.of("summary", "최종 요약", "databaseImpact", Map.of("status", databaseStatus,

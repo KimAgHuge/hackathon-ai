@@ -16,6 +16,7 @@ from pydantic import ValidationError
 from app.models.analysis import DatabaseImpact, ProjectAnalysisRequest, RequirementGeneralAnalysisResponse, find_forbidden_key
 
 STAGES = {"general": RequirementGeneralAnalysisResponse, "database": DatabaseImpact}
+VALIDATION_FEATURES = ("FILE_LEVEL_EVIDENCE", "DATABASE_SCOPE_REVIEW")
 IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}\Z")
 SECRET_VALUE = re.compile(
     r"-----BEGIN [A-Z ]*PRIVATE KEY-----|\bhf_[A-Za-z0-9]{20,}\b|"
@@ -117,29 +118,36 @@ def grounding_issues(stage, answer, request):
     issues = []
     if stage == "general":
         references = set()
+        files = set()
 
         def collect(value):
             if isinstance(value, dict):
                 path = value.get("file", value.get("path"))
-                if isinstance(path, str) and type(value.get("line")) is int:
-                    references.add((path, value["line"]))
+                if isinstance(path, str) and path.strip():
+                    files.add(path)
+                    if type(value.get("line")) is int and value["line"] > 0:
+                        references.add((path, value["line"]))
                 for nested in value.values():
                     collect(nested)
             elif isinstance(value, list):
                 for nested in value:
                     collect(nested)
 
-        collect(request)
+        # 사용자의 확인 문장은 소스 파일 존재나 줄 번호를 증명하는 근거로 사용하지 않는다.
+        collect({key: value for key, value in request["sourceSummary"].items() if key != "changeRequirement"})
+        collect(request.get("relations", []))
         for evidence in answer["evidences"]:
-            if (not isinstance(evidence, dict) or not isinstance(evidence.get("file"), str)
-                    or type(evidence.get("line")) is not int or (evidence["file"], evidence["line"]) not in references):
+            if not isinstance(evidence, dict) or not isinstance(evidence.get("file"), str):
                 issues.append("evidence_not_in_input")
-        requirement = json.dumps(request["sourceSummary"]["changeRequirement"], ensure_ascii=False).lower()
-        if answer["databaseRelevance"] == "UNRELATED" and (
-            any(term in requirement for term in ("스키마", "테이블", "컬럼", "마이그레이션", "데이터베이스"))
-            or re.search(r"\b(db|database|sql)\b", requirement)
-        ):
-            issues.append("explicit_database_requirement_skipped")
+                continue
+            line = evidence.get("line")
+            if line is None:
+                # 파일 단위 인용은 파일의 참조만 확인하며 특정 코드 줄을 확인한 것으로 취급하지 않는다.
+                valid = evidence["file"] in files
+            else:
+                valid = type(line) is int and line > 0 and (evidence["file"], line) in references
+            if not valid:
+                issues.append("evidence_not_in_input")
         return sorted(set(issues))
     tables = {f"{t.get('schema')}.{t.get('name')}": t for t in request["databaseSummary"].get("tables", []) if isinstance(t, dict)}
     if not set(answer["observedTables"]).issubset(tables):
@@ -168,6 +176,12 @@ def review_flags(stage, answer, request):
     text = json.dumps(answer, ensure_ascii=False)
     requirement = json.dumps(request["sourceSummary"]["changeRequirement"], ensure_ascii=False)
     flags = []
+    # 키워드만으로 변경 의도를 확정하지 않는다. 제외 범위도 같은 단어를 쓰므로 담당자 검토 안내로 남긴다.
+    if stage == "general" and answer["databaseRelevance"] == "UNRELATED" and (
+        any(term in requirement for term in ("스키마", "테이블", "컬럼", "마이그레이션", "데이터베이스"))
+        or re.search(r"\b(db|database|sql)\b", requirement, re.IGNORECASE)
+    ):
+        flags.append("database_scope_requires_review")
     if "UNIQUE" in text.upper() and not any(w in requirement for w in ("고유", "유일", "중복 금지", "UNIQUE", "unique")):
         flags.append("unique_requires_human_review")
     if any(w in text for w in ("삭제", "제거", "DROP")) and not any(w in requirement for w in ("삭제", "제거", "폐지", "DROP", "drop")):
@@ -184,6 +198,17 @@ def review_flags(stage, answer, request):
             if term in requirement and not any(term in q for q in answer["openQuestions"]):
                 flags.append("business_term_missing_from_question")
     return sorted(set(flags))
+
+
+def required_validation_features(record):
+    """새 검증 규칙이 필요한 사례만 수신 서버의 호환성을 게시 전에 확인한다."""
+    general = record["answers"]["general"]
+    features = set()
+    if any(isinstance(item, dict) and item.get("line") is None for item in general["evidences"]):
+        features.add("FILE_LEVEL_EVIDENCE")
+    if "database_scope_requires_review" in review_flags("general", general, record["request"]):
+        features.add("DATABASE_SCOPE_REVIEW")
+    return features
 
 
 def validate_case(record):

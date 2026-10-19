@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict
 from app.config import Settings, get_settings
 from app.dependencies import require_internal_api_key
 from app.services.training_transfer_service import (
-    DatasetError, TrainingTransferService, TransferConfigurationError, TransferError, validate_case,
+    DatasetError, TrainingTransferService, TransferConfigurationError, TransferError, validate_case, review_flags, ReceiverCompatibilityError,
 )
 
 
@@ -45,6 +45,9 @@ def validate_training_case(request: TransferRequest):
         if request.case_draft.get("caseId") != f"analysis-{request.job_id}":
             raise DatasetError("분석 작업과 사례가 일치하지 않습니다.")
         validate_case(request.case_draft)
+        flags = review_flags("general", request.case_draft["answers"]["general"], request.case_draft["request"])
+        if "database_scope_requires_review" in flags:
+            return {"valid": True, "reviewWarnings": ["DATABASE_SCOPE_REVIEW"]}
         return {"valid": True}
     except DatasetError as error:
         raise case_error(error, request.job_id) from None
@@ -55,6 +58,9 @@ def publish_training_case(request: TransferRequest, settings: Settings = Depends
     """원문을 응답·로그에 포함하지 않고 전송 상태만 반환한다."""
     try:
         return TrainingTransferService(settings).publish(request.job_id, request.case_draft)
+    except ReceiverCompatibilityError:
+        raise HTTPException(status_code=503, detail={"code": "RECEIVER_UPDATE_REQUIRED",
+                                                      "message": "AI 학습 서버의 검증 규칙 업데이트 또는 연결 확인이 필요합니다. 파일은 아직 게시하지 않았습니다."}) from None
     except TransferConfigurationError:
         raise HTTPException(status_code=503, detail={"code": "TRANSFER_NOT_CONFIGURED",
                                                       "message": "공유 폴더·AI 학습 서버 주소·전송 키를 먼저 설정하세요."}) from None

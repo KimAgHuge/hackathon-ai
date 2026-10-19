@@ -81,6 +81,18 @@ final class TrainingCaseDraftBuilder {
             }
         }
         fillDatabaseRelevance(general, savedGeneral, effective, autoFilled);
+        // DB 결론을 바꾸지 않은 문장 수정본은 원래 단계의 관련 없음 판단을 검토용 후보로 재사용한다.
+        if (general.get("databaseRelevance") == null && result.correctedResult() != null
+                && facts.get("generalAnalysis") instanceof Map<?, ?> originalGeneral
+                && "UNRELATED".equals(originalGeneral.get("databaseRelevance"))
+                && originalGeneral.get("databaseRelevanceReason") instanceof String originalReason && !originalReason.isBlank()
+                && effective.get("databaseImpact") instanceof Map<?, ?> correctedImpact
+                && "NOT_APPLICABLE".equals(correctedImpact.get("status"))
+                && java.util.Objects.equals(correctedImpact, result.result().get("databaseImpact"))) {
+            general.put("databaseRelevance", "UNRELATED");
+            general.put("databaseRelevanceReason", originalReason);
+            autoFilled.add("answers.general.databaseRelevance: DB 판단이 바뀌지 않은 수정본이므로 원래 일반 분석의 관련 없음 판단을 검토용 후보로 복원했습니다. 수정한 정답은 보존하며 전송 전 확인이 필요합니다.");
+        }
         if (general.get("databaseRelevance") == null) {
             reviewRequired.add("answers.general.databaseRelevance: 관련성 판단을 복원할 수 없어 선택이 필요합니다.");
         }

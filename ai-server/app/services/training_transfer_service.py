@@ -14,7 +14,7 @@ from app.config import Settings
 TRAINING_ROOT = Path(__file__).resolve().parents[3] / "training"
 sys.path.insert(0, str(TRAINING_ROOT))
 
-from dataset_contract import DatasetError, validate_case  # noqa: E402
+from dataset_contract import DatasetError, validate_case, review_flags, required_validation_features  # noqa: E402
 from shared_transfer import (  # noqa: E402
     locked_directory, publish_case, read_job_status, signed_headers, write_json_atomic,
 )
@@ -23,6 +23,10 @@ from transfer_cases import TransferError  # noqa: E402
 
 class TransferConfigurationError(TransferError):
     """공유 폴더·수신 주소·서명 키의 설정이 누락됐을 때 발생한다."""
+
+
+class ReceiverCompatibilityError(TransferError):
+    """수신 서버가 새 사례 검증을 지원하는지 확인하지 못하면 게시 전에 중단한다."""
 
 
 class TrainingTransferService:
@@ -48,8 +52,27 @@ class TrainingTransferService:
     def publish(self, job_id, case):
         """사람이 검토한 사례만 게시하고 AI 학습 서버에 수신을 요청한다."""
         shared, _, _ = self._configured()
+        validate_case(case)
+        self._check_receiver_compatibility(case)
         status = publish_case(job_id, case, shared, outbox=self.outbox, status_dir=self.status_dir)
         return self.advance(status)
+
+    def _check_receiver_compatibility(self, case):
+        required = required_validation_features(case)
+        if not required:
+            return
+        _, receiver, secret = self._configured()
+        path = "/api/training/capabilities"
+        try:
+            context = nullcontext(self.client) if self.client else httpx.Client(timeout=5, follow_redirects=False, trust_env=False)
+            with context as client:
+                response = client.get(receiver + path, headers=signed_headers(secret, "GET", path))
+                value = response.json() if response.status_code == 200 else {}
+                features = value.get("features") if isinstance(value, dict) else None
+                if not isinstance(features, list) or not all(isinstance(item, str) for item in features) or not required.issubset(features):
+                    raise ReceiverCompatibilityError("AI 학습 서버의 검증 규칙 업데이트 또는 연결 확인이 필요합니다.")
+        except (httpx.HTTPError, ValueError, TypeError):
+            raise ReceiverCompatibilityError("AI 학습 서버의 검증 규칙 업데이트 또는 연결 확인이 필요합니다.") from None
 
     def by_job(self, job_id):
         """저장된 작업을 다시 열어 통지가 실패했으면 재시도한다."""

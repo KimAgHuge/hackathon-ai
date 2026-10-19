@@ -23,6 +23,12 @@ public class TrainingTransferClient {
     private final String apiKey;
     private final HttpClient client;
 
+    public static final class ReceiverCompatibilityException extends ResponseStatusException {
+        public ReceiverCompatibilityException() {
+            super(HttpStatus.SERVICE_UNAVAILABLE, "AI 학습 서버의 검증 규칙 업데이트 또는 연결 확인이 필요합니다. 파일은 아직 게시하지 않았습니다.");
+        }
+    }
+
     /** 검증 오류는 고정 코드와 안내만 보존하고 원격 원문을 포함하지 않는다. */
     public static final class CaseValidationException extends ResponseStatusException {
         public final String code;
@@ -116,6 +122,17 @@ public class TrainingTransferClient {
                 // 알 수 없는 원격 응답과 원문은 사용자 안내에 포함하지 않는다.
             }
             throw new CaseValidationException(code, field);
+        }
+        if (response.statusCode() == 503) {
+            try {
+                if ("RECEIVER_UPDATE_REQUIRED".equals(mapper.readTree(response.body()).path("detail").path("code").asText(""))) {
+                    throw new ReceiverCompatibilityException();
+                }
+            } catch (ReceiverCompatibilityException error) {
+                throw error;
+            } catch (Exception ignored) {
+                // 호환성 안내도 정해진 코드만 허용한다.
+            }
         }
         if (response.statusCode() != 200) throw unavailable();
         return mapper.readValue(response.body(), new TypeReference<>() {});

@@ -101,4 +101,42 @@ class TrainingEvidenceServiceTest {
         assertThatThrownBy(() -> service.verifiedCase(jobId, userId, sample(3)))
                 .isInstanceOf(TrainingTransferClient.CaseValidationException.class).hasMessageNotContaining("private-customer-value");
     }
+
+    @Test void keepsFileOnlyEvidenceAtFileScopeWithoutInventingLine() {
+        approved();
+        var submitted = new LinkedHashMap<>(sample(1));
+        submitted.put("answers", Map.of("general", Map.of("evidences", List.of(Map.of("file", "schema.sql")))));
+        var checked = service.verifiedCase(jobId, userId, submitted);
+        assertThat(checked.get("answers")).isEqualTo(submitted.get("answers"));
+        verifyNoInteractions(git);
+    }
+
+    @Test void verifiesUnknownFileAtPinnedCommitWithoutCreatingExcerptOrLine() throws Exception {
+        approved();
+        var root = Files.createDirectory(directory.resolve("file-checkout"));
+        Files.writeString(root.resolve("extra.sql"), "select 1;\n");
+        when(git.checkoutSnapshot(any(), any(), any(), any(), any()))
+                .thenReturn(new GitRepositoryConnectionService.GitSnapshot(root, root));
+        var submitted = new LinkedHashMap<>(sample(1));
+        submitted.put("answers", Map.of("general", Map.of("evidences", List.of(Map.of("file", "extra.sql")))));
+        var checked = service.verifiedCase(jobId, userId, submitted);
+        var source = (Map<?, ?>) ((Map<?, ?>) checked.get("request")).get("sourceSummary");
+        var ref = (Map<?, ?>) ((List<?>) source.get("reviewedEvidence")).getFirst();
+        assertThat(ref.get("scope")).isEqualTo("FILE");
+        assertThat(ref.get("fileSha256").toString()).matches("[0-9a-f]{64}");
+        assertThat(ref.containsKey("line")).isFalse();
+        assertThat(ref.containsKey("excerpt")).isFalse();
+        assertThat(checked.get("answers")).isEqualTo(submitted.get("answers"));
+        assertThat(root).doesNotExist();
+    }
+
+    @Test void rejectsMalformedLinesEvenForKnownFile() {
+        approved();
+        for (Object line : List.of(0, -1, true, "1", 1.5)) {
+            var submitted = new LinkedHashMap<>(sample(1));
+            submitted.put("answers", Map.of("general", Map.of("evidences", List.of(Map.of("file", "schema.sql", "line", line)))));
+            assertThatThrownBy(() -> service.verifiedCase(jobId, userId, submitted)).isInstanceOf(ResponseStatusException.class);
+        }
+        verifyNoInteractions(git);
+    }
 }

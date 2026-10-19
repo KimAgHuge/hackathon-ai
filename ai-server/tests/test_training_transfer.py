@@ -15,7 +15,7 @@ import pytest
 from pydantic import SecretStr
 
 from app.config import Settings
-from app.services.training_transfer_service import TrainingTransferService
+from app.services.training_transfer_service import TrainingTransferService, ReceiverCompatibilityError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "training/tests"))
 from test_data_tools import case
@@ -56,7 +56,8 @@ def test_notice_failure_preserves_file_and_retry_verifies(tmp_path):
         assert calls[1].headers["x-transfer-signature"]
 
 
-def test_studio_to_macbook_receiver_over_local_http(tmp_path):
+@pytest.mark.parametrize("file_only", [False, True])
+def test_studio_to_macbook_receiver_over_local_http(tmp_path, file_only):
     secret = "synthetic-transfer-key-long-enough-for-test"
     shared = tmp_path / "shared"
     shared.mkdir()
@@ -70,8 +71,11 @@ def test_studio_to_macbook_receiver_over_local_http(tmp_path):
     worker.start()
     try:
         job_id = uuid4()
-        record = case()
+        record = case(related=not file_only)
         record["caseId"] = f"analysis-{job_id}"
+        if file_only:
+            record["answers"]["general"]["evidences"] = [{"file": "src/project.py"}]
+            record["request"]["sourceSummary"]["changeRequirement"]["title"] = "표시 설정 변경이며 DB 변경은 제외합니다."
         settings = Settings(
             ai_internal_api_key="synthetic-ai-key-long-enough-for-test",
             training_shared_dir=str(shared),
@@ -145,3 +149,50 @@ def test_validation_is_authenticated_and_sanitization_is_not_bypassed(client):
     assert response.status_code == 422
     assert response.json()["detail"]["code"] == "CASE_NOT_SANITIZED"
     assert "private@example.test" not in response.text
+
+
+def test_file_only_unrelated_case_with_excluded_db_scope_reports_review_warning(client):
+    job_id = uuid4()
+    record = case(related=False)
+    record["caseId"] = f"analysis-{job_id}"
+    record["request"]["sourceSummary"]["changeRequirement"]["title"] = "화면 표시만 변경하며 DB 변경은 제외합니다."
+    record["answers"]["general"]["evidences"] = [{"file": "src/project.py"}]
+    response = client.post("/api/training/transfers/validate", headers={"X-Internal-Api-Key": TEST_API_KEY},
+                           json={"job_id": str(job_id), "case_draft": record})
+    assert response.status_code == 200
+    assert response.json() == {"valid": True, "reviewWarnings": ["DATABASE_SCOPE_REVIEW"]}
+    assert "line" not in record["answers"]["general"]["evidences"][0]
+
+
+@pytest.mark.parametrize("supported", [False, True])
+def test_new_validation_checks_receiver_before_creating_shared_files(tmp_path, supported):
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    record = case(related=False)
+    job_id = uuid4()
+    record["caseId"] = f"analysis-{job_id}"
+    record["answers"]["general"]["evidences"] = [{"file": "src/project.py"}]
+    settings = Settings(ai_internal_api_key="synthetic-ai-key-long-enough-for-test",
+                        training_shared_dir=str(shared), training_receiver_url="http://127.0.0.1:8011",
+                        training_transfer_key=SecretStr("synthetic-transfer-key-long-enough-for-test"))
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        if request.url.path == "/api/training/capabilities":
+            return httpx.Response(200, json={"features": ["FILE_LEVEL_EVIDENCE", "DATABASE_SCOPE_REVIEW"]}) if supported else httpx.Response(404)
+        return httpx.Response(202 if request.method == "POST" else 404, json={})
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        service = TrainingTransferService(settings, outbox=tmp_path / "outbox", status_dir=tmp_path / "status", client=client)
+        if supported:
+            assert service.publish(job_id, record)["status"] == "WAITING_FOR_SYNC"
+            assert len(list(shared.glob("*.jsonl"))) == 1
+        else:
+            with pytest.raises(ReceiverCompatibilityError):
+                service.publish(job_id, record)
+            assert list(shared.iterdir()) == []
+            assert not (tmp_path / "outbox").exists()
+            assert not (tmp_path / "status").exists()
+            assert len(calls) == 1
+        assert calls[0].headers["x-transfer-signature"]

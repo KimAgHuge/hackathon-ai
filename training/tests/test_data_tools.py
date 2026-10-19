@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from dataset_contract import DatasetError, digest, strict_json, validate_case, validate_response
+from dataset_contract import DatasetError, digest, strict_json, validate_case, validate_response, review_flags
 from evaluate_model import compare_runs, evaluator_hash, load_test_set, score
 from export_dataset import export, prepare
 
@@ -138,6 +138,33 @@ class DatasetTests(unittest.TestCase):
         answer["conditionalPaths"][0]["unknown"] = "추가 필드"
         with self.assertRaises(DatasetError):
             validate_response("database", answer)
+
+    def test_file_only_evidence_does_not_invent_line_or_accept_unknown_file(self):
+        for evidence in ({"file": "src/project.py"}, {"file": "src/project.py", "line": None}):
+            record = case(related=False)
+            record["answers"]["general"]["evidences"] = [evidence]
+            before = copy.deepcopy(record)
+            validate_case(record)
+            self.assertEqual(record, before)
+        for line in (0, -1, True, "7", 999):
+            record = case(related=False)
+            record["answers"]["general"]["evidences"] = [{"file": "src/project.py", "line": line}]
+            with self.assertRaises(DatasetError):
+                validate_case(record)
+        record = case(related=False)
+        record["answers"]["general"]["evidences"] = [{"file": "src/missing.py"}]
+        record["request"]["sourceSummary"]["changeRequirement"]["userClaim"] = {"file": "src/missing.py", "line": 1}
+        with self.assertRaises(DatasetError):
+            validate_case(record)
+
+    def test_excluded_database_scope_is_review_warning_not_keyword_rejection(self):
+        record = case(related=False)
+        record["request"]["sourceSummary"]["changeRequirement"]["title"] = "표시 건수만 변경하고 DB·테이블·컬럼·마이그레이션은 제외합니다."
+        validate_case(record)
+        self.assertIn("database_scope_requires_review", review_flags("general", record["answers"]["general"], record["request"]))
+        record["answers"]["database"] = case()["answers"]["database"]
+        with self.assertRaises(DatasetError):
+            validate_case(record)
 
     def test_general_answer_requires_plain_language_summary(self):
         answer = case()["answers"]["general"]

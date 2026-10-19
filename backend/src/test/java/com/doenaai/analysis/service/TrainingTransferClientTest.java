@@ -90,4 +90,17 @@ class TrainingTransferClientTest {
                     assertThat(error.getReason()).doesNotContain("private-customer-value");
                 });
     }
+
+    @Test void reportsReceiverUpdateWithoutRemoteContent() throws Exception {
+        server.createContext("/api/training/transfers", exchange -> {
+            var answer = "{\"detail\":{\"code\":\"RECEIVER_UPDATE_REQUIRED\",\"message\":\"private-customer-value\"}}".getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(503, answer.length);
+            exchange.getResponseBody().write(answer);
+            exchange.close();
+        });
+        server.start();
+        assertThatThrownBy(() -> client(KEY).publish(UUID.randomUUID(), Map.of("caseId", "sample")))
+                .isInstanceOf(TrainingTransferClient.ReceiverCompatibilityException.class)
+                .hasMessageContaining("파일은 아직 게시하지 않았습니다").hasMessageNotContaining("private-customer-value");
+    }
 }
