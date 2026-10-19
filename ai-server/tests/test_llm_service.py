@@ -234,6 +234,16 @@ def test_requirement_analysis_requires_grounded_db_decision():
     assert result.database_impact.status.value == "NEEDS_CLARIFICATION"
     assert result.database_impact.observed_tables == ["public.projects", "public.project_members"]
     assert client.chat_calls == 2
+    assert result.general_analysis.database_relevance.value == "RELATED"
+    assert result.general_analysis.database_relevance_reason == json.loads(REQUIREMENT_GENERAL_MODEL_JSON)["databaseRelevanceReason"]
+
+
+def test_preserves_general_stage_before_database_risk_adjustment():
+    client = FakeClient(chat_responses=[REQUIREMENT_GENERAL_MODEL_JSON, db_only(AMBIGUOUS_DB_JSON)])
+    result = asyncio.run(LlmService(settings(), client=client).analyze(requirement_request()))
+    assert result.general_analysis.risk_assessment.uncertainty.score == json.loads(REQUIREMENT_GENERAL_MODEL_JSON)["riskAssessment"]["uncertainty"]["score"]
+    assert result.risk_assessment.uncertainty.score >= 5
+    assert result.model_dump(mode="json", by_alias=True)["generalAnalysis"]["databaseRelevance"] == "RELATED"
 
 
 def test_general_stage_uses_table_overview_and_database_stage_keeps_details():

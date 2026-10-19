@@ -201,6 +201,7 @@ class LlmService:
             )
             if progress is not None:
                 await progress("DATABASE_SKIPPED", None)
+        original_general = general.model_dump(mode="json", by_alias=True) if isinstance(requirement, dict) else None
         general_data = general.model_dump(mode="json", by_alias=True)
         general_data.pop("databaseRelevance", None)
         general_data.pop("databaseRelevanceReason", None)
@@ -236,6 +237,7 @@ class LlmService:
         return ProjectAnalysisResponse.model_validate({
             **general_data,
             "databaseImpact": impact.model_dump(mode="json", by_alias=True),
+            "generalAnalysis": original_general,
         })
 
     @staticmethod

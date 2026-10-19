@@ -209,10 +209,13 @@ public class AnalysisWorker {
             jobs.progress(job.jobId(), 100, 100, 90);
             stage = "분석 결과 저장";
             stageStartedNanos = startStage(jobId, stage);
-            // Persist exactly the facts the model saw, including any context truncation notice.
-            Map<String, Object> facts = Map.of("sourceSummary", payload.get("sourceSummary"),
-                    "databaseSummary", payload.get("databaseSummary"), "relations", payload.get("relations"));
-            results.complete(job.jobId(), result, facts);
+            // 실제 모델 입력과 원래 일반 분석 응답을 보존하되 최종 검토 결과의 형식은 유지한다.
+            Map<String, Object> facts = new LinkedHashMap<>(Map.of("sourceSummary", payload.get("sourceSummary"),
+                    "databaseSummary", payload.get("databaseSummary"), "relations", payload.get("relations")));
+            var finalResult = new LinkedHashMap<>(result);
+            var generalAnalysis = finalResult.remove("generalAnalysis");
+            if (generalAnalysis instanceof Map<?, ?>) facts.put("generalAnalysis", generalAnalysis);
+            results.complete(job.jobId(), finalResult, facts);
             completeStage(jobId, stage, stageStartedNanos);
             log.info("Analysis completed: jobId={}", job.jobId());
         } catch (Exception exception) {

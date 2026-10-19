@@ -80,7 +80,10 @@ class AnalysisWorkerTest {
             progress.accept(new AiAnalysisClient.ProgressEvent("GENERAL_STARTED", null));
             progress.accept(new AiAnalysisClient.ProgressEvent("GENERAL_COMPLETED", null));
             progress.accept(new AiAnalysisClient.ProgressEvent("DATABASE_SKIPPED", null));
-            return result;
+            var response = new java.util.LinkedHashMap<>(result);
+            response.put("generalAnalysis", Map.of("databaseRelevance", "UNCERTAIN",
+                    "databaseRelevanceReason", "추가 DB 확인이 필요합니다."));
+            return response;
         });
         worker.process(job);
         var sequence = inOrder(jobs, results);
@@ -90,6 +93,9 @@ class AnalysisWorkerTest {
         sequence.verify(jobs).progress(job.jobId(), 100, 100, 40);
         sequence.verify(jobs).progress(job.jobId(), 100, 100, 90);
         sequence.verify(results).complete(eq(job.jobId()), eq(result), anyMap());
+        verify(results).complete(eq(job.jobId()), argThat(value -> !value.containsKey("generalAnalysis")),
+                argThat(facts -> facts.get("generalAnalysis") instanceof Map<?, ?> saved
+                        && "UNCERTAIN".equals(saved.get("databaseRelevance"))));
         verify(jobs).appendActivity(job.jobId(), "Git 소스코드 수집", "STARTED");
         verify(jobs).appendActivity(job.jobId(), "Git 소스코드 수집", "COMPLETED");
         verify(jobs).appendActivity(job.jobId(), "AI 모델의 분석 응답 대기", "STARTED");
