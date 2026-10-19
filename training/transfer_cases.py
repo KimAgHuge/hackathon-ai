@@ -1,4 +1,4 @@
-"""검토된 JSONL을 원본 보존·재시도·해시 검증 후 맥북에 확정한다."""
+"""검토된 JSONL을 원본 보존·재시도·해시 검증 후 AI 학습 서버에 확정한다."""
 
 import argparse
 import hashlib
@@ -141,14 +141,14 @@ def receive(staged, inbox=DEFAULT_INBOX):
 def remote_paths(repo):
     """SSH 원격 셸에 전달할 경로를 제한해 명령 삽입을 막는다."""
     if not REMOTE_PATH.fullmatch(repo) or ".." in PurePosixPath(repo).parts:
-        raise TransferError("맥북 저장소 경로는 공백 없는 절대 경로여야 합니다.")
+        raise TransferError("AI 학습 서버 저장소 경로는 공백 없는 절대 경로여야 합니다.")
     base = repo.rstrip("/") + "/training"
     return (base + "/datasets/transfer-staging", base + "/datasets/incoming",
             base + "/.venv/bin/python", base + "/transfer_cases.py")
 
 
 def send(package, remote, remote_repo, attempts=5, timeout=300, runner=subprocess.run, sleeper=time.sleep):
-    """SSH·rsync 전송을 재시도하고 맥북 검증 수신증의 해시가 맞을 때만 성공한다."""
+    """SSH·rsync 전송을 재시도하고 AI 학습 서버 검증 수신증의 해시가 맞을 때만 성공한다."""
     package = Path(package)
     match = HASHED_NAME.fullmatch(package.name)
     if not match or package.name.endswith(".part") or package.is_symlink() or not package.is_file():
@@ -174,17 +174,17 @@ def send(package, remote, remote_repo, attempts=5, timeout=300, runner=subproces
             for command in commands:
                 result = runner(command, capture_output=True, text=True, timeout=timeout)
                 if result.returncode != 0:
-                    raise TransferError("전송 또는 맥북 검증 단계가 실패했습니다.")
+                    raise TransferError("전송 또는 AI 학습 서버 검증 단계가 실패했습니다.")
             receipt_lines = [line for line in result.stdout.splitlines() if line.strip()]
             if not receipt_lines:
-                raise TransferError("맥북의 수신 확인을 받지 못했습니다.")
+                raise TransferError("AI 학습 서버의 수신 확인을 받지 못했습니다.")
             receipt = json.loads(receipt_lines[-1])
             if (not isinstance(receipt, dict)
                     or receipt.get("sha256") != checksum
                     or type(receipt.get("cases")) is not int
                     or receipt["cases"] != cases
                     or receipt.get("status") not in ("received", "already_received")):
-                raise TransferError("맥북의 수신 확인 값이 발신 파일과 다릅니다.")
+                raise TransferError("AI 학습 서버의 수신 확인 값이 발신 파일과 다릅니다.")
             return {"sha256": checksum, "cases": cases, "status": receipt["status"], "attempts": attempt}
         except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError, TransferError):
             if attempt == attempts:
@@ -199,10 +199,10 @@ def main():
     stage_parser = subcommands.add_parser("stage", help="승인 JSONL을 검증하고 전송 사본을 보관")
     stage_parser.add_argument("--input", required=True)
     stage_parser.add_argument("--outbox", default=str(DEFAULT_OUTBOX))
-    send_parser = subcommands.add_parser("send", help="SSH로 재전송하고 맥북 수신 확인")
+    send_parser = subcommands.add_parser("send", help="SSH로 재전송하고 AI 학습 서버 수신 확인")
     send_parser.add_argument("--package", required=True)
-    send_parser.add_argument("--remote", required=True, help="맥북 SSH 사용자@호스트")
-    send_parser.add_argument("--remote-repo", required=True, help="맥북의 저장소 절대 경로")
+    send_parser.add_argument("--remote", required=True, help="AI 학습 서버 SSH 사용자@호스트")
+    send_parser.add_argument("--remote-repo", required=True, help="AI 학습 서버의 저장소 절대 경로")
     send_parser.add_argument("--attempts", type=int, default=5)
     send_parser.add_argument("--timeout", type=int, default=300)
     receive_parser = subcommands.add_parser("receive", help="수신 임시 파일 검사 후 원자적으로 확정")

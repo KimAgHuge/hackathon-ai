@@ -110,7 +110,7 @@ public class AiAnalysisClient {
         return result;
     }
 
-    /** AI 서버의 검증된 단계 이벤트를 받으면서 최종 결과를 기다린다. 구버전 서버의 404는 기존 API로 처리한다. */
+    /** AI 분석/추론 서버의 검증된 단계 이벤트를 받으면서 최종 결과를 기다린다. 구버전 서버의 404는 기존 API로 처리한다. */
     public Map<String, Object> analyzeWithProgress(Map<String, Object> payload,
                                                     Consumer<ProgressEvent> onProgress)
             throws IOException, InterruptedException {
@@ -146,7 +146,7 @@ public class AiAnalysisClient {
         }
         if (response.statusCode() != 200) {
             response.body().close();
-            throw new IOException("AI server rejected analysis (HTTP " + response.statusCode() + ").");
+            throw new IOException("AI 분석/추론 서버가 분석 요청을 거부했습니다(HTTP " + response.statusCode() + ").");
         }
         CompletableFuture<Map<String, Object>> parsed = new CompletableFuture<>();
         Thread reader = Thread.ofVirtual().name("ai-analysis-stream-reader").start(() -> {
@@ -270,7 +270,7 @@ public class AiAnalysisClient {
         if (!RiskScorePolicy.matches(risk, score.intValue(), result.get("riskAssessment"))) {
             throw new IOException("Invalid AI risk assessment.");
         }
-        // 구버전 AI 서버와 저장 결과는 허용하되, 새 필드가 있으면 한 줄 계약을 지킨다.
+        // 구버전 AI 분석/추론 서버와 저장 결과는 허용하되, 새 필드가 있으면 한 줄 계약을 지킨다.
         if (result.containsKey("plainLanguageSummary")
                 && (!(result.get("plainLanguageSummary") instanceof String plainSummary)
                     || plainSummary.isBlank() || plainSummary.length() > 200
@@ -338,7 +338,7 @@ public class AiAnalysisClient {
             }
             return endpoint;
         } catch (RuntimeException exception) {
-            throw new IllegalArgumentException("Invalid internal AI server URL.");
+            throw new IllegalArgumentException("AI 분석/추론 서버의 내부 주소가 올바르지 않습니다.");
         }
     }
 
@@ -375,7 +375,7 @@ public class AiAnalysisClient {
             }
             this.subscription = subscription;
             if (status != 200) {
-                reject("AI server rejected analysis (HTTP " + status + ").");
+                reject("AI 분석/추론 서버가 분석 요청을 거부했습니다(HTTP " + status + ").");
             } else {
                 subscription.request(1);
             }

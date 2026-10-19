@@ -32,7 +32,7 @@ public class TrainingTransferClient {
                 .connectTimeout(Duration.ofSeconds(5)).followRedirects(HttpClient.Redirect.NEVER).build();
     }
 
-    /** 내부 인증을 붙여 AI 서버에 게시하고 내용 대신 전송 상태만 반환한다. */
+    /** 내부 인증을 붙여 AI 분석/추론 서버에 게시하고 내용 대신 전송 상태만 반환한다. */
     public Map<String, Object> publish(UUID jobId, Map<String, Object> caseDraft) {
         try {
             var body = mapper.writeValueAsString(Map.of("job_id", jobId.toString(), "case_draft", caseDraft));
@@ -47,7 +47,7 @@ public class TrainingTransferClient {
         }
     }
 
-    /** 같은 작업의 수신 상태를 확인하며 AI 서버가 실패한 알림을 재시도하게 한다. */
+    /** 같은 작업의 수신 상태를 확인하며 AI 분석/추론 서버가 실패한 알림을 재시도하게 한다. */
     public Map<String, Object> status(UUID jobId) {
         try {
             var request = HttpRequest.newBuilder(URI.create(endpoint + "/by-job/" + jobId))

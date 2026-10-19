@@ -1,4 +1,4 @@
-"""검토된 학습 사례를 공유 폴더에 게시하고 맥북 수신증을 확인한다."""
+"""검토된 학습 사례를 공유 폴더에 게시하고 AI 학습 서버의 수신증을 확인한다."""
 
 import json
 import sys
@@ -42,11 +42,11 @@ class TrainingTransferService:
         if (not shared or not Path(shared).is_absolute() or parsed.scheme not in {"http", "https"}
                 or not parsed.hostname or parsed.username or parsed.password or parsed.path not in {"", "/"}
                 or parsed.query or parsed.fragment or len(secret) < 32):
-            raise TransferConfigurationError("학습 전송 공유 폴더·맥북 수신 주소·전송 키를 먼저 설정하세요.")
+            raise TransferConfigurationError("학습 전송 공유 폴더·AI 학습 서버 주소·전송 키를 먼저 설정하세요.")
         return shared, receiver, secret
 
     def publish(self, job_id, case):
-        """사람이 검토한 사례만 게시하고 맥북에 수신을 요청한다."""
+        """사람이 검토한 사례만 게시하고 AI 학습 서버에 수신을 요청한다."""
         shared, _, _ = self._configured()
         status = publish_case(job_id, case, shared, outbox=self.outbox, status_dir=self.status_dir)
         return self.advance(status)
@@ -58,7 +58,7 @@ class TrainingTransferService:
         return self.advance(status) if status else None
 
     def retry_pending(self):
-        """화면이 닫혀도 미완료 알림을 반복해 맥북에 전달한다."""
+        """화면이 닫혀도 미완료 알림을 반복해 AI 학습 서버에 전달한다."""
         if not Path(self.status_dir).is_dir():
             return
         for path in Path(self.status_dir).glob("*.json"):

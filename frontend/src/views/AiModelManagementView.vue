@@ -114,7 +114,7 @@ onMounted(fetchModels)
             <div class="mt-5">
                 <div class="mb-3">
                     <h2 class="text-base font-extrabold text-slate-900 dark:text-slate-100">모델 버전</h2>
-                    <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">승인된 모델만 Mac Studio 추론 서버에 배포할 수 있습니다.</p>
+                    <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">승인된 모델만 AI 분석/추론 서버에 배포할 수 있습니다.</p>
                 </div>
 
                 <BaseTable :columns="columns" :rows="models.versions" :loading="loading" row-key="version">

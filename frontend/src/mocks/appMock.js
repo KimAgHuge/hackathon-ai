@@ -6,8 +6,8 @@ export const dashboardMock = {
         { label: '활성 AI 모델', value: 'v1.4.2', change: 'LoRA Adapter', tone: 'violet' },
     ],
     systems: [
-        { name: 'AI 추론 서버', description: 'Mac Studio · FastAPI', status: 'ONLINE', latency: '42ms' },
-        { name: '학습 서버', description: 'M4 Max MacBook · MLX-LM', status: 'OFFLINE', latency: '-' },
+        { name: 'AI 분석/추론 서버', description: 'FastAPI · Ollama', status: 'ONLINE', latency: '42ms' },
+        { name: 'AI 학습 서버', description: 'MLX-LM · LoRA · 평가', status: 'OFFLINE', latency: '-' },
         { name: 'Supabase', description: 'Auth · PostgreSQL · pgvector', status: 'ONLINE', latency: '68ms' },
     ],
     recentAnalyses: [
@@ -148,7 +148,7 @@ export const modelsMock = {
         adapter: 'impact-lora-v1.4.2',
         status: 'ACTIVE',
         deployedAt: '2026-07-20 22:15',
-        server: 'Mac Studio AI Server',
+        server: 'AI 분석/추론 서버',
         accuracy: 87.6,
     },
     versions: [

@@ -60,7 +60,7 @@ class ProjectAnalysisRequest(ApiModel):
         )
         if forbidden_path:
             raise ValueError(
-                f"Sensitive field '{forbidden_path}' must not be sent to the AI server."
+                f"민감 필드 '{forbidden_path}'는 AI 분석/추론 서버로 보낼 수 없습니다."
             )
         return self
 

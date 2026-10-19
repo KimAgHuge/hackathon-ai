@@ -24,7 +24,7 @@ onMounted(() => {
 
 <template>
     <div>
-        <ViewHeading title="설정" description="AI 서버, 학습 서버 및 외부 데이터 저장소 연결을 관리합니다." />
+        <ViewHeading title="설정" description="AI 분석/추론 서버, AI 학습 서버 및 외부 데이터 저장소 연결을 관리합니다." />
 
         <div class="mb-5 flex max-w-full overflow-x-auto border-b border-slate-200 dark:border-slate-700">
             <button
@@ -61,10 +61,10 @@ onMounted(() => {
                 >
                     <div>
                         <div class="flex flex-wrap items-center gap-3">
-                            <h2 class="text-lg font-extrabold text-slate-900 dark:text-slate-100">AI 추론 서버</h2>
+                            <h2 class="text-lg font-extrabold text-slate-900 dark:text-slate-100">AI 분석/추론 서버</h2>
                             <StatusBadge :status="store.settings.aiServer.status" />
                         </div>
-                        <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">Mac Studio에서 코드·DB 분석과 로컬 모델 추론을 수행합니다.</p>
+                        <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">소스·DB 근거를 바탕으로 변경 영향과 위험을 분석합니다.</p>
                     </div>
                     <div class="text-[11px] text-slate-500 sm:text-right dark:text-slate-400">
                         <div>마지막 확인 {{ store.settings.aiServer.lastCheckedAt }}</div>
@@ -119,10 +119,10 @@ onMounted(() => {
                 >
                     <div>
                         <div class="flex flex-wrap items-center gap-3">
-                            <h2 class="text-lg font-extrabold text-slate-900 dark:text-slate-100">학습 서버</h2>
+                            <h2 class="text-lg font-extrabold text-slate-900 dark:text-slate-100">AI 학습 서버</h2>
                             <StatusBadge :status="store.settings.trainingServer.status" />
                         </div>
-                        <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">M4 Max MacBook에서 데이터셋 생성, LoRA 학습과 평가를 수행합니다.</p>
+                        <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">검토한 분석 사례로 데이터셋을 만들고 AI 모델을 학습·평가합니다.</p>
                     </div>
                     <div class="text-[11px] text-slate-500 sm:text-right dark:text-slate-400">
                         <div>마지막 확인 {{ store.settings.trainingServer.lastCheckedAt }}</div>
@@ -133,7 +133,7 @@ onMounted(() => {
                     v-if="store.settings.trainingServer.status === 'OFFLINE'"
                     class="mx-6 mt-5 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-700"
                 >
-                    학습 서버가 오프라인입니다. AI 분석 기능은 정상적으로 사용할 수 있으며, 모델 학습과 업데이트만 제한됩니다.
+                    AI 학습 서버가 오프라인입니다. AI 분석 기능은 정상적으로 사용할 수 있으며, 모델 학습과 업데이트만 제한됩니다.
                 </div>
 
                 <div class="grid gap-4 p-4 sm:grid-cols-2 sm:p-6">

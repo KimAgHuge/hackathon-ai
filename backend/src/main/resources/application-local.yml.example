@@ -106,12 +106,12 @@ doenaai:
   supabase:
     url: https://PROJECT_REF.supabase.co
 
-  # AI 추론 서버
+  # AI 분석/추론 서버
   #
   # 로컬 개발:
   # http://localhost:8000
   #
-  # Mac Studio에서 AI 서버를 실행하는 경우:
+  # Mac Studio에서 AI 분석/추론 서버를 실행하는 경우:
   # http://MAC_STUDIO_IP:8000
   ai-server:
     base-url: http://localhost:8000

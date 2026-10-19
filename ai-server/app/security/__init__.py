@@ -1,1 +1,1 @@
-"""Security helpers used by the AI server."""
+"""AI 분석/추론 서버의 내부 인증을 지원한다."""

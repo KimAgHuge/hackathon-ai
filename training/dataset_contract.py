@@ -81,7 +81,7 @@ def prompt_contract():
                 if isinstance(target, ast.Name) and target.id in {"SYSTEM_PROMPT", "DB_SYSTEM_PROMPT"}:
                     prompts[target.id] = node.value.value
     if len(prompts) != 2:
-        raise DatasetError("분석 서버의 프롬프트 상수를 찾지 못했습니다.")
+        raise DatasetError("AI 분석/추론 서버의 프롬프트 상수를 찾지 못했습니다.")
     bundle = {"prompts": prompts, "schemas": {stage: model.model_json_schema(by_alias=True) for stage, model in STAGES.items()},
               "messageFormatVersion": 1}
     return bundle, digest(bundle)
@@ -101,7 +101,7 @@ def validate_response(stage, answer):
     try:
         parsed = STAGES[stage].model_validate(answer)
     except (ValidationError, ValueError, TypeError):
-        raise DatasetError("응답이 분석 서버의 JSON 계약을 통과하지 못했습니다.") from None
+        raise DatasetError("응답이 AI 분석/추론 서버의 JSON 계약을 통과하지 못했습니다.") from None
     canonical = parsed.model_dump(mode="json", by_alias=True)
     if answer != canonical:
         raise DatasetError("응답은 모든 필수 필드와 camelCase 이름만 포함해야 합니다.")

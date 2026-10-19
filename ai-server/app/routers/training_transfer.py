@@ -29,7 +29,7 @@ def publish_training_case(request: TransferRequest, settings: Settings = Depends
         return TrainingTransferService(settings).publish(request.job_id, request.case_draft)
     except TransferConfigurationError:
         raise HTTPException(status_code=503, detail={"code": "TRANSFER_NOT_CONFIGURED",
-                                                      "message": "공유 폴더·맥북 수신 주소·전송 키를 먼저 설정하세요."}) from None
+                                                      "message": "공유 폴더·AI 학습 서버 주소·전송 키를 먼저 설정하세요."}) from None
     except (DatasetError, TransferError, ValueError):
         raise HTTPException(status_code=422, detail={"code": "INVALID_TRAINING_CASE",
                                                       "message": "학습 사례 계약·비식별 확인 또는 전송 설정을 확인하세요."}) from None
@@ -45,7 +45,7 @@ def training_transfer_status(job_id: UUID, settings: Settings = Depends(get_sett
         status = TrainingTransferService(settings).by_job(job_id)
     except TransferConfigurationError:
         raise HTTPException(status_code=503, detail={"code": "TRANSFER_NOT_CONFIGURED",
-                                                      "message": "공유 폴더·맥북 수신 주소·전송 키를 먼저 설정하세요."}) from None
+                                                      "message": "공유 폴더·AI 학습 서버 주소·전송 키를 먼저 설정하세요."}) from None
     except (TransferError, OSError, ValueError):
         raise HTTPException(status_code=503, detail={"code": "TRANSFER_UNAVAILABLE",
                                                       "message": "학습 전송 설정이나 공유 폴더를 확인하세요."}) from None

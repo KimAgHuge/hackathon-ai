@@ -236,7 +236,7 @@ values
     (
         'MODEL_DEPLOY',
         'AI 모델 배포',
-        'AI 서버에 모델 활성화'
+        'AI 분석/추론 서버에 모델 활성화'
     ),
     (
         'MODEL_ROLLBACK',

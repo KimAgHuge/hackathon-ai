@@ -97,7 +97,7 @@ class AiAnalysisClientTest {
 
         assertThatThrownBy(() -> client(Duration.ofSeconds(3)).analyze(PAYLOAD))
                 .isInstanceOf(IOException.class)
-                .hasMessage("AI server rejected analysis (HTTP 401).")
+                .hasMessage("AI 분석/추론 서버가 분석 요청을 거부했습니다(HTTP 401).")
                 .hasNoCause();
     }
 
@@ -328,7 +328,7 @@ class AiAnalysisClientTest {
         server.start();
         assertThatThrownBy(() -> client(Duration.ofSeconds(3)).analyzeWithProgress(PAYLOAD, event -> {}))
                 .isInstanceOf(IOException.class)
-                .hasMessage("AI server rejected analysis (HTTP 401).")
+                .hasMessage("AI 분석/추론 서버가 분석 요청을 거부했습니다(HTTP 401).")
                 .hasNoCause();
     }
 

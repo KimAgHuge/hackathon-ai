@@ -67,7 +67,7 @@ create table if not exists public.ai_models (
 -- =========================================================
 -- 학습 데이터셋
 --
--- M4 Max Training Server가 사용할 데이터
+-- AI 학습 서버가 사용할 데이터
 --
 -- 예:
 -- 분석 결과 + 사용자 수정 결과 → JSONL 생성
@@ -181,7 +181,7 @@ create table if not exists public.training_jobs (
               progress between 0 and 100
           ),
 
-    -- 작업을 가져간 Training Server
+    -- 작업을 가져간 AI 학습 서버
     -- 예: macbook-m4max
     worker_name varchar(200),
 
@@ -394,7 +394,7 @@ create table if not exists public.model_deployments (
                         )
     ),
 
-    -- 내부 AI Server Endpoint
+    -- 내부 AI 분석/추론 서버 Endpoint
     -- 필요할 때만 사용
     endpoint_url text,
 

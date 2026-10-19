@@ -43,7 +43,7 @@ const roleLabel = computed(
                 class="hidden items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 xl:flex"
             >
                 <span class="h-2 w-2 rounded-full bg-emerald-500"></span>
-                AI 서버 정상
+                AI 분석/추론 서버 정상
             </div>
 
             <button

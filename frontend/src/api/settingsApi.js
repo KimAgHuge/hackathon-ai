@@ -23,7 +23,7 @@ const mockTest = async (section) => {
         return {
             success: false,
             status: 'OFFLINE',
-            message: '학습 서버가 응답하지 않습니다. AI 분석 기능에는 영향이 없습니다.',
+            message: 'AI 학습 서버가 응답하지 않습니다. AI 분석 기능에는 영향이 없습니다.',
             checkedAt: new Date().toLocaleString('ko-KR'),
             latencyMs: null,
         }
@@ -32,7 +32,7 @@ const mockTest = async (section) => {
     return {
         success: true,
         status: 'ONLINE',
-        message: section === 'supabase' ? 'Supabase 연결에 성공했습니다.' : 'AI 추론 서버 연결에 성공했습니다.',
+        message: section === 'supabase' ? 'Supabase 연결에 성공했습니다.' : 'AI 분석/추론 서버 연결에 성공했습니다.',
         checkedAt: new Date().toLocaleString('ko-KR'),
         latencyMs: section === 'supabase' ? 64 : 39,
     }

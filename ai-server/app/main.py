@@ -49,7 +49,7 @@ def create_app() -> FastAPI:
             if worker:
                 worker.join(timeout=2)
 
-    application = FastAPI(title="doenaai ai server", version="0.1.0", lifespan=lifespan)
+    application = FastAPI(title="doenaai AI 분석/추론 서버", version="0.1.0", lifespan=lifespan)
     application.include_router(health.router)
     application.include_router(analysis.router)
     application.include_router(training_transfer.router)

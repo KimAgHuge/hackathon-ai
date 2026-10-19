@@ -57,8 +57,8 @@ def format_internal_api_key(
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Generate a local secret shared by Spring Boot and the FastAPI "
-            "AI server. The key is printed only and is not saved to a file."
+            "서비스 서버(Spring Boot)와 AI 분석/추론 서버(FastAPI)가 공유할 내부 키를 생성합니다. "
+            "키는 화면에만 출력하며 파일에 저장하지 않습니다."
         )
     )
     parser.add_argument(

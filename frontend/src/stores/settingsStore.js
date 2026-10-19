@@ -65,7 +65,7 @@ export const useSettingsStore = defineStore('settings', () => {
 
         try {
             settings.value.aiServer = await saveAiServerSettings(settings.value.aiServer)
-            notify('AI 추론 서버 설정을 저장했습니다.')
+            notify('AI 분석/추론 서버 설정을 저장했습니다.')
         } catch (exception) {
             notify(exception instanceof Error ? exception.message : '설정 저장에 실패했습니다.', 'error')
         } finally {
@@ -90,7 +90,7 @@ export const useSettingsStore = defineStore('settings', () => {
 
         try {
             settings.value.trainingServer = await saveTrainingServerSettings(settings.value.trainingServer)
-            notify('학습 서버 설정을 저장했습니다.')
+            notify('AI 학습 서버 설정을 저장했습니다.')
         } catch (exception) {
             notify(exception instanceof Error ? exception.message : '설정 저장에 실패했습니다.', 'error')
         } finally {

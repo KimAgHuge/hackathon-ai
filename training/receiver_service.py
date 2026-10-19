@@ -1,4 +1,4 @@
-"""맥북에서 공유 폴더의 학습 사례를 검증하고 수신 상태를 반환한다."""
+"""AI 학습 서버에서 공유 폴더의 학습 사례를 검증하고 수신 상태를 반환한다."""
 
 import argparse
 import json
@@ -210,7 +210,7 @@ def serve(store, secret, host, port):
 
 
 def main():
-    """맥북에서 명시적으로 지정한 공유 폴더만 관찰한다."""
+    """AI 학습 서버에서 명시적으로 지정한 공유 폴더만 관찰한다."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8011)

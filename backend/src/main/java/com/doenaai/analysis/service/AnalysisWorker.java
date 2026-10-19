@@ -54,7 +54,7 @@ public class AnalysisWorker {
             Map.entry("소스와 DB 참조 분석", "소스코드와 데이터베이스 관계 조사"),
             Map.entry("요구사항 버전 확인", "분석할 요구사항 확인"),
             Map.entry("AI 입력 준비 (분석 범위·민감 필드 확인)", "AI 분석 자료 준비"),
-            Map.entry("AI 분석 요청 (AI 서버·내부 API 키·모델·시간 제한 확인)", "AI 모델의 분석 응답 대기"),
+            Map.entry("AI 분석 요청 (AI 분석/추론 서버·내부 API 키·모델·시간 제한 확인)", "AI 모델의 분석 응답 대기"),
             Map.entry("분석 결과 저장", "분석 결과 저장")
     );
     private final AnalysisJobRepository jobs;
@@ -191,12 +191,12 @@ public class AnalysisWorker {
                 }
                 completeStage(jobId, stage, stageStartedNanos);
             }
-            stage = "AI 분석 요청 (AI 서버·내부 API 키·모델·시간 제한 확인)";
+            stage = "AI 분석 요청 (AI 분석/추론 서버·내부 API 키·모델·시간 제한 확인)";
             stageStartedNanos = startStage(jobId, stage);
             if (jobs.isCancelled(jobId)) throw new CancellationException("Analysis cancelled.");
             // 모델 내부 완료율을 추정하지 않고, 긴 HTTP 대기 중 백엔드의 대기 상태만 알린다.
             var waiting = ACTIVITY_HEARTBEATS.scheduleAtFixedRate(
-                    () -> recordPublicActivity(jobId, "AI 분석 요청 (AI 서버·내부 API 키·모델·시간 제한 확인)", "WAITING"),
+                    () -> recordPublicActivity(jobId, "AI 분석 요청 (AI 분석/추론 서버·내부 API 키·모델·시간 제한 확인)", "WAITING"),
                     30, 30, TimeUnit.SECONDS);
             Map<String, Object> result;
             try {

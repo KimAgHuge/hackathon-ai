@@ -1,6 +1,6 @@
 export const settingsMock = {
     aiServer: {
-        serverName: 'Mac Studio AI Server',
+        serverName: 'AI 분석/추론 서버',
         baseUrl: 'http://192.168.0.20:8000',
         healthPath: '/health',
         analysisPath: '/internal/v1/analyses',
@@ -13,7 +13,7 @@ export const settingsMock = {
         latencyMs: 42,
     },
     trainingServer: {
-        serverName: 'M4 Max Training Worker',
+        serverName: 'AI 학습 서버',
         host: '192.168.0.30',
         sshPort: 22,
         sshUser: 'doenaai',
