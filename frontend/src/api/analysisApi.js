@@ -135,7 +135,21 @@ export const getTrainingCaseDraft = async (analysisJobId) => {
 /** 검토와 비식별화를 확인한 사례를 공유 폴더 전송 경로로 보낸다. */
 export const publishTrainingCase = async (analysisJobId, caseDraft) => {
     if (useMock) throw new Error('데모 분석에서는 학습 사례를 전송할 수 없습니다.')
-    const { data } = await httpClient.post(`/analysis-jobs/${analysisJobId}/training-transfer`, { caseDraft, reviewConfirmed: true })
+    const { data } = await httpClient.post(`/analysis-jobs/${analysisJobId}/training-transfer`, { caseDraft, reviewConfirmed: true }, { timeout: 240000 })
+    return data
+}
+
+/** 원본 Git 커밋에서 누락 근거를 보강한 사본을 받으며 게시·학습은 시작하지 않는다. */
+export const supplementTrainingCaseEvidence = async (analysisJobId, caseDraft) => {
+    if (useMock) throw new Error('데모 분석에서는 원본 커밋 근거를 보강할 수 없습니다.')
+    const { data } = await httpClient.post(`/analysis-jobs/${analysisJobId}/training-case-evidence`, { caseDraft }, { timeout: 240000 })
+    return data
+}
+
+/** 전송 전에 같은 전체 검증기를 실행하며 공유 폴더에는 파일을 올리지 않는다. */
+export const validateTrainingCase = async (analysisJobId, caseDraft) => {
+    if (useMock) throw new Error('데모 분석에서는 학습 사례를 검사할 수 없습니다.')
+    const { data } = await httpClient.post(`/analysis-jobs/${analysisJobId}/training-case-validation`, { caseDraft }, { timeout: 45000 })
     return data
 }
 

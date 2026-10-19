@@ -3,6 +3,9 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave, onBeforeRouteUpdate, RouterLink, useRoute, useRouter } from 'vue-router'
 import PageTitle from '@/components/common/PageTitle.vue'
 import BaseTextarea from '@/components/base/BaseTextarea.vue'
+import BaseModal from '@/components/base/BaseModal.vue'
+import TrainingDraftCompletion from '@/components/analysis/TrainingDraftCompletion.vue'
+import TrainingDataGuide from '@/components/analysis/TrainingDataGuide.vue'
 import {
     cancelAnalysisJob,
     getAnalysisJob,
@@ -12,6 +15,8 @@ import {
     isAnalysisDemoMode,
     reviewAnalysisResult,
     publishTrainingCase,
+    supplementTrainingCaseEvidence,
+    validateTrainingCase,
     startProjectAnalysis,
 } from '@/api/analysisApi'
 import { getAllRequirements, createRequirementFollowUp } from '@/api/requirementApi'
@@ -27,7 +32,15 @@ import {
 import { shouldConfirmAnalysisExit, warnOnAnalysisUnload } from '@/lib/analysisNavigation'
 import { buildFollowUpPayload, canContinueFromAnalysis, savedFollowUpDraft } from '@/lib/followUpWorkflow'
 import { buildAnalysisReviewPayload } from '@/lib/analysisReview'
+import { analysisReviewLabel, trainingTransferPresentation } from '@/lib/analysisReviewPresentation'
 import { applyTrainingReviewConfirmations } from '@/lib/trainingReview'
+import {
+    completeMissingTrainingFields,
+    remainingTrainingReviewNotes,
+    trainingDraftIssues,
+    unmatchedTrainingEvidence,
+    trainingValidationMessage,
+} from '@/lib/trainingDraftCompletion'
 import { riskPresentation } from '@/lib/riskLevel'
 import { useAuthStore } from '@/stores/authStore'
 
@@ -53,12 +66,19 @@ const reviewCorrectedText = ref('')
 const reviewBusy = ref(false)
 const reviewError = ref('')
 const reviewNotice = ref('')
+const reviewDialogOpen = ref(false)
 const trainingDraftBusy = ref(false)
 const trainingStatusBusy = ref(false)
 const trainingDraftError = ref('')
 const trainingEditorOpen = ref(false)
 const trainingCaseText = ref('')
 const trainingReviewRequired = ref([])
+const trainingAutoFilled = ref([])
+const trainingCompletionNotice = ref('')
+const trainingValidationNotice = ref('')
+const trainingBlockingIssues = computed(() => trainingDraftIssues(trainingCaseText.value))
+const trainingUnmatchedEvidence = computed(() => unmatchedTrainingEvidence(trainingCaseText.value))
+const trainingVisibleReviewNotes = computed(() => remainingTrainingReviewNotes(trainingReviewRequired.value, trainingCaseText.value))
 const trainingAnswerChecked = ref(false)
 const trainingSanitizedChecked = ref(false)
 const trainingTransfer = ref(null)
@@ -178,10 +198,14 @@ watch(analysis, async (value, previous) => {
     reviewUseCorrection.value = false
     reviewError.value = ''
     reviewNotice.value = ''
+    reviewDialogOpen.value = false
     reviewCorrectedText.value = JSON.stringify(analysis.value?.correctedResult || analysis.value?.result || {}, null, 2)
     trainingEditorOpen.value = false
     trainingCaseText.value = ''
     trainingReviewRequired.value = []
+    trainingAutoFilled.value = []
+    trainingCompletionNotice.value = ''
+    trainingValidationNotice.value = ''
     trainingAnswerChecked.value = false
     trainingSanitizedChecked.value = false
     trainingTransfer.value = null
@@ -211,7 +235,7 @@ const submitReview = async (decision) => {
         reviewError.value = error.message
         return
     }
-    const action = decision === 'REJECTED' ? '반려' : reviewUseCorrection.value ? '수정본 승인' : 'AI 원본 승인'
+    const action = decision === 'REJECTED' ? '반려' : reviewUseCorrection.value ? '수정 결과 승인' : '분석 결과 승인'
     const correctionWarning = decision === 'REJECTED' && reviewUseCorrection.value ? ' 입력한 수정 JSON은 저장되지 않습니다.' : ''
     if (!window.confirm(`이 분석을 ${action}할까요? 검토 결정은 다시 변경할 수 없습니다.${correctionWarning}`)) return
 
@@ -247,24 +271,77 @@ const downloadTrainingDraft = async () => {
         link.remove()
         window.setTimeout(() => URL.revokeObjectURL(url), 1000)
     } catch (error) {
-        trainingDraftError.value = error.response?.data?.message || error.message || '학습 사례 초안을 만들지 못했습니다.'
+        trainingDraftError.value = error.response?.data?.message || error.message || '학습 데이터 초안을 만들지 못했습니다.'
     } finally {
         trainingDraftBusy.value = false
     }
 }
 
 const openTrainingEditor = async () => {
+    const jobId = job.value?.jobId
+    if (!jobId) return
+    // 모달을 닫았다 열어도 현재 화면에서 편집한 미전송 초안을 덮어쓰지 않는다.
+    if (trainingCaseText.value) {
+        trainingEditorOpen.value = true
+        return
+    }
     trainingDraftBusy.value = true
     trainingDraftError.value = ''
     try {
-        const draft = await getTrainingCaseDraft(job.value.jobId)
+        const draft = await getTrainingCaseDraft(jobId)
+        if (job.value?.jobId !== jobId) return
         trainingCaseText.value = JSON.stringify(draft.caseDraft, null, 2)
         trainingReviewRequired.value = draft.reviewRequired || []
+        trainingAutoFilled.value = draft.autoFilled || []
+        trainingCompletionNotice.value = ''
+        trainingValidationNotice.value = ''
         trainingAnswerChecked.value = false
         trainingSanitizedChecked.value = false
         trainingEditorOpen.value = true
     } catch (error) {
-        trainingDraftError.value = error.response?.data?.message || error.message || '학습 사례 초안을 불러오지 못했습니다.'
+        trainingDraftError.value = error.response?.data?.message || error.message || '학습 데이터 초안을 불러오지 못했습니다.'
+    } finally {
+        trainingDraftBusy.value = false
+    }
+}
+
+// 편집이나 보완 후에는 기존의 사람 확인 표시를 재사용하지 않는다.
+const editTrainingCase = (text) => {
+    trainingValidationNotice.value = ''
+    trainingAnswerChecked.value = false
+    trainingSanitizedChecked.value = false
+    trainingAutoFilled.value = []
+    trainingCompletionNotice.value = ''
+    trainingDraftError.value = ''
+    try {
+        trainingCaseText.value = JSON.stringify(applyTrainingReviewConfirmations(text, false, false), null, 2)
+    } catch {
+        trainingCaseText.value = text
+    }
+}
+
+const completeTrainingCase = async () => {
+    trainingValidationNotice.value = ''
+    const jobId = job.value?.jobId
+    if (!jobId || trainingDraftBusy.value) return
+    trainingDraftBusy.value = true
+    trainingDraftError.value = ''
+    try {
+        const saved = await getTrainingCaseDraft(jobId)
+        if (job.value?.jobId !== jobId || !trainingEditorOpen.value) return
+        const completed = completeMissingTrainingFields(trainingCaseText.value, saved.caseDraft)
+        if (completed.filledPaths.length) {
+            trainingCaseText.value = JSON.stringify(completed.caseDraft, null, 2)
+            trainingAnswerChecked.value = false
+            trainingSanitizedChecked.value = false
+            trainingAutoFilled.value = saved.autoFilled || []
+        }
+        trainingReviewRequired.value = saved.reviewRequired || []
+        trainingCompletionNotice.value = completed.filledPaths.length
+            ? `빈 항목 ${completed.filledPaths.length}개를 보완했습니다. 내용을 검토하고 확인란을 다시 선택해 주세요.`
+            : '추가로 채울 수 있는 빈 항목이 없습니다. 기존 편집값은 유지했습니다. 남은 항목은 당시 기록으로 확인하거나 새 분석을 사용해 주세요.'
+    } catch (error) {
+        trainingDraftError.value = error.response?.data?.message || error.message || '저장된 근거에서 빈 항목을 보완하지 못했습니다.'
     } finally {
         trainingDraftBusy.value = false
     }
@@ -288,6 +365,7 @@ const checkTrainingTransfer = async () => {
 }
 
 const syncTrainingReviewFlags = () => {
+    trainingValidationNotice.value = ''
     try {
         const draft = applyTrainingReviewConfirmations(trainingCaseText.value, trainingAnswerChecked.value, trainingSanitizedChecked.value)
         trainingCaseText.value = JSON.stringify(draft, null, 2)
@@ -297,8 +375,66 @@ const syncTrainingReviewFlags = () => {
     }
 }
 
+const supplementTrainingEvidence = async () => {
+    const jobId = job.value?.jobId
+    if (!jobId || trainingDraftBusy.value) return
+    if (
+        !window.confirm(
+            '분석 당시 Git 커밋에 접속해 빠진 파일·줄 번호와 코드 조각을 확인할까요? 기존 분석은 보존하고 학습 사례 사본에만 추가합니다. 게시하거나 AI를 다시 호출하지 않습니다.'
+        )
+    )
+        return
+    trainingDraftBusy.value = true
+    trainingDraftError.value = ''
+    trainingValidationNotice.value = ''
+    trainingCompletionNotice.value = '원본 Git 커밋의 보완 근거를 확인 중입니다. 저장소 연결에 따라 시간이 걸릴 수 있습니다.'
+    try {
+        const draft = JSON.parse(trainingCaseText.value)
+        const supplemented = await supplementTrainingCaseEvidence(jobId, draft)
+        if (job.value?.jobId !== jobId || !trainingEditorOpen.value) return
+        trainingCaseText.value = JSON.stringify(supplemented.caseDraft, null, 2)
+        trainingAnswerChecked.value = false
+        trainingSanitizedChecked.value = false
+        trainingAutoFilled.value = supplemented.autoFilled || []
+        trainingCompletionNotice.value = '원본 커밋에서 확인한 보완 근거를 학습 사례 사본에 추가했습니다. 코드 조각과 정답 및 비식별화를 다시 검토해 주세요.'
+    } catch (error) {
+        trainingCompletionNotice.value = ''
+        trainingDraftError.value = trainingValidationMessage(error)
+    } finally {
+        trainingDraftBusy.value = false
+    }
+}
+
+const checkFullTrainingCase = async () => {
+    trainingDraftError.value = ''
+    trainingValidationNotice.value = ''
+    if (trainingBlockingIssues.value.length || !trainingAnswerChecked.value || !trainingSanitizedChecked.value) {
+        trainingDraftError.value = '누락값을 보완하고 정답·비식별화 검토 확인란을 선택해 주세요.'
+        return false
+    }
+    trainingDraftBusy.value = true
+    const jobId = job.value?.jobId
+    try {
+        const draft = applyTrainingReviewConfirmations(trainingCaseText.value, true, true)
+        const checked = await validateTrainingCase(jobId, draft)
+        if (job.value?.jobId !== jobId || checked?.valid !== true) return false
+        trainingValidationNotice.value =
+            '전체 형식·근거·비식별화 패턴 검사를 통과했습니다. 파일은 아직 게시하지 않았습니다. 내용의 사실 여부와 모든 개인정보를 자동 보증하는 것은 아닙니다.'
+        return true
+    } catch (error) {
+        trainingDraftError.value = trainingValidationMessage(error)
+        return false
+    } finally {
+        trainingDraftBusy.value = false
+    }
+}
+
 const submitTrainingCase = async () => {
     trainingDraftError.value = ''
+    if (trainingBlockingIssues.value.length) {
+        trainingDraftError.value = '누락 정보 보완 영역에 표시된 항목을 먼저 확인해 주세요.'
+        return
+    }
     if (!trainingAnswerChecked.value || !trainingSanitizedChecked.value) {
         trainingDraftError.value = '정답·근거 검토와 비식별화 확인을 모두 선택해 주세요.'
         return
@@ -311,27 +447,26 @@ const submitTrainingCase = async () => {
         trainingDraftError.value = error.message
         return
     }
-    if (!window.confirm('검토·비식별화한 학습 사례를 공유 폴더에 게시하고 AI 학습 서버에 알릴까요?')) return
+    if (!(await checkFullTrainingCase())) return
+    if (
+        !window.confirm(
+            '검토한 요구사항·소스·DB 구조 근거·답변을 공유 폴더에 게시하고 AI 학습 서버로 전달할까요? 보완 근거는 원본 커밋에서 다시 확인합니다. 이 동작은 모델 학습이나 서비스 모델 변경을 시작하지 않습니다.'
+        )
+    )
+        return
     trainingDraftBusy.value = true
     try {
         trainingTransfer.value = await publishTrainingCase(job.value.jobId, caseDraft)
         trainingEditorOpen.value = false
     } catch (error) {
-        trainingDraftError.value = error.response?.data?.message || error.response?.data?.detail?.message || error.message || '학습 사례를 전송하지 못했습니다.'
+        trainingDraftError.value = trainingValidationMessage(error)
     } finally {
         trainingDraftBusy.value = false
     }
 }
 
-const trainingTransferLabel = computed(
-    () =>
-        ({
-            WAITING_FOR_RECEIVER: '공유 폴더 게시 완료 · AI 학습 서버 알림 재시도 중',
-            WAITING_FOR_SYNC: 'AI 학습 서버 알림 완료 · 파일 동기화 대기 중',
-            VERIFIED: 'AI 학습 서버 수신·검증 완료',
-            REJECTED: 'AI 학습 서버 검증 실패 · 사례와 공유 파일 확인 필요',
-        })[trainingTransfer.value?.status] || '전송 상태 확인 중'
-)
+const trainingTransferInfo = computed(() => trainingTransferPresentation(trainingTransfer.value?.status))
+const trainingTransferLabel = computed(() => trainingTransferInfo.value.label)
 
 onMounted(() => {
     window.addEventListener('beforeunload', warnBeforeUnload)
@@ -384,7 +519,7 @@ const database = computed(() => analysis.value?.facts?.databaseSummary || {})
 const aiResult = computed(() =>
     analysis.value?.reviewStatus === 'APPROVED' && analysis.value?.correctedResult ? analysis.value.correctedResult : analysis.value?.result || {}
 )
-const reviewStatusLabel = computed(() => ({ APPROVED: '사람 승인', REJECTED: '반려', PENDING: '검토 대기' })[analysis.value?.reviewStatus] || '검토 대기')
+const reviewStatusLabel = computed(() => analysisReviewLabel(analysis.value?.reviewStatus))
 const plainLanguageSummary = computed(() => {
     const value = aiResult.value.plainLanguageSummary
     return typeof value === 'string' && value.trim() ? value.trim() : ''
@@ -731,141 +866,290 @@ const evidenceEntries = (evidence) => (evidence && typeof evidence === 'object' 
         <template v-if="analysis">
             <section v-if="!isAnalysisDemoMode" class="panel analysis-section" aria-labelledby="analysis-review-title">
                 <div class="panel-heading">
-                    <div>
-                        <h2 id="analysis-review-title">사람 검토</h2>
-                        <p>AI 초안과 실제 소스·DB 근거를 확인한 뒤 승인하거나 반려합니다.</p>
+                    <div class="min-w-0">
+                        <h2 id="analysis-review-title">분석 결과 검토</h2>
+                        <p v-if="analysis.reviewStatus && analysis.reviewStatus !== 'PENDING'">검토 시각: {{ formatDate(analysis.reviewedAt) }}</p>
+                        <p v-else>분석 결과를 확인한 뒤 승인하거나 반려해 주세요.</p>
                     </div>
                     <span class="badge" :class="analysis.reviewStatus === 'APPROVED' ? 'green' : analysis.reviewStatus === 'REJECTED' ? 'orange' : 'blue'">
                         {{ reviewStatusLabel }}
                     </span>
                 </div>
-                <template v-if="analysis.reviewStatus && analysis.reviewStatus !== 'PENDING'">
-                    <p class="text-sm text-slate-700 dark:text-slate-300">검토 시각: {{ formatDate(analysis.reviewedAt) }}</p>
-                    <p class="mt-2 whitespace-pre-wrap break-words text-sm text-slate-700 dark:text-slate-300">검토 이유: {{ analysis.reviewNote }}</p>
-                    <p v-if="analysis.correctedResult" class="mt-2 text-sm font-semibold text-blue-700 dark:text-blue-300">
-                        아래에는 사람이 승인한 수정본을 표시합니다. AI 원본은 보존됩니다.
+                <p v-if="analysis.reviewNote" class="mt-2 line-clamp-2 break-words text-sm text-slate-600 dark:text-slate-300">{{ analysis.reviewNote }}</p>
+                <div class="mt-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+                    <p v-if="trainingTransfer" class="min-w-0 break-words text-sm text-blue-700 dark:text-blue-300" role="status">
+                        {{ trainingTransferLabel }}
                     </p>
-                    <p v-else-if="analysis.reviewStatus === 'REJECTED'" class="mt-2 text-sm text-amber-800 dark:text-amber-300">
-                        아래 내용은 반려된 AI 초안이며 승인된 결론이 아닙니다.
+                    <p v-else class="min-w-0 text-sm text-slate-500 dark:text-slate-400">
+                        승인한 분석은 검토 후 AI 학습 자료로 보낼 수 있습니다. 전송은 선택사항입니다.
                     </p>
-                    <div
-                        v-if="analysis.reviewStatus === 'APPROVED' && authStore.hasPermission('ANALYSIS_APPROVE')"
-                        class="mt-4 flex flex-col items-start gap-2"
-                    >
-                        <button type="button" class="button secondary w-full sm:w-auto" :disabled="trainingDraftBusy" @click="downloadTrainingDraft">
-                            {{ trainingDraftBusy ? '초안 준비 중…' : '학습 사례 초안 내려받기' }}
-                        </button>
-                        <button
-                            v-if="!trainingTransfer"
-                            type="button"
-                            class="button secondary w-full sm:w-auto"
-                            :disabled="trainingDraftBusy"
-                            @click="openTrainingEditor"
-                        >
-                            {{ trainingDraftBusy ? '초안 준비 중…' : '검토 후 AI 학습 서버로 전송' }}
-                        </button>
-                        <p v-if="trainingTransfer" class="text-sm text-blue-700 dark:text-blue-300" role="status">{{ trainingTransferLabel }}</p>
-                        <p v-if="trainingTransfer?.status === 'REJECTED'" class="text-sm text-rose-700 dark:text-rose-300">
-                            같은 분석 작업의 전송 사례는 덮어쓰지 않습니다. 오류 원인을 확인하고 새 분석 사례로 다시 검토해 주세요.
-                        </p>
-                        <button type="button" class="button secondary w-full sm:w-auto" :disabled="trainingStatusBusy" @click="checkTrainingTransfer">
-                            {{ trainingStatusBusy ? '상태 확인 중…' : '전송 상태 확인' }}
-                        </button>
-                        <div v-if="trainingEditorOpen" class="grid w-full min-w-0 gap-3 rounded-xl border border-slate-200 p-4 dark:border-slate-700">
-                            <h3 class="font-semibold">학습 사례 검토</h3>
-                            <p class="text-sm text-amber-800 dark:text-amber-300">
-                                아래 항목을 확인하고 JSON의 빈 값과 정답을 수정하세요. 공유 폴더 게시 후에는 내용을 덮어쓸 수 없습니다.
-                            </p>
-                            <p class="text-sm text-slate-600 dark:text-slate-300">
-                                프로젝트 그룹과 현재 로그인한 검토자의 식별자는 자동으로 입력됩니다. 아래 검토 확인란의 선택도 JSON에 자동으로 반영됩니다.
-                            </p>
-                            <ul class="list-disc space-y-1 pl-5 text-sm text-slate-700 dark:text-slate-300">
-                                <li v-for="item in trainingReviewRequired" :key="item">{{ item }}</li>
-                            </ul>
-                            <BaseTextarea
-                                id="training-case-json"
-                                v-model="trainingCaseText"
-                                label="학습 사례 JSON"
-                                mode="code"
-                                rows="12"
-                                :disabled="trainingDraftBusy"
-                            />
-                            <label class="flex items-start gap-2 text-sm"
-                                ><input
-                                    v-model="trainingAnswerChecked"
-                                    type="checkbox"
-                                    :disabled="trainingDraftBusy"
-                                    @change="syncTrainingReviewFlags"
-                                />정답·소스·DB 근거의 일치를 사람이 확인했습니다.</label
-                            >
-                            <label class="flex items-start gap-2 text-sm"
-                                ><input
-                                    v-model="trainingSanitizedChecked"
-                                    type="checkbox"
-                                    :disabled="trainingDraftBusy"
-                                    @change="syncTrainingReviewFlags"
-                                />비밀키·개인정보·고객 원문을 제거했습니다.</label
-                            >
-                            <div class="flex flex-wrap gap-2">
-                                <button type="button" class="button primary" :disabled="trainingDraftBusy" @click="submitTrainingCase">검토한 사례 전송</button>
-                                <button type="button" class="button secondary" :disabled="trainingDraftBusy" @click="trainingEditorOpen = false">닫기</button>
-                            </div>
+                    <button type="button" class="button secondary w-full sm:w-auto" @click="reviewDialogOpen = true">
+                        {{
+                            analysis.reviewStatus === 'APPROVED'
+                                ? '검토 내역·학습 데이터'
+                                : analysis.reviewStatus === 'REJECTED'
+                                  ? '검토 내역 보기'
+                                  : '검토 및 승인'
+                        }}
+                    </button>
+                </div>
+            </section>
+            <BaseModal
+                v-if="!isAnalysisDemoMode"
+                v-model="reviewDialogOpen"
+                title="결과 검토·학습 데이터 관리"
+                :busy="reviewBusy || trainingDraftBusy || trainingStatusBusy"
+            >
+                <section class="min-w-0" aria-labelledby="analysis-review-dialog-title">
+                    <div class="panel-heading">
+                        <div>
+                            <h3 id="analysis-review-dialog-title">분석 결과 검토</h3>
+                            <p>AI 분석 결과를 확인하고, 필요한 내용을 수정해 승인하세요. 승인만으로 학습 데이터가 전송되지는 않습니다.</p>
                         </div>
-                        <p class="text-xs text-amber-800 dark:text-amber-300">
-                            내려받는 파일은 비식별화 전 초안입니다. 검토 항목을 채우고 검사하기 전에는 학습·공유 NAS 전송에 사용하지 마세요.
-                        </p>
-                        <p v-if="trainingDraftError" role="alert" class="break-words text-sm text-rose-700 dark:text-rose-300">{{ trainingDraftError }}</p>
+                        <span class="badge" :class="analysis.reviewStatus === 'APPROVED' ? 'green' : analysis.reviewStatus === 'REJECTED' ? 'orange' : 'blue'">
+                            {{ reviewStatusLabel }}
+                        </span>
                     </div>
-                </template>
-                <template v-else-if="authStore.hasPermission('ANALYSIS_APPROVE')">
-                    <p class="mb-3 text-sm text-amber-800 dark:text-amber-300">
-                        검토 결정은 한 번만 저장할 수 있습니다. 프로젝트 소유자 또는 관리자 권한이 필요하며, 승인 전 파일·DB 근거와 과장된 제안이 없는지
-                        확인하세요.
-                    </p>
-                    <BaseTextarea
-                        id="review-note"
-                        v-model="reviewNote"
-                        label="검토 이유"
-                        rows="3"
-                        maxlength="4000"
-                        placeholder="확인한 근거와 승인 또는 반려 이유를 적어 주세요."
-                        :disabled="reviewBusy"
-                    />
-                    <label class="mt-4 flex items-start gap-2 text-sm text-slate-700 dark:text-slate-300">
-                        <input v-model="reviewUseCorrection" type="checkbox" class="mt-1" :disabled="reviewBusy" />
-                        AI 결과를 수정한 전체 JSON을 승인합니다.
-                    </label>
-                    <div v-if="reviewUseCorrection" class="mt-3">
+                    <template v-if="analysis.reviewStatus && analysis.reviewStatus !== 'PENDING'">
+                        <p class="text-sm text-slate-700 dark:text-slate-300">검토 시각: {{ formatDate(analysis.reviewedAt) }}</p>
+                        <p class="mt-2 whitespace-pre-wrap break-words text-sm text-slate-700 dark:text-slate-300">검토 이유: {{ analysis.reviewNote }}</p>
+                        <p v-if="analysis.correctedResult" class="mt-2 text-sm font-semibold text-blue-700 dark:text-blue-300">
+                            결과 화면에는 승인된 수정 결과를 표시합니다. AI 원본은 보존됩니다.
+                        </p>
+                        <p v-else-if="analysis.reviewStatus === 'REJECTED'" class="mt-2 text-sm text-amber-800 dark:text-amber-300">
+                            아래 내용은 반려된 AI 초안이며 승인된 결론이 아닙니다.
+                        </p>
+                        <div
+                            v-if="analysis.reviewStatus === 'APPROVED' && authStore.hasPermission('ANALYSIS_APPROVE')"
+                            class="mt-6 grid w-full min-w-0 gap-6 border-t border-slate-200 pt-6 dark:border-slate-700"
+                        >
+                            <TrainingDataGuide />
+                            <div
+                                v-if="!trainingTransfer && !trainingEditorOpen"
+                                class="flex min-w-0 flex-col gap-4 rounded-xl border border-slate-200 p-4 sm:flex-row sm:items-center sm:justify-between dark:border-slate-700"
+                            >
+                                <div class="min-w-0">
+                                    <p class="text-sm font-semibold text-slate-900 dark:text-slate-100">학습 데이터 준비</p>
+                                    <p class="mt-1 text-sm text-slate-600 dark:text-slate-300">
+                                        초안을 열어 내용을 확인하세요. 이 버튼만으로 전송되지는 않습니다.
+                                    </p>
+                                </div>
+                                <button
+                                    type="button"
+                                    class="button primary w-full shrink-0 sm:w-auto"
+                                    :disabled="trainingDraftBusy"
+                                    @click="openTrainingEditor"
+                                >
+                                    {{ trainingDraftBusy ? '초안 준비 중…' : trainingCaseText ? '이어서 검토하기' : '학습 데이터 검토하기' }}
+                                </button>
+                            </div>
+                            <div
+                                v-if="trainingTransfer"
+                                class="flex min-w-0 flex-col gap-4 rounded-xl border border-blue-100 p-5 sm:flex-row sm:items-start sm:justify-between dark:border-blue-900"
+                            >
+                                <div class="min-w-0" role="status">
+                                    <p class="mb-2 text-xs font-medium text-slate-500 dark:text-slate-400">데이터 전달 상태</p>
+                                    <p class="text-sm font-semibold text-blue-700 dark:text-blue-300">{{ trainingTransferLabel }}</p>
+                                    <p class="mt-2 text-sm leading-relaxed text-slate-600 dark:text-slate-300">{{ trainingTransferInfo.description }}</p>
+                                </div>
+                                <button
+                                    type="button"
+                                    class="button secondary w-full shrink-0 sm:w-auto"
+                                    :disabled="trainingStatusBusy"
+                                    @click="checkTrainingTransfer"
+                                >
+                                    {{ trainingStatusBusy ? '상태 확인 중…' : '전송 상태 확인' }}
+                                </button>
+                            </div>
+                            <p v-if="trainingTransfer?.status === 'REJECTED'" class="text-sm text-rose-700 dark:text-rose-300">
+                                같은 분석 작업의 전송 사례는 덮어쓰지 않습니다. 오류 원인을 확인하고 새 분석 사례로 다시 검토해 주세요.
+                            </p>
+                            <div v-if="trainingEditorOpen" class="grid w-full min-w-0 gap-3 rounded-xl border border-slate-200 p-4 dark:border-slate-700">
+                                <h3 class="font-semibold">학습 데이터 검토</h3>
+                                <p class="text-sm text-slate-600 dark:text-slate-300">
+                                    자동으로 준비한 초안입니다. 아래 누락 항목을 보완한 뒤, 답변이 근거와 맞는지 확인하고 전송 전 검사를 진행하세요.
+                                </p>
+                                <p class="text-xs text-slate-600 dark:text-slate-400">
+                                    편집한 초안은 이 화면에 머무르는 동안 유지됩니다. 페이지를 새로고침하거나 다른 화면으로 이동하면 저장되지 않은 편집값은
+                                    사라집니다.
+                                </p>
+                                <p class="text-sm text-amber-800 dark:text-amber-300">
+                                    아래 항목을 확인하고 JSON의 빈 값과 정답을 수정하세요. 공유 폴더 게시 후에는 내용을 덮어쓸 수 없습니다.
+                                </p>
+                                <p class="text-sm text-slate-600 dark:text-slate-300">
+                                    프로젝트 그룹과 현재 로그인한 검토자의 식별자는 자동으로 입력됩니다. 아래 검토 확인란의 선택도 JSON에 자동으로 반영됩니다.
+                                </p>
+                                <TrainingDraftCompletion
+                                    :model-value="trainingCaseText"
+                                    :auto-filled="trainingAutoFilled"
+                                    :busy="trainingDraftBusy"
+                                    :notice="trainingCompletionNotice"
+                                    @update:model-value="editTrainingCase"
+                                    @complete="completeTrainingCase"
+                                />
+                                <section
+                                    v-if="trainingUnmatchedEvidence.length"
+                                    class="grid min-w-0 gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-900 dark:bg-amber-950/20"
+                                >
+                                    <h4 class="font-semibold text-amber-900 dark:text-amber-200">
+                                        학습 입력에 없는 근거 {{ trainingUnmatchedEvidence.length }}개
+                                    </h4>
+                                    <p class="text-sm text-amber-900 dark:text-amber-200">
+                                        파일이 있어도 해당 줄의 참조가 원래 입력에 없으면 전체 검증에서 거부됩니다. 원본 커밋에서 확인한 코드 조각을 학습 사례
+                                        사본에 추가할 수 있습니다.
+                                    </p>
+                                    <ul class="list-disc space-y-1 break-all pl-5 text-sm text-amber-900 dark:text-amber-200">
+                                        <li v-for="(item, index) in trainingUnmatchedEvidence" :key="`${item.file}:${item.line}:${index}`">
+                                            {{ item.file }} · {{ item.line }}줄
+                                        </li>
+                                    </ul>
+                                    <button
+                                        type="button"
+                                        class="button secondary w-full justify-self-start sm:w-auto"
+                                        :disabled="trainingDraftBusy"
+                                        @click="supplementTrainingEvidence"
+                                    >
+                                        {{ trainingDraftBusy ? '처리 중…' : '원본 커밋 근거 확인·보강' }}
+                                    </button>
+                                </section>
+                                <ul class="list-disc space-y-1 pl-5 text-sm text-slate-700 dark:text-slate-300">
+                                    <li v-for="item in trainingVisibleReviewNotes" :key="item">{{ item }}</li>
+                                </ul>
+                                <BaseTextarea
+                                    id="training-case-json"
+                                    :model-value="trainingCaseText"
+                                    label="학습 데이터 JSON"
+                                    mode="code"
+                                    rows="12"
+                                    :disabled="trainingDraftBusy"
+                                    @update:model-value="editTrainingCase"
+                                />
+                                <label class="flex items-start gap-2 text-sm"
+                                    ><input
+                                        v-model="trainingAnswerChecked"
+                                        type="checkbox"
+                                        :disabled="trainingDraftBusy"
+                                        @change="syncTrainingReviewFlags"
+                                    />답변이 실제 소스·DB 근거와 일치하는지 검토했습니다.</label
+                                >
+                                <label class="flex items-start gap-2 text-sm"
+                                    ><input
+                                        v-model="trainingSanitizedChecked"
+                                        type="checkbox"
+                                        :disabled="trainingDraftBusy"
+                                        @change="syncTrainingReviewFlags"
+                                    />비밀키·개인정보·고객 원문을 제거했습니다.</label
+                                >
+                                <div
+                                    class="mt-2 flex flex-col gap-4 border-t border-slate-200 pt-4 lg:flex-row lg:items-start lg:justify-between dark:border-slate-700"
+                                >
+                                    <div class="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
+                                        <button
+                                            type="button"
+                                            class="button secondary w-full sm:w-auto"
+                                            :disabled="
+                                                trainingDraftBusy || trainingBlockingIssues.length > 0 || !trainingAnswerChecked || !trainingSanitizedChecked
+                                            "
+                                            @click="checkFullTrainingCase"
+                                        >
+                                            전송 전 전체 검사
+                                        </button>
+                                        <button
+                                            type="button"
+                                            class="button primary w-full sm:w-auto"
+                                            :disabled="
+                                                trainingDraftBusy || trainingBlockingIssues.length > 0 || !trainingAnswerChecked || !trainingSanitizedChecked
+                                            "
+                                            @click="submitTrainingCase"
+                                        >
+                                            AI 학습 서버로 데이터 전송
+                                        </button>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        class="button secondary w-full lg:w-auto"
+                                        :disabled="trainingDraftBusy"
+                                        @click="trainingEditorOpen = false"
+                                    >
+                                        편집 영역 접기
+                                    </button>
+                                </div>
+                                <p v-if="trainingValidationNotice" class="break-words text-sm text-emerald-700 dark:text-emerald-300" role="status">
+                                    {{ trainingValidationNotice }}
+                                </p>
+                            </div>
+                            <details class="w-full rounded-lg border border-slate-200 p-3 text-sm dark:border-slate-700">
+                                <summary class="cursor-pointer font-medium text-slate-700 dark:text-slate-200">파일로 따로 검토하기 (선택)</summary>
+                                <p class="mt-2 text-xs leading-relaxed text-slate-600 dark:text-slate-300">
+                                    웹 화면에서 검토·전송할 때는 내려받을 필요가 없습니다. 파일을 직접 확인하려는 경우에만 초안을 내려받으세요.
+                                </p>
+                                <button
+                                    type="button"
+                                    class="button secondary mt-3 w-full sm:w-auto"
+                                    :disabled="trainingDraftBusy"
+                                    @click="downloadTrainingDraft"
+                                >
+                                    {{ trainingDraftBusy ? '초안 준비 중…' : '학습 데이터 초안 내려받기' }}
+                                </button>
+                                <p class="mt-2 text-xs leading-relaxed text-amber-800 dark:text-amber-300">
+                                    이 파일에는 비밀정보·개인정보가 남아 있을 수 있습니다. 제거하고 검토하기 전에는 학습이나 공유에 사용하지 마세요.
+                                </p>
+                            </details>
+                            <p v-if="trainingDraftError" role="alert" class="break-words text-sm text-rose-700 dark:text-rose-300">{{ trainingDraftError }}</p>
+                        </div>
+                    </template>
+                    <template v-else-if="authStore.hasPermission('ANALYSIS_APPROVE')">
+                        <p class="mb-3 text-sm text-amber-800 dark:text-amber-300">
+                            검토 결정은 한 번만 저장할 수 있습니다. 프로젝트 소유자 또는 관리자 권한이 필요하며, 승인 전 파일·DB 근거와 과장된 제안이 없는지
+                            확인하세요.
+                        </p>
                         <BaseTextarea
-                            id="review-corrected-result"
-                            v-model="reviewCorrectedText"
-                            label="수정 결과 JSON"
-                            mode="code"
-                            rows="15"
-                            maxlength="200000"
-                            spellcheck="false"
+                            id="review-note"
+                            v-model="reviewNote"
+                            label="검토 이유"
+                            rows="3"
+                            maxlength="4000"
+                            placeholder="확인한 근거와 승인 또는 반려 이유를 적어 주세요."
                             :disabled="reviewBusy"
                         />
-                        <p class="mt-1 text-xs text-slate-600 dark:text-slate-400">
-                            필수 필드와 DB 판단 형식은 유지해야 합니다. 검토하지 않은 근거나 비밀정보를 추가하지 마세요.
-                        </p>
-                    </div>
-                    <p v-if="reviewError" role="alert" class="mt-3 break-words text-sm text-rose-700 dark:text-rose-300">{{ reviewError }}</p>
-                    <div class="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
-                        <button
-                            type="button"
-                            class="button primary w-full sm:w-auto"
-                            :disabled="reviewBusy || (Boolean(displayedRisk.warning) && !reviewUseCorrection)"
-                            @click="submitReview('APPROVED')"
-                        >
-                            {{ reviewBusy ? '저장 중…' : reviewUseCorrection ? '수정본 승인' : 'AI 원본 승인' }}
-                        </button>
-                        <button type="button" class="button secondary w-full sm:w-auto" :disabled="reviewBusy" @click="submitReview('REJECTED')">반려</button>
-                    </div>
-                </template>
-                <p v-else class="text-sm text-slate-600 dark:text-slate-300">이 계정에는 분석 결과를 승인하거나 반려할 권한이 없습니다.</p>
-                <p v-if="reviewNotice" role="status" class="mt-3 text-sm text-emerald-700 dark:text-emerald-300">{{ reviewNotice }}</p>
-            </section>
+                        <label class="mt-4 flex items-start gap-2 text-sm text-slate-700 dark:text-slate-300">
+                            <input v-model="reviewUseCorrection" type="checkbox" class="mt-1" :disabled="reviewBusy" />
+                            AI 결과를 수정한 전체 JSON을 승인합니다.
+                        </label>
+                        <div v-if="reviewUseCorrection" class="mt-3">
+                            <BaseTextarea
+                                id="review-corrected-result"
+                                v-model="reviewCorrectedText"
+                                label="수정 결과 JSON"
+                                mode="code"
+                                rows="15"
+                                maxlength="200000"
+                                spellcheck="false"
+                                :disabled="reviewBusy"
+                            />
+                            <p class="mt-1 text-xs text-slate-600 dark:text-slate-400">
+                                필수 필드와 DB 판단 형식은 유지해야 합니다. 검토하지 않은 근거나 비밀정보를 추가하지 마세요.
+                            </p>
+                        </div>
+                        <p v-if="reviewError" role="alert" class="mt-3 break-words text-sm text-rose-700 dark:text-rose-300">{{ reviewError }}</p>
+                        <div class="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+                            <button
+                                type="button"
+                                class="button primary w-full sm:w-auto"
+                                :disabled="reviewBusy || (Boolean(displayedRisk.warning) && !reviewUseCorrection)"
+                                @click="submitReview('APPROVED')"
+                            >
+                                {{ reviewBusy ? '저장 중…' : reviewUseCorrection ? '수정 결과 승인' : '분석 결과 승인' }}
+                            </button>
+                            <button type="button" class="button secondary w-full sm:w-auto" :disabled="reviewBusy" @click="submitReview('REJECTED')">
+                                반려
+                            </button>
+                        </div>
+                    </template>
+                    <p v-else class="text-sm text-slate-600 dark:text-slate-300">이 계정에는 분석 결과를 승인하거나 반려할 권한이 없습니다.</p>
+                    <p v-if="reviewNotice" role="status" class="mt-3 text-sm text-emerald-700 dark:text-emerald-300">{{ reviewNotice }}</p>
+                </section>
+            </BaseModal>
 
             <section class="panel analysis-section plain-language-section">
                 <div class="panel-heading">
@@ -874,7 +1158,11 @@ const evidenceEntries = (evidence) => (evidence && typeof evidence === 'object' 
                         <p>고객·PM을 위한 설명</p>
                     </div>
                     <span class="badge blue">{{
-                        analysis.reviewStatus === 'APPROVED' ? '사람 승인 결과' : analysis.reviewStatus === 'REJECTED' ? '반려된 AI 초안' : 'AI 초안 · 검토 전'
+                        analysis.reviewStatus === 'APPROVED'
+                            ? '승인된 분석 결과'
+                            : analysis.reviewStatus === 'REJECTED'
+                              ? '반려된 AI 초안'
+                              : 'AI 초안 · 검토 전'
                     }}</span>
                 </div>
                 <p v-if="plainLanguageSummary" class="plain-language-copy">{{ plainLanguageSummary }}</p>
@@ -908,7 +1196,7 @@ const evidenceEntries = (evidence) => (evidence && typeof evidence === 'object' 
                 </dl>
                 <p v-if="riskFactors.length" class="mb-4 text-xs leading-relaxed text-slate-600 dark:text-slate-400">
                     변경 자체의 영향은 최대 90점, 남은 불확실성은 최대 10점입니다. 0~24점은 낮음, 25~49점은 보통, 50~74점은 높음, 75~100점은 매우 높음입니다.
-                    AI의 근거 기반 추정치이므로 최종 판단은 사람 검토가 필요합니다.
+                    AI의 근거 기반 추정치이므로 최종 판단은 담당자 검토가 필요합니다.
                 </p>
                 <p class="result-text">{{ analysis.summary || aiResult.summary || '제공된 요약이 없습니다.' }}</p>
                 <div v-if="frameworks.length" class="tag-list compact">
