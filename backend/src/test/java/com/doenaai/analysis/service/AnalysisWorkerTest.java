@@ -215,6 +215,38 @@ class AnalysisWorkerTest {
         assertThat(checkout).doesNotExist();
     }
 
+    @Test void modelTimeoutKeepsItsCodeAndSafeReasonInsteadOfGenericStageFailure(CapturedOutput output) throws Exception {
+        var db = Map.<String, Object>of("tables", List.of());
+        when(database.collect(job.projectId())).thenReturn(db);
+        when(source.collect(checkout, db)).thenReturn(new SourceEvidenceCollector.ScanResult(Map.of(), List.of()));
+        when(ai.analyzeWithProgress(any(), any())).thenThrow(new AiAnalysisClient.ModelFailureException("MODEL_TIMEOUT"));
+        worker.process(job);
+        verify(jobs).fail(eq(job.jobId()), argThat(message -> message.contains("MODEL_TIMEOUT")
+                && message.contains("응답 대기 시간이 초과") && !message.contains("ANALYSIS_STAGE_FAILURE")));
+        verify(results, never()).complete(any(), anyMap(), anyMap());
+        assertThat(output.getAll()).contains("code=MODEL_TIMEOUT");
+    }
+
+    @Test void persistsRealBatchAndReusedStageMessagesForTheProgressScreen() throws Exception {
+        var db = Map.<String, Object>of("tables", List.of());
+        when(database.collect(job.projectId())).thenReturn(db);
+        when(source.collect(checkout, db)).thenReturn(new SourceEvidenceCollector.ScanResult(Map.of(), List.of()));
+        when(ai.analyzeWithProgress(anyMap(), any())).thenAnswer(call -> {
+            @SuppressWarnings("unchecked")
+            var report = (java.util.function.Consumer<AiAnalysisClient.ProgressEvent>) call.getArgument(1);
+            report.accept(new AiAnalysisClient.ProgressEvent("GENERAL_REUSED", null));
+            report.accept(new AiAnalysisClient.ProgressEvent("DATABASE_BATCH_STARTED", 2));
+            report.accept(new AiAnalysisClient.ProgressEvent("DATABASE_BATCH_REUSED", 2));
+            report.accept(new AiAnalysisClient.ProgressEvent("DATABASE_MERGE_COMPLETED", 1));
+            return Map.of("summary", "검토 완료", "riskLevel", "UNKNOWN", "riskScore", 0);
+        });
+        worker.process(job);
+        verify(jobs).appendActivity(job.jobId(), "저장된 AI 일반 분석 불러오기", "COMPLETED");
+        verify(jobs).appendActivity(job.jobId(), "AI DB 분할 검토 (2번째 묶음)", "STARTED");
+        verify(jobs).appendActivity(job.jobId(), "AI DB 분할 검토 (2번째 묶음) · 저장 결과 재사용", "COMPLETED");
+        verify(jobs).appendActivity(job.jobId(), "AI DB 분할 결과 종합 (1번째 묶음)", "COMPLETED");
+    }
+
     @Test void includesValidatedRequirementVersionButNotRawOriginalOrAttachments() throws Exception {
         var versionId = UUID.randomUUID();
         var previousJobId = UUID.randomUUID();

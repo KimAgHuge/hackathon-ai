@@ -74,6 +74,7 @@ htmlcov/
 /training/models/
 /training/datasets/
 /training/adapters/
+/ai-server/.analysis-checkpoints/
 
 *.safetensors
 *.gguf

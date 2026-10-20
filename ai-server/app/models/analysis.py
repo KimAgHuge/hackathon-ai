@@ -131,8 +131,14 @@ class DatabaseChangeType(str, Enum):
     DROP_COLUMN = "DROP_COLUMN"
     ADD_CONSTRAINT = "ADD_CONSTRAINT"
     ALTER_CONSTRAINT = "ALTER_CONSTRAINT"
+    ADD_INDEX = "ADD_INDEX"
     DATA_MIGRATION = "DATA_MIGRATION"
     OTHER = "OTHER"
+
+
+class DatabaseChangeNecessity(str, Enum):
+    REQUIRED = "REQUIRED"
+    RECOMMENDED = "RECOMMENDED"
 
 
 class DatabaseChange(ApiModel):
@@ -141,6 +147,8 @@ class DatabaseChange(ApiModel):
     change_type: DatabaseChangeType
     description: str = Field(min_length=1)
     rationale: str = Field(min_length=1)
+    # 구형 저장 결과에는 구분값을 만들어 넣지 않는다. 새 추론에서는 별도로 필수 검사를 한다.
+    necessity: Optional[DatabaseChangeNecessity] = Field(default=None, exclude_if=lambda value: value is None)
 
     @model_validator(mode="after")
     def check_column_action(self):
@@ -169,6 +177,20 @@ class DatabaseImpact(ApiModel):
 
     @model_validator(mode="after")
     def check_decision(self):
+        additions = set()
+        for change in self.proposed_changes:
+            if change.change_type in {DatabaseChangeType.ADD_COLUMN, DatabaseChangeType.CREATE_TABLE}:
+                key = (change.change_type, change.target_table,
+                       change.target_column if change.change_type == DatabaseChangeType.ADD_COLUMN else None)
+                if key in additions:
+                    raise ValueError("같은 테이블 또는 컬럼을 중복해서 추가할 수 없습니다.")
+                additions.add(key)
+        classified = [change.necessity for change in self.proposed_changes]
+        if any(value is not None for value in classified):
+            if any(value is None for value in classified):
+                raise ValueError("변경안의 필수·권장 구분을 모두 작성해야 합니다.")
+            if self.status == DatabaseImpactStatus.CHANGE_REQUIRED and DatabaseChangeNecessity.REQUIRED not in classified:
+                raise ValueError("권장 개선만으로 DB 변경 필수를 확정할 수 없습니다.")
         if self.status == DatabaseImpactStatus.CHANGE_REQUIRED and not self.proposed_changes:
             raise ValueError("A required DB change needs a concrete proposed change.")
         if self.status == DatabaseImpactStatus.NEEDS_CLARIFICATION and not self.open_questions:

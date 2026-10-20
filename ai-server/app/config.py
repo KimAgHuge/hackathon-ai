@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     ai_request_timeout_seconds: float = Field(default=900, gt=0)
     ai_keep_alive: str = "30m"
     ai_max_validation_retries: int = Field(default=1, ge=0, le=3)
+    ai_db_batch_max_chars: int = Field(default=12000, ge=1000, le=90000)
+    ai_db_batch_max_tables: int = Field(default=6, ge=1, le=40)
+    ai_checkpoints_enabled: bool = True
+    ai_checkpoint_max_age_seconds: int = Field(default=86400, ge=60, le=604800)
     training_shared_dir: str = ""
     training_receiver_url: str = ""
     training_transfer_key: SecretStr = SecretStr("")

@@ -194,10 +194,12 @@ public class AiAnalysisClient {
                 if ("progress".equals(event.get("type"))) {
                     if (!(event.get("code") instanceof String code)
                             || !Set.of("GENERAL_STARTED", "GENERAL_COMPLETED", "DATABASE_STARTED",
-                                    "DATABASE_COMPLETED", "DATABASE_SKIPPED", "VALIDATION_RETRY").contains(code)
+                                    "DATABASE_COMPLETED", "DATABASE_SKIPPED", "VALIDATION_RETRY", "GENERAL_REUSED", "DATABASE_REUSED",
+                                    "DATABASE_BATCH_STARTED", "DATABASE_BATCH_COMPLETED", "DATABASE_BATCH_REUSED",
+                                    "DATABASE_MERGE_STARTED", "DATABASE_MERGE_COMPLETED", "DATABASE_MERGE_REUSED").contains(code)
                             || (event.containsKey("attempt") && (!(event.get("attempt") instanceof Number attempt)
                                 || attempt.doubleValue() != attempt.intValue()
-                                || attempt.intValue() < 1 || attempt.intValue() > 10))) {
+                                || attempt.intValue() < 1 || attempt.intValue() > (code.startsWith("DATABASE_BATCH") || code.startsWith("DATABASE_MERGE") ? 1000 : 10)))) {
                         throw new IOException("Invalid AI progress event.");
                     }
                     if (onProgress != null) {
@@ -211,12 +213,7 @@ public class AiAnalysisClient {
                     continue;
                 }
                 if ("error".equals(event.get("type"))) {
-                    throw new IOException(switch (event.get("code") instanceof String code ? code : "") {
-                        case "MODEL_TIMEOUT" -> "Ollama inference timed out.";
-                        case "MODEL_UNAVAILABLE" -> "Ollama is unavailable.";
-                        case "INVALID_MODEL_RESPONSE" -> "The model response did not match the required schema.";
-                        default -> "AI analysis failed.";
-                    });
+                    throw new ModelFailureException(event.get("code") instanceof String code ? code : "");
                 }
                 if ("result".equals(event.get("type"))) {
                     if (!(event.get("result") instanceof Map<?, ?> raw)) {
@@ -232,6 +229,7 @@ public class AiAnalysisClient {
         } catch (SafeResponseException exception) {
             throw exception;
         } catch (IOException exception) {
+            if (exception instanceof ModelFailureException) throw exception;
             if (Set.of("Invalid AI progress stream.", "Invalid AI progress event.",
                     "Invalid AI result JSON.", "Invalid AI result contract.", "Invalid AI risk assessment.", "Invalid AI plain-language summary.",
                     "Invalid AI database impact contract.", "Invalid AI database impact decision.",
@@ -241,6 +239,33 @@ public class AiAnalysisClient {
             throw new IOException("AI response body could not be read.");
         }
         throw new IOException("AI response ended without result.");
+    }
+
+    /** 원격 오류 원문 대신 허용한 코드와 고정 안내만 백엔드 작업 기록에 전달한다. */
+    public static final class ModelFailureException extends IOException {
+        private final String code;
+
+        ModelFailureException(String suppliedCode) {
+            super(messageFor(suppliedCode));
+            code = normalize(suppliedCode);
+        }
+
+        public String code() { return code; }
+
+        private static String normalize(String code) {
+            return code != null && Set.of("MODEL_TIMEOUT", "MODEL_UNAVAILABLE", "MODEL_OUTPUT_LIMIT", "INVALID_MODEL_RESPONSE").contains(code)
+                    ? code : "ANALYSIS_FAILED";
+        }
+
+        private static String messageFor(String code) {
+            return switch (normalize(code)) {
+                case "MODEL_TIMEOUT" -> "AI 모델 응답 대기 시간이 초과되었습니다.";
+                case "MODEL_UNAVAILABLE" -> "AI 모델에 연결하거나 모델을 실행하지 못했습니다.";
+                case "MODEL_OUTPUT_LIMIT" -> "AI 응답이 출력 한도에 도달했습니다. 잘린 응답은 저장하지 않았습니다.";
+                case "INVALID_MODEL_RESPONSE" -> "AI 응답이 분석 결과 형식 또는 근거 검사를 통과하지 못했습니다.";
+                default -> "AI 분석을 완료하지 못했습니다.";
+            };
+        }
     }
 
     private static final class BoundedInputStream extends FilterInputStream {
@@ -308,6 +333,11 @@ public class AiAnalysisClient {
                         || !(entry.get("description") instanceof String description) || description.isBlank()
                         || !(entry.get("rationale") instanceof String rationale) || rationale.isBlank())) {
             throw new IOException("Invalid AI database impact contract.");
+        }
+        try {
+            DatabaseChangePolicy.validate(databaseImpact);
+        } catch (IllegalArgumentException exception) {
+            throw new IOException("Invalid AI database impact decision.");
         }
         boolean requirementAnalysis = payload.get("sourceSummary") instanceof Map<?, ?> source
                 && source.get("changeRequirement") instanceof Map<?, ?>;

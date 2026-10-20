@@ -66,6 +66,15 @@ public class AnalysisResultService {
         if (request.decision() == AnalysisReviewDecision.APPROVED && request.correctedResult() == null) {
             var original = results.findByJobId(jobId).orElseThrow(() ->
                     new ResponseStatusException(HttpStatus.NOT_FOUND, "분석 결과를 찾을 수 없습니다."));
+            // 구형 결과 조회는 유지하되, 중복 변경안이 있는 원본을 새로 승인하지는 않는다.
+            if (original.result().get("databaseImpact") instanceof java.util.Map<?, ?> impact) {
+                try {
+                    DatabaseChangePolicy.validate(impact);
+                } catch (IllegalArgumentException exception) {
+                    throw new ResponseStatusException(HttpStatus.CONFLICT,
+                            "AI 원본의 DB 변경안이 검사를 통과하지 못했습니다. 수정본을 검토하거나 새 분석을 시작해 주세요.");
+                }
+            }
             if (!RiskScorePolicy.matches(original.riskLevel(), original.riskScore(),
                     original.result().get("riskAssessment"))) {
                 throw new ResponseStatusException(HttpStatus.CONFLICT,

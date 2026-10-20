@@ -12,6 +12,7 @@ from app.services.llm_service import (
     InvalidModelResponseError,
     LlmService,
     ModelTimeoutError,
+    ModelOutputLimitError,
     ModelUnavailableError,
 )
 
@@ -150,6 +151,7 @@ CONCRETE_DB_JSON = """{
       "targetTable": "public.projects",
       "targetColumn": "team_id",
       "changeType": "ADD_COLUMN",
+      "necessity": "REQUIRED",
       "description": "팀 식별자 컬럼을 추가합니다.",
       "rationale": "프로젝트마다 관리 팀을 명시하기 위해서입니다."
     }],
@@ -267,6 +269,62 @@ def test_general_stage_uses_table_overview_and_database_stage_keeps_details():
     assert '"organization_id"' in database_input
     assert '"projects_organization_idx"' in database_input
     assert request.database_summary["tables"] == original_tables
+
+
+def test_database_keeps_model_thinking_and_generation_defaults_without_dropping_facts(caplog):
+    client = FakeClient(chat_responses=[REQUIREMENT_GENERAL_MODEL_JSON, db_only(AMBIGUOUS_DB_JSON)])
+    with caplog.at_level("INFO", logger="app.services.llm_service"):
+        asyncio.run(LlmService(settings(), client=client).analyze(requirement_request()))
+    assert "think" not in client.chat_kwargs[0]
+    assert client.chat_kwargs[0]["options"] == {"temperature": 0}
+    assert "think" not in client.chat_kwargs[1]
+    assert client.chat_kwargs[1]["options"] == {"temperature": 0}
+    database_input = json.loads(client.chat_kwargs[1]["messages"][1]["content"])
+    assert len(database_input["tables"]) == len(requirement_request().database_summary["tables"])
+    assert "model_attempt_started" in caplog.text
+    assert "한 팀만 프로젝트를 관리" not in caplog.text
+
+
+def test_database_validation_retry_does_not_disable_thinking_or_cap_generation():
+    client = FakeClient(chat_responses=[REQUIREMENT_GENERAL_MODEL_JSON, "{}", db_only(AMBIGUOUS_DB_JSON)])
+    asyncio.run(LlmService(settings(), client=client).analyze(requirement_request()))
+    for call in client.chat_kwargs[1:]:
+        assert "think" not in call
+        assert call["options"] == {"temperature": 0}
+
+
+def test_thinking_is_measured_without_logging_its_content(caplog):
+    private_thinking = "로그에 남기면 안 되는 가상 추론 내용입니다."
+
+    class ThinkingClient(FakeClient):
+        async def chat(self, **kwargs):
+            response = await super().chat(**kwargs)
+            response.message.thinking = private_thinking
+            return response
+
+    client = ThinkingClient(chat_responses=[GENERAL_MODEL_JSON])
+    with caplog.at_level("INFO", logger="app.services.llm_service"):
+        asyncio.run(LlmService(settings(), client=client).analyze(analysis_request()))
+    assert f"thinking_chars={len(private_thinking)}" in caplog.text
+    assert private_thinking not in caplog.text
+
+
+@pytest.mark.parametrize("dictionary_response", [False, True])
+def test_output_limit_never_accepts_partial_response_or_retries_it(dictionary_response, caplog):
+    class LimitedClient(FakeClient):
+        async def chat(self, **kwargs):
+            await super().chat(**kwargs)
+            value = {"message": {"content": db_only(AMBIGUOUS_DB_JSON)}, "done_reason": "length"}
+            return value if dictionary_response else SimpleNamespace(**value)
+
+    client = LimitedClient(chat_responses=["ignored"])
+    with pytest.raises(ModelOutputLimitError), caplog.at_level("WARNING"):
+        asyncio.run(LlmService(settings(), client=client)._analyze_database_impact(
+            requirement_request(), requirement_request().source_summary["changeRequirement"]
+        ))
+    assert client.chat_calls == 1
+    assert "model_output_limit" in caplog.text
+    assert "한 팀만 프로젝트를 관리" not in caplog.text
 
 
 def test_risk_score_and_level_are_derived_from_independent_change_factors():

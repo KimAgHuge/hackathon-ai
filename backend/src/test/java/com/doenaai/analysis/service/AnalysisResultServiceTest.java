@@ -137,6 +137,29 @@ class AnalysisResultServiceTest {
         verify(results, never()).review(any(), any(), any(), any(), any());
     }
 
+    @Test void aStoredDuplicatePlanRemainsReadableButCannotBeNewlyApproved() {
+        var jobs = mock(AnalysisJobService.class);
+        var results = mock(AnalysisResultRepository.class);
+        var jobId = UUID.randomUUID();
+        var projectId = UUID.randomUUID();
+        var userId = UUID.randomUUID();
+        var column = Map.<String, Object>of("targetTable", "example.table_example", "targetColumn", "column_example", "changeType", "ADD_COLUMN");
+        var original = new AnalysisResultResponse(jobId, projectId, "구형 분석 결과", "LOW", 10,
+                Map.of("riskScore", 10, "databaseImpact", Map.of("status", "CHANGE_REQUIRED", "proposedChanges", java.util.List.of(column, column))),
+                Map.of(), OffsetDateTime.now(), "PENDING", null, null, null, null);
+        when(jobs.getAnalysisJob(jobId, userId)).thenReturn(AnalysisJobResponse.of(jobId, projectId, null,
+                "COMPLETED", 100, 100, 100, OffsetDateTime.now()));
+        when(results.findByJobId(jobId)).thenReturn(Optional.of(original));
+        var service = new AnalysisResultService(jobs, results, mock(ProjectService.class), mock(AnalysisReviewValidator.class));
+
+        assertThat(service.get(jobId, userId)).isSameAs(original);
+        assertThatThrownBy(() -> service.review(jobId, userId,
+                new AnalysisReviewRequest(AnalysisReviewDecision.APPROVED, "검토 후 승인", null)))
+                .isInstanceOfSatisfying(ResponseStatusException.class,
+                        error -> assertThat(error.getStatusCode()).isEqualTo(HttpStatus.CONFLICT));
+        verify(results, never()).review(any(), any(), any(), any(), any());
+    }
+
     @Test void pendingAndAlreadyReviewedJobsCannotBeReviewed() {
         var jobs = mock(AnalysisJobService.class);
         var results = mock(AnalysisResultRepository.class);

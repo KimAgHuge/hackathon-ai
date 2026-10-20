@@ -149,7 +149,8 @@ class SourceEvidenceCollectorTest {
     void ignoresSecretFilesGeneratedDirectoriesAndBinaryFiles() throws IOException {
         write("src/Safe.java", "class Safe {}\n");
         for (String file : List.of(".env.sql", "application-local.java", "credentials.py", "build/Hidden.sql",
-                "node_modules/Hidden.sql", "secrets/Hidden.sql", "src/generated/Hidden.sql", "assets/bundle.min.js")) {
+                "node_modules/Hidden.sql", "secrets/Hidden.sql", "src/generated/Hidden.sql", "assets/bundle.min.js",
+                "ai-server/.analysis-checkpoints/Hidden.sql", "ai-server/.analysis-checkpoints/package.json")) {
             write(file, "SELECT * FROM audit.events; SECRET_FILE_CONTENT");
         }
         Files.write(checkout.resolve("Binary.java"), new byte[]{0, 1, 2, 3});

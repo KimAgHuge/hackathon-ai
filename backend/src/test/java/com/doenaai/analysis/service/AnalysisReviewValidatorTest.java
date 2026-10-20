@@ -58,6 +58,23 @@ class AnalysisReviewValidatorTest {
         assertThatThrownBy(() -> validator.validate(withFactors)).isInstanceOf(ResponseStatusException.class);
     }
 
+    @Test void checksNewIndexClassificationAndDuplicateAdditionsOnCorrections() {
+        var result = validResult();
+        var column = Map.<String, Object>of("targetTable", "example.table_example", "targetColumn", "column_example",
+                "changeType", "ADD_COLUMN", "necessity", "REQUIRED", "description", "컬럼을 추가합니다.", "rationale", "요구사항에 명시된 새 정보입니다.");
+        var index = Map.<String, Object>of("targetTable", "example.table_example", "targetColumn", "column_example",
+                "changeType", "ADD_INDEX", "necessity", "RECOMMENDED", "description", "인덱스를 검토합니다.", "rationale", "실제 검색 비용 확인이 필요합니다.");
+        var impact = new LinkedHashMap<String, Object>(Map.of("status", "CHANGE_REQUIRED", "explanation", "요구사항에 따라 컬럼 추가가 필요합니다.",
+                "observedTables", List.of("example.table_example"), "proposedChanges", List.of(column, index),
+                "conditionalPaths", List.of(), "openQuestions", List.of()));
+        result.put("databaseImpact", impact);
+        assertThatCode(() -> validator.validate(result)).doesNotThrowAnyException();
+        impact.put("proposedChanges", List.of(column, column));
+        assertThatThrownBy(() -> validator.validate(result)).isInstanceOf(ResponseStatusException.class).hasMessageContaining("중복");
+        impact.put("proposedChanges", List.of(index));
+        assertThatThrownBy(() -> validator.validate(result)).isInstanceOf(ResponseStatusException.class).hasMessageContaining("권장 개선만");
+    }
+
     private Map<String, Object> validResult() {
         var result = new LinkedHashMap<String, Object>();
         result.put("summary", "근거를 확인한 수정 결과입니다.");

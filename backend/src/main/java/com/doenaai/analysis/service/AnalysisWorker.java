@@ -236,13 +236,16 @@ public class AnalysisWorker {
             // JDBC/Git/HTTP exception messages can contain credentials. Do not log them or stack traces.
             var cleanupFailure = exception instanceof GitRepositoryConnectionService.SnapshotCleanupException classified
                     ? classified : null;
+            var modelFailure = exception instanceof AiAnalysisClient.ModelFailureException classified ? classified : null;
             String failureCode = cleanupFailure != null ? cleanupFailure.code()
+                    : modelFailure != null ? modelFailure.code()
                     : "Git 임시 파일 정리".equals(stage) ? "GIT_CLEANUP_UNCLASSIFIED" : "ANALYSIS_STAGE_FAILURE";
             String failureArea = cleanupFailure == null ? "NOT_APPLICABLE" : cleanupFailure.area();
             log.warn("Analysis failed: jobId={}, stage={}, exception={}, code={}, area={}, instanceId={}",
                     job.jobId(), stage, exception.getClass().getSimpleName(), failureCode, failureArea, nodeIdentity.instanceId());
             try {
                 jobs.fail(job.jobId(), stage + " 단계에서 실패했습니다. 오류 코드: " + failureCode
+                        + (modelFailure == null ? "" : ". " + modelFailure.getMessage())
                         + (cleanupFailure == null ? "" : ", 정리 영역: " + failureArea)
                         + ", 처리 인스턴스: " + nodeIdentity.instanceId() + ".");
             } catch (Exception persistenceException) {
@@ -301,6 +304,20 @@ public class AnalysisWorker {
             case "DATABASE_SKIPPED" -> {
                 label = "추가 DB 분석 대상 아님";
                 state = "COMPLETED";
+            }
+            case "GENERAL_REUSED", "DATABASE_REUSED" -> {
+                label = "GENERAL_REUSED".equals(event.code()) ? "저장된 AI 일반 분석 불러오기" : "저장된 AI DB 분석 불러오기";
+                state = "COMPLETED";
+            }
+            case "DATABASE_BATCH_STARTED", "DATABASE_BATCH_COMPLETED", "DATABASE_BATCH_REUSED" -> {
+                label = "AI DB 분할 검토" + (event.attempt() == null ? "" : " (" + event.attempt() + "번째 묶음)");
+                if (event.code().endsWith("REUSED")) label += " · 저장 결과 재사용";
+                state = event.code().endsWith("STARTED") ? "STARTED" : "COMPLETED";
+            }
+            case "DATABASE_MERGE_STARTED", "DATABASE_MERGE_COMPLETED", "DATABASE_MERGE_REUSED" -> {
+                label = "AI DB 분할 결과 종합" + (event.attempt() == null ? "" : " (" + event.attempt() + "번째 묶음)");
+                if (event.code().endsWith("REUSED")) label += " · 저장 결과 재사용";
+                state = event.code().endsWith("STARTED") ? "STARTED" : "COMPLETED";
             }
             case "VALIDATION_RETRY" -> {
                 label = "AI 응답 형식 재검증" + (event.attempt() == null ? "" : " (" + event.attempt() + "번째 시도)");

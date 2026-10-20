@@ -13,6 +13,7 @@ from app.services.llm_service import (
     InvalidModelResponseError,
     LlmService,
     ModelTimeoutError,
+    ModelOutputLimitError,
     ModelUnavailableError,
 )
 
@@ -42,6 +43,11 @@ async def analyze_project(
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={"code": "MODEL_UNAVAILABLE", "message": str(exc)},
+        ) from exc
+    except ModelOutputLimitError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={"code": "MODEL_OUTPUT_LIMIT", "message": str(exc)},
         ) from exc
     except InvalidModelResponseError as exc:
         raise HTTPException(
@@ -84,6 +90,8 @@ async def analyze_project_stream(
                 event = {"type": "error", "code": "MODEL_TIMEOUT"}
             except ModelUnavailableError:
                 event = {"type": "error", "code": "MODEL_UNAVAILABLE"}
+            except ModelOutputLimitError:
+                event = {"type": "error", "code": "MODEL_OUTPUT_LIMIT"}
             except InvalidModelResponseError:
                 event = {"type": "error", "code": "INVALID_MODEL_RESPONSE"}
             except Exception:

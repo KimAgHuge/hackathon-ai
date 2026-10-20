@@ -6,6 +6,7 @@ from app.routers import analysis as analysis_router
 from app.services.llm_service import (
     InvalidModelResponseError,
     ModelTimeoutError,
+    ModelOutputLimitError,
     ModelUnavailableError,
 )
 
@@ -110,6 +111,17 @@ def test_analysis_maps_invalid_model_response_to_502(client, fake_llm_service):
 
     assert response.status_code == 502
     assert response.json()["detail"]["code"] == "INVALID_MODEL_RESPONSE"
+
+
+def test_output_limit_has_a_distinct_http_and_stream_code(client, fake_llm_service):
+    fake_llm_service.analysis_exception = ModelOutputLimitError("잘린 응답을 사용하지 않습니다.")
+    headers = {"X-Internal-Api-Key": TEST_API_KEY}
+    response = client.post("/api/analysis/project", json=VALID_REQUEST, headers=headers)
+    assert response.status_code == 502
+    assert response.json()["detail"]["code"] == "MODEL_OUTPUT_LIMIT"
+    response = client.post("/api/analysis/project/stream", json=VALID_REQUEST, headers=headers)
+    events = [json.loads(line) for line in response.text.splitlines()]
+    assert events[-1] == {"type": "error", "code": "MODEL_OUTPUT_LIMIT"}
 
 
 def test_stream_requires_key_and_emits_only_safe_progress_and_final_result(client, fake_llm_service):

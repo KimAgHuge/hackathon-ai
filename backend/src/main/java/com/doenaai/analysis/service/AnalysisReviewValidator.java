@@ -19,9 +19,6 @@ public class AnalysisReviewValidator {
     private static final Set<String> RISK_LEVELS = Set.of("LOW", "MEDIUM", "HIGH", "CRITICAL", "UNKNOWN");
     private static final Set<String> DATABASE_STATUSES = Set.of(
             "CHANGE_REQUIRED", "NO_CHANGE", "NEEDS_CLARIFICATION", "UNKNOWN", "NOT_APPLICABLE");
-    private static final Set<String> CHANGE_TYPES = Set.of(
-            "CREATE_TABLE", "ADD_COLUMN", "ALTER_COLUMN", "DROP_COLUMN",
-            "ADD_CONSTRAINT", "ALTER_CONSTRAINT", "DATA_MIGRATION", "OTHER");
     private static final Set<String> SECRET_KEYS = Set.of(
             "password", "dbpassword", "token", "accesstoken", "apikey", "authorization",
             "secret", "privatekey", "credential", "ciphertext", "passphrase");
@@ -83,7 +80,7 @@ public class AnalysisReviewValidator {
             if (!(change instanceof Map<?, ?> item)) throw invalid("DB 변경안 형식이 올바르지 않습니다.");
             requireText(item.get("targetTable"), 500);
             if (item.get("targetColumn") != null) requireText(item.get("targetColumn"), 500);
-            if (!(item.get("changeType") instanceof String type) || !CHANGE_TYPES.contains(type)) {
+            if (!(item.get("changeType") instanceof String type) || !DatabaseChangePolicy.CHANGE_TYPES.contains(type)) {
                 throw invalid("DB 변경 유형이 올바르지 않습니다.");
             }
             if (Set.of("ADD_COLUMN", "ALTER_COLUMN", "DROP_COLUMN").contains(type) && item.get("targetColumn") == null) {
@@ -91,6 +88,11 @@ public class AnalysisReviewValidator {
             }
             requireText(item.get("description"), 10_000);
             requireText(item.get("rationale"), 10_000);
+        }
+        try {
+            DatabaseChangePolicy.validate(impact);
+        } catch (IllegalArgumentException exception) {
+            throw invalid(exception.getMessage());
         }
         for (Object path : paths) {
             if (!(path instanceof Map<?, ?> item)) throw invalid("조건별 DB 영향 형식이 올바르지 않습니다.");

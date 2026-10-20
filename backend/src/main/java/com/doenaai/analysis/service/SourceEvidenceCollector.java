@@ -43,7 +43,7 @@ public class SourceEvidenceCollector {
             ".git", ".svn", ".hg", ".idea", ".vscode", ".gradle", ".mvn", ".venv", "venv",
             "node_modules", "vendor", "build", "dist", "target", "out", "coverage", "generated",
             "generated-sources", "__pycache__", ".next", ".nuxt", ".cache", ".pytest_cache", "pods",
-            "bin", "obj", "artifacts", "datasets", "checkpoints", "secrets", ".ssh", ".aws");
+            "bin", "obj", "artifacts", "datasets", "checkpoints", ".analysis-checkpoints", "secrets", ".ssh", ".aws");
     private static final Map<String, String> LANGUAGES = Map.ofEntries(
             Map.entry("java", "Java"), Map.entry("kt", "Kotlin"), Map.entry("kts", "Kotlin"),
             Map.entry("js", "JavaScript"), Map.entry("jsx", "JavaScript"), Map.entry("mjs", "JavaScript"),

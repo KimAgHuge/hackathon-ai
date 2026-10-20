@@ -41,6 +41,26 @@ class AiAnalysisClientTest {
     private HttpServer server;
     private ExecutorService handlers;
 
+    @Test
+    @SuppressWarnings("unchecked")
+    void validatesIndexAndDuplicateSemanticsInReceivedResults() throws Exception {
+        Map<String, Object> result = JsonMapper.builder().build().readValue(VALID_RESULT, Map.class);
+        var column = Map.<String, Object>of("targetTable", "example.table_example", "targetColumn", "column_example",
+                "changeType", "ADD_COLUMN", "necessity", "REQUIRED", "description", "컬럼 추가입니다.", "rationale", "명시한 요구사항입니다.");
+        var index = Map.<String, Object>of("targetTable", "example.table_example", "targetColumn", "column_example",
+                "changeType", "ADD_INDEX", "necessity", "RECOMMENDED", "description", "인덱스 추가 검토입니다.", "rationale", "검색 비용 확인이 필요합니다.");
+        var impact = new java.util.LinkedHashMap<String, Object>(Map.of("status", "CHANGE_REQUIRED", "explanation", "컬럼 추가가 필요합니다.",
+                "observedTables", List.of("example.table_example"), "proposedChanges", List.of(column, index),
+                "conditionalPaths", List.of(), "openQuestions", List.of()));
+        result.put("databaseImpact", impact);
+        var payload = Map.<String, Object>of("sourceSummary", Map.of("changeRequirement", Map.of("title", "가상 컬럼 추가")));
+        AiAnalysisClient.validate(result, payload);
+        impact.put("proposedChanges", List.of(column, column));
+        assertThatThrownBy(() -> AiAnalysisClient.validate(result, payload)).isInstanceOf(IOException.class);
+        impact.put("proposedChanges", List.of(index));
+        assertThatThrownBy(() -> AiAnalysisClient.validate(result, payload)).isInstanceOf(IOException.class);
+    }
+
     @BeforeEach
     void setUp() throws IOException {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
@@ -318,6 +338,41 @@ class AiAnalysisClientTest {
         assertThatThrownBy(() -> client(Duration.ofSeconds(3)).analyzeWithProgress(PAYLOAD, event -> {}))
                 .isInstanceOf(IOException.class).hasMessage("Invalid AI progress event.")
                 .hasNoCause();
+    }
+
+    @Test
+    void streamCarriesSafeModelOutputLimitCodeWithoutRemoteMessage() {
+        server.createContext("/api/analysis/project/stream", exchange -> respond(exchange, 200,
+                "{\"type\":\"error\",\"code\":\"MODEL_OUTPUT_LIMIT\",\"message\":\"remote-private-text\"}\n"));
+        server.start();
+        assertThatThrownBy(() -> client(Duration.ofSeconds(3)).analyzeWithProgress(PAYLOAD, event -> {}))
+                .isInstanceOfSatisfying(AiAnalysisClient.ModelFailureException.class, exception -> {
+                    assertThat(exception.code()).isEqualTo("MODEL_OUTPUT_LIMIT");
+                    assertThat(exception.getMessage()).contains("출력 한도").doesNotContain("remote-private-text");
+                }).hasNoCause();
+    }
+
+    @Test
+    void unknownModelErrorCodeIsNotTrustedOrExposed() {
+        var exception = new AiAnalysisClient.ModelFailureException("remote-private-text");
+        assertThat(exception.code()).isEqualTo("ANALYSIS_FAILED");
+        assertThat(exception.getMessage()).doesNotContain("remote-private-text");
+    }
+
+    @Test
+    void streamAcceptsNumberedDatabaseBatchAndCheckpointEvents() throws Exception {
+        server.createContext("/api/analysis/project/stream", exchange -> respond(exchange, 200,
+                "{\"type\":\"progress\",\"code\":\"GENERAL_REUSED\"}\n"
+                + "{\"type\":\"progress\",\"code\":\"DATABASE_BATCH_STARTED\",\"attempt\":25}\n"
+                + "{\"type\":\"progress\",\"code\":\"DATABASE_BATCH_REUSED\",\"attempt\":25}\n"
+                + "{\"type\":\"progress\",\"code\":\"DATABASE_MERGE_COMPLETED\",\"attempt\":2}\n"
+                + "{\"type\":\"result\",\"result\":" + VALID_RESULT.replace("\n", "") + "}\n"));
+        server.start();
+        var events = new CopyOnWriteArrayList<AiAnalysisClient.ProgressEvent>();
+        assertThat(client(Duration.ofSeconds(3)).analyzeWithProgress(PAYLOAD, events::add)).containsKey("summary");
+        assertThat(events).extracting(AiAnalysisClient.ProgressEvent::code)
+                .containsExactly("GENERAL_REUSED", "DATABASE_BATCH_STARTED", "DATABASE_BATCH_REUSED", "DATABASE_MERGE_COMPLETED");
+        assertThat(events.get(1).attempt()).isEqualTo(25);
     }
 
     @Test
