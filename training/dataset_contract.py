@@ -16,7 +16,7 @@ from pydantic import ValidationError
 from app.models.analysis import DatabaseImpact, ProjectAnalysisRequest, RequirementGeneralAnalysisResponse, find_forbidden_key
 
 STAGES = {"general": RequirementGeneralAnalysisResponse, "database": DatabaseImpact}
-VALIDATION_FEATURES = ("FILE_LEVEL_EVIDENCE", "DATABASE_SCOPE_REVIEW")
+VALIDATION_FEATURES = ("FILE_LEVEL_EVIDENCE", "DATABASE_SCOPE_REVIEW", "DATABASE_CHANGE_SEMANTICS_V2")
 IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}\Z")
 SECRET_VALUE = re.compile(
     r"-----BEGIN [A-Z ]*PRIVATE KEY-----|\bhf_[A-Za-z0-9]{20,}\b|"
@@ -164,7 +164,9 @@ def grounding_issues(stage, answer, request):
             issues.append("change_table_not_in_input")
             continue
         columns = {c.get("name") for c in tables[table].get("columns", []) if isinstance(c, dict)}
-        if kind in {"ALTER_COLUMN", "DROP_COLUMN"} and column not in columns:
+        added_columns = {item["targetColumn"] for item in answer["proposedChanges"]
+                         if item["changeType"] == "ADD_COLUMN" and item["targetTable"] == table}
+        if (kind in {"ALTER_COLUMN", "DROP_COLUMN"} or kind == "ADD_INDEX" and column is not None) and column not in columns and not (kind == "ADD_INDEX" and column in added_columns):
             issues.append("change_column_not_in_input")
         if kind == "ADD_COLUMN" and column in columns:
             issues.append("new_column_already_exists")
@@ -208,6 +210,9 @@ def required_validation_features(record):
         features.add("FILE_LEVEL_EVIDENCE")
     if "database_scope_requires_review" in review_flags("general", general, record["request"]):
         features.add("DATABASE_SCOPE_REVIEW")
+    if any(change.get("necessity") is not None or change.get("changeType") == "ADD_INDEX"
+           for change in record["answers"].get("database", {}).get("proposedChanges", [])):
+        features.add("DATABASE_CHANGE_SEMANTICS_V2")
     return features
 
 

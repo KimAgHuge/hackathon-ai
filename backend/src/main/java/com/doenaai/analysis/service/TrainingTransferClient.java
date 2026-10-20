@@ -36,7 +36,7 @@ public class TrainingTransferClient {
         public CaseValidationException(String code, String field) {
             super(HttpStatus.UNPROCESSABLE_ENTITY, switch (code) {
                 case "GROUNDING_MISMATCH" -> "승인 정답의 근거가 학습 입력과 일치하지 않습니다. 원본 커밋의 근거 확인·보강 후 다시 검토해 주세요.";
-                case "CASE_RESPONSE_INVALID" -> "단계별 정답의 JSON 형식이 올바르지 않습니다.";
+                case "CASE_RESPONSE_INVALID" -> "단계별 정답의 형식과 DB 변경안의 중복·필수 여부를 확인해 주세요.";
                 case "CASE_NOT_SANITIZED" -> "비밀정보 또는 비식별화가 필요한 문자열이 있습니다. 원문을 검토해 주세요.";
                 case "EVIDENCE_SOURCE_UNAVAILABLE" -> "분석 당시 Git 커밋을 확인하지 못했습니다. 저장소 연결·커밋·파일과 줄 번호를 확인해 주세요.";
                 case "EVIDENCE_INVALID_REFERENCE" -> "학습 사례의 분석 연결 정보나 근거 파일·줄 번호가 올바르지 않습니다.";

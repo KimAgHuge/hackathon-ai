@@ -22,6 +22,35 @@ from test_data_tools import case
 from receiver_service import ReceiverStore, make_handler
 
 
+def test_new_database_semantics_require_a_receiver_update_before_any_file_is_written(tmp_path):
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    record = case()
+    record["answers"]["database"] = {
+        "status": "CHANGE_REQUIRED", "explanation": "명시한 컬럼 추가가 필요합니다.", "observedTables": ["public.projects"],
+        "proposedChanges": [{"targetTable": "public.projects", "targetColumn": "column_example", "changeType": "ADD_COLUMN",
+                             "necessity": "REQUIRED", "description": "컬럼을 추가합니다.", "rationale": "새 저장 항목이 명시돼 있습니다."}],
+        "conditionalPaths": [], "openQuestions": [],
+    }
+    job_id = uuid4()
+    record["caseId"] = f"analysis-{job_id}"
+    config = Settings(ai_internal_api_key="synthetic-ai-key-long-enough-for-test", training_shared_dir=str(shared),
+                      training_receiver_url="http://127.0.0.1:8011", training_transfer_key=SecretStr("synthetic-transfer-key-long-enough-for-test"))
+    calls = []
+
+    def old_receiver(request):
+        calls.append(request)
+        return httpx.Response(200, json={"features": ["FILE_LEVEL_EVIDENCE", "DATABASE_SCOPE_REVIEW"]})
+
+    with httpx.Client(transport=httpx.MockTransport(old_receiver)) as client:
+        service = TrainingTransferService(config, outbox=tmp_path / "outbox", status_dir=tmp_path / "status", client=client)
+        with pytest.raises(ReceiverCompatibilityError):
+            service.publish(job_id, record)
+    assert len(calls) == 1
+    assert list(shared.iterdir()) == []
+    assert not (tmp_path / "outbox").exists()
+
+
 def test_notice_failure_preserves_file_and_retry_verifies(tmp_path):
     job_id = uuid4()
     record = case()
@@ -56,8 +85,8 @@ def test_notice_failure_preserves_file_and_retry_verifies(tmp_path):
         assert calls[1].headers["x-transfer-signature"]
 
 
-@pytest.mark.parametrize("file_only", [False, True])
-def test_studio_to_macbook_receiver_over_local_http(tmp_path, file_only):
+@pytest.mark.parametrize("mode", ["legacy_database", "file_only", "classified_database"])
+def test_studio_to_macbook_receiver_over_local_http(tmp_path, mode):
     secret = "synthetic-transfer-key-long-enough-for-test"
     shared = tmp_path / "shared"
     shared.mkdir()
@@ -71,11 +100,22 @@ def test_studio_to_macbook_receiver_over_local_http(tmp_path, file_only):
     worker.start()
     try:
         job_id = uuid4()
-        record = case(related=not file_only)
+        record = case(related=mode != "file_only")
         record["caseId"] = f"analysis-{job_id}"
-        if file_only:
+        if mode == "file_only":
             record["answers"]["general"]["evidences"] = [{"file": "src/project.py"}]
             record["request"]["sourceSummary"]["changeRequirement"]["title"] = "표시 설정 변경이며 DB 변경은 제외합니다."
+        if mode == "classified_database":
+            record["answers"]["database"] = {
+                "status": "CHANGE_REQUIRED", "explanation": "컬럼은 필수이며 인덱스는 선택적인 개선입니다.",
+                "observedTables": ["public.projects"], "conditionalPaths": [], "openQuestions": [],
+                "proposedChanges": [
+                    {"targetTable": "public.projects", "targetColumn": "column_example", "changeType": "ADD_COLUMN", "necessity": "REQUIRED",
+                     "description": "요구사항에 따라 컬럼을 추가합니다.", "rationale": "새 저장 항목이 명시돼 있습니다."},
+                    {"targetTable": "public.projects", "targetColumn": "column_example", "changeType": "ADD_INDEX", "necessity": "RECOMMENDED",
+                     "description": "검색 비용 확인 후 인덱스를 검토합니다.", "rationale": "성능 측정 근거가 없는 선택적 개선입니다."},
+                ],
+            }
         settings = Settings(
             ai_internal_api_key="synthetic-ai-key-long-enough-for-test",
             training_shared_dir=str(shared),
