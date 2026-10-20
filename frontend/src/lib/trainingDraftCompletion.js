@@ -50,7 +50,7 @@ export const trainingValidationMessage = (error) => {
     const messages = {
         RECEIVER_UPDATE_REQUIRED: 'AI 학습 서버의 검증 규칙 업데이트 또는 연결 확인이 필요합니다. 파일은 아직 게시하지 않았습니다.',
         GROUNDING_MISMATCH: '승인 정답의 근거가 학습 입력과 일치하지 않습니다. 원본 커밋 근거 확인·보강 후 다시 검토해 주세요.',
-        CASE_RESPONSE_INVALID: '단계별 정답의 JSON 형식이 올바르지 않습니다.',
+        CASE_RESPONSE_INVALID: '단계별 정답의 형식과 DB 변경안의 중복·필수 여부를 확인해 주세요.',
         CASE_NOT_SANITIZED: '비밀정보 또는 비식별화가 필요한 문자열이 있습니다. 원문을 검토해 주세요.',
         CASE_CONTRACT_INVALID: '학습 사례의 필수 항목과 승인·스냅샷 정보를 확인해 주세요.',
         EVIDENCE_SOURCE_UNAVAILABLE: '분석 당시 Git 커밋을 확인하지 못했습니다. 저장소 연결과 커밋을 확인해 주세요.',

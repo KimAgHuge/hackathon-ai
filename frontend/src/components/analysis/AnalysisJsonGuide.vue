@@ -17,6 +17,11 @@ const reviewItems = [
         'DB 영향 판단',
         'status는 CHANGE_REQUIRED(변경 필요), NO_CHANGE(변경 불필요), NEEDS_CLARIFICATION(확인 필요), UNKNOWN(판단 불가), NOT_APPLICABLE(분석 대상 아님)입니다. 상태·이유·테이블·변경안·조건별 경로·질문을 함께 유지합니다. CHANGE_REQUIRED 외에는 proposedChanges를 빈 목록으로 유지하고, NEEDS_CLARIFICATION은 두 가지 이상 조건별 경로와 확인 질문이 필요합니다.',
     ],
+    [
+        'databaseImpact.proposedChanges[].changeType / necessity',
+        'DB 변경 유형과 필수 여부',
+        '인덱스 추가는 ADD_INDEX, 컬럼 추가는 ADD_COLUMN입니다. necessity는 REQUIRED(필수 변경) 또는 RECOMMENDED(권장 개선)로 구분합니다. 권장 개선만으로 DB 변경 필수를 선택하거나 같은 컬럼 추가를 반복하지 마세요. 구형 결과에 구분이 없다면 임의로 필수라고 채우지 말고 근거부터 검토하세요.',
+    ],
 ]
 const trainingItems = [
     ['caseId / projectGroup', '분석·프로젝트 식별자', '서버가 자동 입력합니다. 사례를 늘리려고 임의로 바꾸거나 새 식별자를 만들지 마세요.'],

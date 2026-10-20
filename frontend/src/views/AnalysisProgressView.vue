@@ -46,6 +46,7 @@ import {
     trainingReviewWarnings,
 } from '@/lib/trainingDraftCompletion'
 import { riskPresentation } from '@/lib/riskLevel'
+import { databaseChangeLabels, databaseChangeNecessityLabel } from '@/lib/databaseChanges'
 import { useAuthStore } from '@/stores/authStore'
 
 const route = useRoute()
@@ -585,16 +586,6 @@ const databaseImpactLabels = {
     NEEDS_CLARIFICATION: '요구사항 확인 필요',
     UNKNOWN: '판단 근거 부족',
     NOT_APPLICABLE: 'DB 분석 대상 아님',
-}
-const databaseChangeLabels = {
-    CREATE_TABLE: '테이블 생성',
-    ADD_COLUMN: '컬럼 추가',
-    ALTER_COLUMN: '컬럼 변경',
-    DROP_COLUMN: '컬럼 삭제',
-    ADD_CONSTRAINT: '제약조건 추가',
-    ALTER_CONSTRAINT: '제약조건 변경',
-    DATA_MIGRATION: '데이터 이관',
-    OTHER: '기타 변경',
 }
 const frameworks = computed(() => asList(aiResult.value.frameworks))
 const sourceTechnologies = computed(() =>
@@ -1244,6 +1235,7 @@ const evidenceEntries = (evidence) => (evidence && typeof evidence === 'object' 
                                     >{{ change.targetTable }}{{ change.targetColumn ? `.${change.targetColumn}` : '' }} ·
                                     {{ databaseChangeLabels[change.changeType] || change.changeType }}</strong
                                 >
+                                <p class="database-change-reason">{{ databaseChangeNecessityLabel(change.necessity) }}</p>
                                 <p>{{ change.description }}</p>
                                 <p class="database-change-reason">이유: {{ change.rationale }}</p>
                             </li>
