@@ -4,7 +4,7 @@ const initialProjects = [
     {
         id: '00000000-0000-0000-0000-000000000101',
         organizationId: '00000000-0000-0000-0000-000000000100',
-        name: 'doenaai 데모',
+        name: 'project_example',
         description: '프로젝트 목록·상세·수정을 확인하기 위한 데모입니다.',
         repositoryUrl: 'https://github.com/example/doenaai-demo.git',
         defaultBranch: 'main',
@@ -21,9 +21,10 @@ const initialProjects = [
 const publicProject = (project) => Object.fromEntries(Object.keys(initialProjects[0]).map((key) => [key, project[key] ?? null]))
 const apiError = (status, message) => Object.assign(new Error(message), { response: { status, data: { message } } })
 
-export const createProjectMockRepository = ({ storage = null, seed = initialProjects } = {}) => {
+export const createProjectMockRepository = ({ storage = null, seed = initialProjects, seedNameVersion = 1 } = {}) => {
     let projects = seed.map(publicProject)
     let deletedIds = new Set()
+    let migratedSeedNames = false
     try {
         const stored = storage?.getItem(STORAGE_KEY)
         if (stored) {
@@ -33,7 +34,11 @@ export const createProjectMockRepository = ({ storage = null, seed = initialProj
                 Array.isArray(parsed) &&
                 parsed.every((p) => p && typeof p.id === 'string' && typeof p.name === 'string' && typeof p.organizationId === 'string')
             ) {
-                projects = [...seed.filter((p) => !parsed.some((savedProject) => savedProject.id === p.id)), ...parsed].map(publicProject)
+                const seedById = new Map(seed.map((p) => [p.id, p]))
+                migratedSeedNames = seedNameVersion > 1 && saved.seedNameVersion !== seedNameVersion
+                // 이전 기본 예시의 이름만 교체한다. 사용자가 추가한 행·다른 필드·삭제 표식은 보존한다.
+                const restored = parsed.map((p) => (migratedSeedNames && seedById.has(p.id) ? { ...p, name: seedById.get(p.id).name } : p))
+                projects = [...seed.filter((p) => !parsed.some((savedProject) => savedProject.id === p.id)), ...restored].map(publicProject)
                 deletedIds = new Set(Array.isArray(saved.deletedIds) ? saved.deletedIds : [])
             }
         }
@@ -42,11 +47,12 @@ export const createProjectMockRepository = ({ storage = null, seed = initialProj
     }
     const persist = () => {
         try {
-            storage?.setItem(STORAGE_KEY, JSON.stringify({ projects, deletedIds: [...deletedIds] }))
+            storage?.setItem(STORAGE_KEY, JSON.stringify({ projects, deletedIds: [...deletedIds], seedNameVersion }))
         } catch {
             /* 저장 공간 제한 시 메모리 상태를 유지한다. */
         }
     }
+    if (migratedSeedNames) persist()
     const find = (id, includeDeleted = false) => {
         const project = projects.find((p) => p.id === id)
         if (!project || (!includeDeleted && deletedIds.has(id))) throw apiError(404, '프로젝트를 찾을 수 없습니다.')

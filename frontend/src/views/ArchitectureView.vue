@@ -13,19 +13,30 @@ onMounted(() => {
 
 <template>
     <div>
-        <PageTitle eyebrow="STEP 3" title="통합 프로젝트 아키텍처" description="소스코드와 DB 스키마를 결합해 생성한 화면·API·서비스·SQL·테이블 관계입니다." />
+        <PageTitle
+            eyebrow="STEP 3"
+            title="통합 프로젝트 아키텍처"
+            description="가상 이름으로 화면·API·서비스·저장소·테이블 관계의 표현 방식을 보여주는 예시입니다."
+        />
 
         <StepHeader :current="3" />
 
+        <p
+            role="note"
+            class="mb-5 rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm leading-6 text-blue-900 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-100"
+        >
+            이 화면의 파일·API·테이블과 연결은 모두 가상 예시입니다. 등록한 프로젝트의 실제 분석 결과가 아닙니다.
+        </p>
+
         <div v-if="store.architecture" class="summary-strip">
-            <div><span>프로젝트</span><strong>doenaai</strong></div>
+            <div><span>가상 프로젝트</span><strong>project_example</strong></div>
             <div>
                 <span>소스 커밋</span><strong>{{ store.architecture.sourceCommit }}</strong>
             </div>
             <div>
                 <span>DB 스냅샷</span><strong>{{ store.architecture.databaseSnapshot }}</strong>
             </div>
-            <div><span>분석 상태</span><strong class="success-text">검토 가능</strong></div>
+            <div><span>표시 자료</span><strong>화면 구성 예시</strong></div>
         </div>
 
         <section class="panel architecture-canvas">
@@ -42,32 +53,32 @@ onMounted(() => {
             <div class="flow-diagram">
                 <div class="flow-node frontend-node">
                     <span class="node-type">VUE VIEW</span>
-                    <strong>ApplicationView.vue</strong>
-                    <small>신청 접수 및 변경 요청 화면</small>
+                    <strong>ExampleView.vue</strong>
+                    <small>가상 항목 입력 화면</small>
                 </div>
                 <div class="flow-arrow">→</div>
                 <div class="flow-node api-node">
                     <span class="node-type">REST API</span>
-                    <strong>POST /api/applications</strong>
-                    <small>ApplicationController</small>
+                    <strong>POST /api/examples</strong>
+                    <small>ExampleController</small>
                 </div>
                 <div class="flow-arrow">→</div>
                 <div class="flow-node service-node">
                     <span class="node-type">SERVICE</span>
-                    <strong>ApplicationService</strong>
-                    <small>createApplication()</small>
+                    <strong>ExampleService</strong>
+                    <small>saveExample()</small>
                 </div>
                 <div class="flow-arrow">→</div>
                 <div class="flow-node mapper-node">
-                    <span class="node-type">MYBATIS</span>
-                    <strong>ApplicationMapper</strong>
-                    <small>insertApplication</small>
+                    <span class="node-type">REPOSITORY</span>
+                    <strong>ExampleRepository</strong>
+                    <small>saveExample</small>
                 </div>
                 <div class="flow-arrow">→</div>
                 <div class="flow-node db-node">
-                    <span class="node-type">TIBERO TABLE</span>
-                    <strong>TB_BM_APLY_RCPT</strong>
-                    <small>APLY_RCPT_NO · BRNO · STATUS_CD</small>
+                    <span class="node-type">TABLE</span>
+                    <strong>table_example</strong>
+                    <small>id_example · description_example</small>
                 </div>
             </div>
         </section>
@@ -76,39 +87,36 @@ onMounted(() => {
             <section class="panel">
                 <div class="panel-heading">
                     <div>
-                        <h2>감지된 기술 스택</h2>
-                        <p>소스코드 및 설정 파일 기반 결과</p>
+                        <h2>가상 구성의 기술 예시</h2>
+                        <p>실제 프로젝트에서 탐지한 결과가 아닙니다.</p>
                     </div>
                 </div>
                 <div class="tag-list">
                     <span>Vue 3</span>
                     <span>Vite</span>
                     <span>Spring Boot</span>
-                    <span>MyBatis</span>
-                    <span>Tibero</span>
-                    <span>Jenkins</span>
-                    <span>Nginx</span>
+                    <span>PostgreSQL</span>
                 </div>
             </section>
 
             <section class="panel">
                 <div class="panel-heading">
                     <div>
-                        <h2>검토가 필요한 관계</h2>
-                        <p>코드 명칭 또는 JOIN 패턴으로 추정된 항목</p>
+                        <h2>관계 표현 예시</h2>
+                        <p>가상 관계이며 실제 연결이나 신뢰도를 측정하지 않았습니다.</p>
                     </div>
                 </div>
                 <div class="relation-review">
                     <div>
-                        <strong>TB_BM_VRFC_RCPT → TB_BM_APLY_RCPT</strong>
-                        <span>SQL_JOIN · 신뢰도 92%</span>
+                        <strong>table_example_history → table_example</strong>
+                        <span>테이블 연결을 표현하는 가상 예시</span>
                     </div>
                     <button class="button small-button">확인</button>
                 </div>
                 <div class="relation-review">
                     <div>
-                        <strong>ApplicationHistory → TB_BM_APLY_HIST</strong>
-                        <span>NAMING_INFERENCE · 신뢰도 48%</span>
+                        <strong>ExampleHistory → table_example_history</strong>
+                        <span>소스와 테이블의 연결을 표현하는 가상 예시</span>
                     </div>
                     <button class="button small-button">수정</button>
                 </div>

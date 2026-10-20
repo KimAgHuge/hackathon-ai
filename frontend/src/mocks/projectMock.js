@@ -1,8 +1,9 @@
+// 화면 구성을 확인하는 가상 자료이며 실제 프로젝트·분석 결과를 나타내지 않는다.
 export const projectMock = {
     id: 'demo',
-    name: 'doenaai',
+    name: 'project_example',
     branch: 'main',
-    databaseType: 'TIBERO',
+    databaseType: 'POSTGRESQL',
     status: 'READY',
 }
 
@@ -15,47 +16,47 @@ export const analysisProgressMock = {
 }
 
 export const architectureMock = {
-    sourceCommit: 'a3b925c',
-    databaseSnapshot: 'db-snapshot-015',
+    sourceCommit: 'example-commit',
+    databaseSnapshot: 'db-snapshot-example',
     nodes: [
-        { type: 'VUE_VIEW', name: 'ApplicationView.vue' },
-        { type: 'REST_API', name: 'POST /api/applications' },
-        { type: 'SERVICE', name: 'ApplicationService' },
-        { type: 'MYBATIS', name: 'ApplicationMapper' },
-        { type: 'TABLE', name: 'TB_BM_APLY_RCPT' },
+        { type: 'VUE_VIEW', name: 'ExampleView.vue' },
+        { type: 'REST_API', name: 'POST /api/examples' },
+        { type: 'SERVICE', name: 'ExampleService' },
+        { type: 'REPOSITORY', name: 'ExampleRepository' },
+        { type: 'TABLE', name: 'table_example' },
     ],
 }
 
 export const impactAnalysisMock = {
-    riskLevel: 'HIGH',
-    riskScore: 78,
-    expectedDelayMin: 5,
-    expectedDelayMax: 8,
-    impactAreas: ['Vue 화면', 'Spring API', 'Service', 'Mapper SQL', 'Tibero 테이블'],
+    riskLevel: 'LOW',
+    riskScore: 20,
+    expectedDelayMin: 1,
+    expectedDelayMax: 2,
+    impactAreas: ['예시 입력 화면', '예시 API', '예시 서비스', '예시 테이블'],
     evidences: [
         {
             order: 1,
-            name: 'ApplicationView.vue',
-            description: '신청 접수 화면에 전자서명 입력 및 검증 결과 표시가 필요합니다.',
-            path: 'frontend/src/views/ApplicationView.vue',
+            name: 'ExampleView.vue',
+            description: '가상 사례: 항목의 설명을 입력하고 표시하는 영역을 추가합니다.',
+            path: 'frontend/src/views/ExampleView.vue',
         },
         {
             order: 2,
-            name: 'ApplicationService.createApplication',
-            description: '전자서명 검증과 저장 절차가 기존 접수 트랜잭션에 추가됩니다.',
-            path: 'backend/src/main/java/.../ApplicationService.java',
+            name: 'ExampleService.saveExample',
+            description: '가상 사례: 선택 입력인 설명 값을 확인하고 저장하는 흐름입니다.',
+            path: 'backend/src/main/java/example/ExampleService.java',
         },
         {
             order: 3,
-            name: 'TB_BM_APLY_RCPT',
-            description: '검증 결과 컬럼 또는 별도 전자서명 이력 테이블이 필요합니다.',
-            path: 'database:DOENAAI.TB_BM_APLY_RCPT',
+            name: 'table_example',
+            description: '가상 사례: description_example 컬럼을 선택 값으로 추가하며 기존 값은 비워 둡니다.',
+            path: 'database:schema_example.table_example',
         },
     ],
     recommendations: [
-        '전자서명 원문은 대용량·민감 데이터를 고려하여 별도 이력 테이블에 저장합니다.',
-        '기존 신청번호를 FK로 연결하고 검증 상태 조회 인덱스를 검토합니다.',
-        '외부 인증 모듈 실패 시 재처리 및 보상 트랜잭션 정책을 정의합니다.',
-        '기존 접수 흐름과 신규 전자서명 흐름을 대상으로 통합 테스트를 수행합니다.',
+        '가상 사례의 설명은 선택 입력으로 두고 최대 길이를 정합니다.',
+        '기존 항목의 설명이 비어 있어도 조회와 수정이 가능하도록 확인합니다.',
+        '설명 수정에는 기존 항목의 수정 권한을 적용합니다.',
+        '입력·저장·재조회와 빈 값 처리를 함께 시험합니다.',
     ],
 }

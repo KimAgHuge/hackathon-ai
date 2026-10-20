@@ -34,7 +34,10 @@ const demoStorage = () => {
         return null
     }
 }
-const crud = createProjectCrud({ client: httpClient, mockRepository: useMock ? createProjectMockRepository({ storage: demoStorage(), seed: demoSeed }) : null })
+const crud = createProjectCrud({
+    client: httpClient,
+    mockRepository: useMock ? createProjectMockRepository({ storage: demoStorage(), seed: demoSeed, seedNameVersion: 2 }) : null,
+})
 export const isProjectDemoMode = useMock
 export const { getProjects, getProjectById, createProject, updateProject, deleteProject, restoreProject } = crud
 

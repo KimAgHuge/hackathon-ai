@@ -1,3 +1,4 @@
+// 모든 이름·문서·수치는 화면 시험을 위해 만든 가상 자료다. 실제 업무 자료를 넣지 않는다.
 export const dashboardMock = {
     metrics: [
         { label: '등록 프로젝트', value: 12, change: '+2 이번 달', tone: 'blue' },
@@ -13,8 +14,8 @@ export const dashboardMock = {
     recentAnalyses: [
         {
             id: 'AN-2026-048',
-            project: '공공마이데이터 전자서명',
-            request: '전자서명 검증 결과 저장',
+            project: 'project_example_01',
+            request: '항목 설명 입력 기능 추가',
             risk: 'HIGH',
             score: 78,
             status: 'COMPLETED',
@@ -22,22 +23,30 @@ export const dashboardMock = {
         },
         {
             id: 'AN-2026-047',
-            project: '국세청 면세 연계',
-            request: '수신 파일 재처리 구조 개선',
+            project: 'project_example_02',
+            request: '목록 정렬 조건 변경',
             risk: 'MEDIUM',
             score: 54,
             status: 'COMPLETED',
             date: '2026-07-22 17:42',
         },
-        { id: 'AN-2026-046', project: '경영안정바우처', request: '검증 상태코드 추가', risk: 'LOW', score: 31, status: 'REVIEW', date: '2026-07-22 14:18' },
+        {
+            id: 'AN-2026-046',
+            project: 'project_example_03',
+            request: '상태 표시 문구 변경',
+            risk: 'LOW',
+            score: 20,
+            status: 'REVIEW',
+            date: '2026-07-22 14:18',
+        },
     ],
 }
 
 export const projectsMock = [
     {
         id: 'PRJ-001',
-        name: '공공마이데이터 전자서명',
-        stack: 'Vue 3 · Spring Boot · Tibero',
+        name: 'project_example_01',
+        stack: 'Vue 3 · Spring Boot · PostgreSQL',
         source: 'GitHub',
         branch: 'develop',
         status: 'READY',
@@ -45,8 +54,8 @@ export const projectsMock = [
     },
     {
         id: 'PRJ-002',
-        name: '국세청 면세사업자 연계',
-        stack: 'Spring Boot · MyBatis · Tibero',
+        name: 'project_example_02',
+        stack: 'Vue 3 · FastAPI · PostgreSQL',
         source: 'ZIP',
         branch: 'release',
         status: 'ANALYZING',
@@ -54,8 +63,8 @@ export const projectsMock = [
     },
     {
         id: 'PRJ-003',
-        name: '경영안정바우처',
-        stack: 'Vue 3 · Spring Boot · Oracle',
+        name: 'project_example_03',
+        stack: 'Vue 3 · Spring Boot · PostgreSQL',
         source: 'GitHub',
         branch: 'main',
         status: 'READY',
@@ -63,7 +72,7 @@ export const projectsMock = [
     },
     {
         id: 'PRJ-004',
-        name: 'PDF 비교 검토 시스템',
+        name: 'project_example_04',
         stack: 'Vue 3 · Spring Boot · PostgreSQL',
         source: 'GitHub',
         branch: 'main',
@@ -75,9 +84,9 @@ export const projectsMock = [
 export const changeRequestsMock = [
     {
         id: 'CR-2026-031',
-        project: '공공마이데이터 전자서명',
-        title: '전자서명 검증 결과와 원문 저장',
-        requester: '사업운영팀',
+        project: 'project_example_01',
+        title: '항목 설명 입력 기능 추가',
+        requester: 'team_example_01',
         priority: 'HIGH',
         status: 'ANALYZED',
         riskScore: 78,
@@ -85,9 +94,9 @@ export const changeRequestsMock = [
     },
     {
         id: 'CR-2026-030',
-        project: '국세청 면세사업자 연계',
-        title: '파일 재수신 및 중복 방지 개선',
-        requester: '데이터연계팀',
+        project: 'project_example_02',
+        title: '목록 정렬 조건 변경',
+        requester: 'team_example_02',
         priority: 'MEDIUM',
         status: 'REVIEW',
         riskScore: 54,
@@ -95,9 +104,9 @@ export const changeRequestsMock = [
     },
     {
         id: 'CR-2026-029',
-        project: '경영안정바우처',
-        title: '검증 상태코드 506 추가',
-        requester: '바우처운영팀',
+        project: 'project_example_03',
+        title: '상태 표시 문구 변경',
+        requester: 'team_example_03',
         priority: 'LOW',
         status: 'REQUESTED',
         riskScore: null,
@@ -108,29 +117,29 @@ export const changeRequestsMock = [
 export const analysisHistoryMock = [
     {
         id: 'AN-2026-048',
-        project: '공공마이데이터 전자서명',
+        project: 'project_example_01',
         model: 'doenaai-impact-v1.4.2',
         risk: 'HIGH',
         score: 78,
         duration: '2분 14초',
-        reviewer: '김은태',
+        reviewer: 'reviewer_example_01',
         result: 'APPROVED',
         analyzedAt: '2026-07-23 11:02',
     },
     {
         id: 'AN-2026-047',
-        project: '국세청 면세사업자 연계',
+        project: 'project_example_02',
         model: 'doenaai-impact-v1.4.2',
         risk: 'MEDIUM',
         score: 54,
         duration: '1분 49초',
-        reviewer: '박검토',
+        reviewer: 'reviewer_example_02',
         result: 'CORRECTED',
         analyzedAt: '2026-07-22 17:42',
     },
     {
         id: 'AN-2026-046',
-        project: '경영안정바우처',
+        project: 'project_example_03',
         model: 'doenaai-impact-v1.4.1',
         risk: 'LOW',
         score: 31,
@@ -167,8 +176,8 @@ export const modelsMock = {
 export const documentsMock = [
     {
         id: 'DOC-101',
-        name: '공공마이데이터 전자서명 요구사항.pdf',
-        project: '공공마이데이터 전자서명',
+        name: 'document_example_01.pdf',
+        project: 'project_example_01',
         type: '요구사항',
         size: '2.4 MB',
         indexed: true,
@@ -176,8 +185,8 @@ export const documentsMock = [
     },
     {
         id: 'DOC-100',
-        name: '국세청 연계 인터페이스 정의서.xlsx',
-        project: '국세청 면세사업자 연계',
+        name: 'document_example_02.xlsx',
+        project: 'project_example_02',
         type: '인터페이스',
         size: '840 KB',
         indexed: true,
@@ -185,8 +194,8 @@ export const documentsMock = [
     },
     {
         id: 'DOC-099',
-        name: '바우처 검증 업무절차.md',
-        project: '경영안정바우처',
+        name: 'document_example_03.md',
+        project: 'project_example_03',
         type: '업무절차',
         size: '42 KB',
         indexed: false,

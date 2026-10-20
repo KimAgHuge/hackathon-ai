@@ -269,3 +269,21 @@ test('데모 신규 등록도 같은 목록과 상세에서 조회한다', () =>
     assert.equal(repository.list()[0].id, created.id)
     assert.equal(repository.get(created.id).name, '등록')
 })
+
+test('기본 예시 이름 변경은 이전 저장값에 한 번만 적용하고 추가 행·설정·삭제 이력을 보존한다', () => {
+    const storage = memoryStorage()
+    const original = { ...project('seed-example'), name: '이전 가상 이름', description: '사용자가 수정한 설명' }
+    const custom = { ...project('custom-example'), name: '직접 추가한 가상 항목' }
+    storage.setItem('doenaai.demo.projects.v1', JSON.stringify({ projects: [original, custom], deletedIds: [original.id] }))
+    const seed = [{ ...original, name: 'project_example_01', description: '기본 설명' }]
+    const repository = createProjectMockRepository({ storage, seed, seedNameVersion: 2 })
+    assert.equal(repository.list({ deleted: true })[0].name, 'project_example_01')
+    assert.equal(repository.list({ deleted: true })[0].description, '사용자가 수정한 설명')
+    assert.equal(repository.get(custom.id).name, custom.name)
+    assert.equal(storage.getItem().includes(original.name), false)
+    repository.restore(original.id)
+    repository.update(original.id, { ...original, name: '새로 입력한 가상 이름' })
+    const reloaded = createProjectMockRepository({ storage, seed, seedNameVersion: 2 })
+    assert.equal(reloaded.get(original.id).name, '새로 입력한 가상 이름')
+    assert.equal(reloaded.get(custom.id).name, custom.name)
+})
