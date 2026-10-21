@@ -58,10 +58,10 @@ let generation = 0
 let timer = null
 let disposed = false
 let refreshedDigest = ''
+const jobSelectedModel = (job) => job?.target?.selectedModel || job?.selectedModel || job?.target?.sourceModel || job?.sourceModel
+const jobSourceModel = (job) => job?.target?.sourceModel || job?.sourceModel
 const jobs = computed(() =>
-    (Array.isArray(catalog.value?.jobs) ? catalog.value.jobs : []).filter(
-        (job) => job?.status === 'SUCCEEDED' && (job.target?.sourceModel || job.sourceModel) === props.modelName
-    )
+    (Array.isArray(catalog.value?.jobs) ? catalog.value.jobs : []).filter((job) => job?.status === 'SUCCEEDED' && jobSelectedModel(job) === props.modelName)
 )
 const selectedJob = computed(() => jobs.value.find((job) => job.id === selectedJobId.value))
 const building = computed(() => buildingStates.has(build.value?.status))
@@ -140,7 +140,7 @@ const refreshStatus = async () => {
     const results = await Promise.allSettled([getTrainedModelBuild(id), getTrainedModelImport(id)])
     if (!current(token, id)) return
     const [built, registered] = results
-    if (built.status === 'fulfilled' && built.value.jobId === id && built.value.sourceModel === props.modelName) build.value = built.value
+    if (built.status === 'fulfilled' && built.value.jobId === id && built.value.sourceModel === jobSourceModel(selectedJob.value)) build.value = built.value
     else {
         error.value =
             built.status === 'rejected'
@@ -148,7 +148,7 @@ const refreshStatus = async () => {
                 : '학습 대상과 새 모델 식별값이 다릅니다.'
         return
     }
-    if (registered.status === 'fulfilled' && registered.value.jobId === id && registered.value.sourceModel === props.modelName)
+    if (registered.status === 'fulfilled' && registered.value.jobId === id && registered.value.sourceModel === jobSourceModel(selectedJob.value))
         await acceptImport(registered.value)
     else {
         error.value =
@@ -209,7 +209,7 @@ const execute = async () => {
         const result =
             mode === 'build' ? await startTrainedModelBuild(id) : mode === 'cancel' ? await cancelTrainedModelBuild(id) : await importTrainedModel(id)
         if (!current(token, id)) return
-        if (result.jobId !== id || result.sourceModel !== props.modelName) throw new Error('MODEL_TARGET_MISMATCH')
+        if (result.jobId !== id || result.sourceModel !== jobSourceModel(selectedJob.value)) throw new Error('MODEL_TARGET_MISMATCH')
         if (mode === 'import') await acceptImport(result)
         else build.value = result
         confirmation.value = ''
@@ -309,6 +309,8 @@ onBeforeUnmount(() => {
                 이 모델의 완료한 학습이 없습니다. 실행 작업 이력에서 학습 상태를 확인해 주세요.
             </p>
             <p v-if="selectedJob" class="mt-4 break-all text-xs leading-6 text-slate-500 dark:text-slate-400">
+                선택한 학습 모델 · {{ jobSelectedModel(selectedJob) }}<br />
+                승인 자료 출처 모델 · {{ jobSourceModel(selectedJob) || '미기록' }}<br />
                 학습 기반 모델 · {{ selectedJob.target?.baseModel || '미기록' }}<br />기반 모델 버전 · {{ selectedJob.target?.revision || '미기록' }}
             </p>
             <div v-if="build" class="mt-5 rounded-xl border border-slate-200 p-4 dark:border-slate-700" role="status">

@@ -34,6 +34,7 @@ let disposed = false
 const operations = computed(() => (Array.isArray(records.value?.operations) ? records.value.operations : []))
 const isTraining = (operation) => ['TRAINING_START', 'TRAIN'].includes(operation?.action)
 const sourceModel = (operation) => operation?.target?.sourceModel || operation?.sourceModel || '모델 미기록'
+const selectedModel = (operation) => operation?.target?.selectedModel || operation?.selectedModel || sourceModel(operation)
 const hasActive = computed(() => operations.value.some((operation) => isTraining(operation) && activeTrainingStatuses.has(operation.status)))
 const progressValue = (value) =>
     value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value)) && Number(value) >= 0 && Number(value) <= 100 ? Number(value) : null
@@ -62,7 +63,8 @@ const detailItems = computed(() => [
     { label: '오류 코드', value: detail.value?.errorCode },
     ...(isTraining(detail.value)
         ? [
-              { label: '학습 모델', value: sourceModel(detail.value) },
+              { label: '학습 모델', value: selectedModel(detail.value) },
+              ...(selectedModel(detail.value) !== sourceModel(detail.value) ? [{ label: '승인 자료 출처 모델', value: sourceModel(detail.value) }] : []),
               { label: '학습 기반 모델', value: detail.value?.target?.baseModel },
               { label: '기반 모델 버전', value: detail.value?.target?.revision },
               { label: '진행률', value: progressLabel(detail.value?.progress) },
@@ -264,7 +266,10 @@ onBeforeUnmount(() => {
                     </div>
                 </div>
                 <template v-if="isTraining(operation)">
-                    <p class="mt-5 break-all text-sm font-bold">학습 모델 · {{ sourceModel(operation) }}</p>
+                    <p class="mt-5 break-all text-sm font-bold">학습 모델 · {{ selectedModel(operation) }}</p>
+                    <p v-if="selectedModel(operation) !== sourceModel(operation)" class="mt-1 break-all text-xs text-slate-500">
+                        승인 자료 출처 모델 · {{ sourceModel(operation) }}
+                    </p>
                     <p v-if="operation.target?.baseModel" class="mt-2 break-all text-xs leading-6 text-slate-500 dark:text-slate-400">
                         학습 기반 모델 · {{ operation.target.baseModel }}
                     </p>
@@ -275,7 +280,7 @@ onBeforeUnmount(() => {
                         </div>
                         <div
                             role="progressbar"
-                            :aria-label="`${sourceModel(operation)} 학습 진행률`"
+                            :aria-label="`${selectedModel(operation)} 학습 진행률`"
                             aria-valuemin="0"
                             aria-valuemax="100"
                             :aria-valuenow="progressValue(operation.progress) ?? undefined"
@@ -371,7 +376,7 @@ onBeforeUnmount(() => {
         >
             <div class="grid gap-4 text-sm leading-7">
                 <p class="break-all font-bold">취소 대상 · {{ cancelTarget?.id }}</p>
-                <p class="break-all">학습 모델 · {{ sourceModel(cancelTarget) }}</p>
+                <p class="break-all">학습 모델 · {{ selectedModel(cancelTarget) }}</p>
                 <p>취소 요청 뒤 안전한 중단 지점에서 학습을 멈춥니다. 즉시 종료를 보증하지 않으며 학습이 먼저 완료됐다면 완료 상태가 유지될 수 있습니다.</p>
                 <label class="flex items-start gap-3"
                     ><input v-model="cancelConfirmed" type="checkbox" class="mt-1.5 h-4 w-4 shrink-0" :disabled="cancelBusy || Boolean(pendingCancel)" /><span

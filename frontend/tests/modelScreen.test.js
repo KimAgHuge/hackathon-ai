@@ -745,7 +745,7 @@ test('학습 대상 상세가 없는 이전 작업도 생성 모델로 구분하
     }
 })
 
-test('설치된 새 학습 모델을 선택해도 원래 기반 모델의 완료한 학습을 조회한다', async () => {
+test('설치된 새 학습 모델을 선택하면 그 모델의 연속 학습 결과와 자료 출처를 구분한다', async () => {
     const requested = []
     const screen = await mountScreen({
         getModelRegistry: async () => registry,
@@ -766,13 +766,157 @@ test('설치된 새 학습 모델을 선택해도 원래 기반 모델의 완료
         }),
         getModelTraining: async (model) => {
             requested.push(model)
-            return { requestedModel: 'qwen3.8:27b', jobs: [completedTraining] }
+            return {
+                requestedModel: preparedModel.model,
+                jobs: [{ ...completedTraining, target: { ...completedTraining.target, selectedModel: preparedModel.model } }],
+            }
         },
     })
     try {
         await openAdapterAction(screen)
-        assert.ok(requested.every((model) => model === 'qwen3.8:27b'))
+        assert.ok(requested.every((model) => model === preparedModel.model))
+        assert.match(screen.text(), /선택한 학습 모델 · doenaai-trained:web-/)
+        assert.match(screen.text(), /승인 자료 출처 모델 · qwen3\.8:27b/)
         assert.equal(screen.button('새 학습 모델 생성').props.disabled, false)
+    } finally {
+        screen.cleanup()
+    }
+})
+
+test('파생 모델의 선택 식별자와 이전 어댑터를 유지해 연속 학습을 요청한다', async () => {
+    const queries = [],
+        starts = []
+    const target = { ...completedTraining.target, selectedModel: preparedModel.model, resumeJobId: completedTraining.id }
+    const screen = await mountScreen({
+        getModelRegistry: async () => registry,
+        getModelRuntime: async () => runtime,
+        getInstalledModels: async () => ({
+            model: preparedModel.model,
+            currentRevision: 1,
+            models: [{ name: preparedModel.model, sourceModel: 'qwen3.8:27b', trainedModel: true, trainingJobId: completedTraining.id, selectable: true }],
+        }),
+        getModelTraining: async (model) => {
+            queries.push(model)
+            return {
+                requestedModel: preparedModel.model,
+                selectedModel: preparedModel.model,
+                dataset: { target, total: 3, samples: [{ caseId: 'approved-case', sourceModel: 'qwen3.8:27b' }] },
+                capabilities: { trainingExecution: true },
+                jobs: [],
+                trainingProfile: {
+                    trainer: 'qwen-mlp-trial-v1',
+                    modelType: 'qwen3_5',
+                    loraLayers: 1,
+                    loraRank: 4,
+                    maxSequenceLength: 18000,
+                    batchSize: 1,
+                    continuation: true,
+                    parentJobId: completedTraining.id,
+                },
+                modelExport: { supported: true, reasonCode: 'READY', architecture: 'qwen35', message: '변환 경로를 확인했습니다.' },
+            }
+        },
+        startModelTraining: async (body) => {
+            starts.push(body)
+            return { status: 'PENDING' }
+        },
+    })
+    try {
+        screen.button('모델 작업').props.onClick()
+        await screen.settle()
+        screen.button('선택 모델 학습 승인 자료로 시험 학습').props.onClick()
+        await screen.settle()
+        assert.ok(queries.every((model) => model === preparedModel.model))
+        assert.match(screen.text(), /선택한 이전 어댑터에서 연속 학습/)
+        assert.match(screen.text(), /승인 자료 출처 모델 · qwen3\.8:27b/)
+        assert.match(screen.text(), /qwen-mlp-trial-v1/)
+        assert.equal(screen.button('학습 시작').props.disabled, false)
+        screen.button('학습 시작').props.onClick()
+        await screen.settle()
+        await checkConfirmation(screen)
+        screen.button('확인 후 학습 시작').props.onClick()
+        await screen.settle()
+        assert.equal(starts[0].model, preparedModel.model)
+        assert.equal(starts[0].digest, target.digest)
+    } finally {
+        screen.cleanup()
+    }
+})
+
+test('일반 MLX 학습 설정과 변환 미지원을 따로 표시하고 학습은 허용한다', async () => {
+    const model = 'example:7b',
+        starts = []
+    const screen = await mountScreen({
+        getModelRegistry: async () => registry,
+        getModelRuntime: async () => runtime,
+        getInstalledModels: async () => ({ model, currentRevision: 1, models: [{ name: model, selectable: true }] }),
+        getModelTraining: async () => ({
+            requestedModel: model,
+            dataset: { target: { ...completedTraining.target, sourceModel: model, baseModel: 'example/local-7b' }, total: 3 },
+            capabilities: { trainingExecution: true },
+            jobs: [],
+            trainingProfile: {
+                trainer: 'mlx-lora-v1',
+                modelType: 'gemma3',
+                loraLayers: 4,
+                loraRank: 8,
+                maxSequenceLength: 2048,
+                batchSize: 1,
+                continuation: false,
+                directory: '/private/model',
+            },
+            modelExport: { supported: false, reasonCode: 'MODEL_BUILD_UNSUPPORTED_PROFILE', message: '이 모델의 변환 경로를 준비해야 합니다.' },
+        }),
+        startModelTraining: async (body) => {
+            starts.push(body)
+            return { status: 'PENDING' }
+        },
+    })
+    try {
+        screen.button('모델 작업').props.onClick()
+        await screen.settle()
+        screen.button('선택 모델 학습 승인 자료로 시험 학습').props.onClick()
+        await screen.settle()
+        assert.match(screen.text(), /mlx-lora-v1/)
+        assert.match(screen.text(), /2048/)
+        assert.match(screen.text(), /분석용 모델 변환 · 지원 준비 필요/)
+        assert.doesNotMatch(screen.text(), /\/private\/model/)
+        assert.equal(screen.button('학습 시작').props.disabled, false)
+        screen.button('학습 시작').props.onClick()
+        await screen.settle()
+        assert.match(screen.text(), /어댑터 학습·저장·재로딩까지 확인합니다/)
+        await checkConfirmation(screen)
+        screen.button('확인 후 학습 시작').props.onClick()
+        await screen.settle()
+        assert.equal(starts[0].model, model)
+    } finally {
+        screen.cleanup()
+    }
+})
+
+test('파생 모델 조회가 원본 모델로 바뀐 응답이면 자동 대체 학습을 막는다', async () => {
+    const screen = await mountScreen({
+        getModelRegistry: async () => registry,
+        getModelRuntime: async () => runtime,
+        getInstalledModels: async () => ({
+            model: preparedModel.model,
+            currentRevision: 1,
+            models: [{ name: preparedModel.model, sourceModel: 'qwen3.8:27b', selectable: true }],
+        }),
+        getModelTraining: async () => ({
+            requestedModel: 'qwen3.8:27b',
+            dataset: { target: completedTraining.target, total: 3 },
+            capabilities: { trainingExecution: true },
+            jobs: [],
+        }),
+    })
+    try {
+        screen.button('모델 작업').props.onClick()
+        await screen.settle()
+        screen.button('선택 모델 학습 승인 자료로 시험 학습').props.onClick()
+        await screen.settle()
+        assert.match(screen.text(), /선택한 모델과 학습 서버가 확인한 대상이 다릅니다/)
+        assert.equal(screen.button('학습 시작').props.disabled, true)
     } finally {
         screen.cleanup()
     }

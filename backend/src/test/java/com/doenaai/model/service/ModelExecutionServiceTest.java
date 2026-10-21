@@ -204,16 +204,17 @@ class ModelExecutionServiceTest {
         verify(client, never()).training(any(), any(), anyMap());
     }
 
-    @Test void selectingAnAdapterUsesItsSourceModelForTraining() {
+    @Test void selectingAnAdapterPreservesItsExactIdentityForTraining() {
         String adapter = UUID.randomUUID().toString();
         String name = "doenaai-mlx:web-" + adapter;
         when(client.inference("GET", "/api/models/installed", Map.of(), false)).thenReturn(Map.of("model", name,
                 "provider", "mlx", "adapterId", adapter, "sourceModel", "qwen3.8:27b",
                 "models", List.of(Map.of("name", name, "provider", "mlx", "adapterId", adapter, "sourceModel", "qwen3.8:27b"))));
-        when(client.training("GET", "/api/training/capabilities?model=qwen3.8%3A27b", Map.of())).thenReturn(Map.of("trainingExecution", false));
+        when(client.training("GET", "/api/training/capabilities?model=" + java.net.URLEncoder.encode(name, java.nio.charset.StandardCharsets.UTF_8), Map.of())).thenReturn(Map.of("trainingExecution", false));
         when(client.training("GET", "/api/training/jobs", Map.of())).thenReturn(Map.of("jobs", List.of()));
-        assertThat(service.training(name)).containsEntry("requestedModel", "qwen3.8:27b").containsEntry("selectedModel", name);
-        assertThat(service.training()).containsEntry("requestedModel", "qwen3.8:27b");
+        assertThat(service.training(name)).containsEntry("requestedModel", name).containsEntry("selectedModel", name);
+        assertThat(service.training()).containsEntry("requestedModel", name);
+        verify(client, never()).training("GET", "/api/training/capabilities?model=qwen3.8%3A27b", Map.of());
     }
 
     @Test void otherModelActiveJobsStayVisibleAndBlockConcurrentTraining() {
@@ -240,20 +241,57 @@ class ModelExecutionServiceTest {
         assertThat(result.toString()).doesNotContain("/secret/model", "qualityEvaluated=true");
     }
 
-    @Test void trainedModelSelectionUsesOriginalModelFamilyForTrainingAndDatasetQueries() {
+    @Test void trainedModelSelectionKeepsTheChosenIdentityAndSeparatesItsDatasetSource() {
         String trainingId = UUID.randomUUID().toString();
         String name = "doenaai-trained:web-" + trainingId;
+        String source = "qwen3.8:27b";
         var identity = Map.<String, Object>of("name", name, "provider", "ollama", "trainedModel", true,
                 "trainingJobId", trainingId, "sourceModel", "qwen3.8:27b");
         when(client.inference("GET", "/api/models/installed", Map.of(), false)).thenReturn(Map.of("model", name,
                 "provider", "ollama", "trainedModel", true, "trainingJobId", trainingId, "sourceModel", "qwen3.8:27b", "models", List.of(identity)));
-        when(client.training("GET", "/api/training/capabilities?model=qwen3.8%3A27b", Map.of())).thenReturn(Map.of("trainingExecution", false));
+        var target = new LinkedHashMap<String, Object>(Map.of("sourceModel", source, "baseModel", "example/base",
+                "revision", "a".repeat(40), "digest", digest));
+        target.put("selectedModel", name); target.put("resumeJobId", trainingId);
+        target.put("parentAdapterSha256", "b".repeat(64)); target.put("parentConfigSha256", "c".repeat(64));
+        when(client.training("GET", "/api/training/capabilities?model=" + java.net.URLEncoder.encode(name, java.nio.charset.StandardCharsets.UTF_8), Map.of()))
+                .thenReturn(Map.of("trainingExecution", true, "dataset", Map.of("target", target, "samples", List.of(Map.of("caseId", "approved-case", "sourceModel", source)))));
         when(client.training("GET", "/api/training/jobs", Map.of())).thenReturn(Map.of("jobs", List.of()));
-        assertThat(service.training(name)).containsEntry("requestedModel", "qwen3.8:27b").containsEntry("selectedModel", name);
-        assertThat(service.training()).containsEntry("requestedModel", "qwen3.8:27b");
-        when(client.training(eq("POST"), eq("/api/training/jobs"), anyMap())).thenReturn(Map.of("status", "PENDING"));
-        assertThat(service.execute("TRAINING_START", training(id, 10), actor, null)).containsEntry("status", "PENDING");
-        verify(client).training(eq("POST"), eq("/api/training/jobs"), argThat(body -> "qwen3.8:27b".equals(body.get("model"))));
+        var catalog = service.training(name);
+        assertThat(catalog).containsEntry("requestedModel", name).containsEntry("selectedModel", name);
+        assertThat(catalog.get("dataset").toString()).contains("approved-case", "sourceModel=qwen3.8:27b", "selectedModel=" + name, "parentConfigSha256=");
+        assertThat(service.training()).containsEntry("requestedModel", name);
+        when(client.training(eq("POST"), eq("/api/training/jobs"), anyMap())).thenReturn(Map.of("status", "PENDING", "target", target));
+        assertThat(service.execute("TRAINING_START", new ModelExecutionRequest(id, name, digest, null, null, 10), actor, null))
+                .containsEntry("status", "PENDING").containsEntry("selectedModel", name).containsEntry("sourceModel", source);
+        verify(client).training(eq("POST"), eq("/api/training/jobs"), argThat(body -> name.equals(body.get("model"))));
+        verify(client, never()).training("GET", "/api/training/capabilities?model=qwen3.8%3A27b", Map.of());
+    }
+
+    @Test void trainingProfilesAndExportSupportExposeOnlySafeFields() {
+        var profile = new LinkedHashMap<String, Object>(Map.of("trainer", "mlx-lora-v1", "modelType", "gemma3",
+                "loraLayers", 4, "loraRank", 8, "maxSequenceLength", 2048, "batchSize", 1, "continuation", false));
+        profile.put("directory", "/private/model"); profile.put("command", "sensitive-command");
+        var export = Map.<String, Object>of("supported", false, "reasonCode", "MODEL_BUILD_UNSUPPORTED_PROFILE",
+                "message", "/private/details", "architecture", "gemma3", "path", "/private/model");
+        when(client.training("GET", "/api/training/capabilities?model=gemma4%3A26b", Map.of()))
+                .thenReturn(Map.of("trainingExecution", false, "trainingProfile", profile, "modelExport", export));
+        when(client.training("GET", "/api/training/jobs", Map.of())).thenReturn(Map.of("jobs", List.of()));
+        var value = service.training("gemma4:26b");
+        assertThat(value.get("trainingProfile").toString()).contains("mlx-lora-v1", "loraRank=8", "maxSequenceLength=2048");
+        assertThat(value.get("modelExport").toString()).contains("supported=false", "MODEL_BUILD_UNSUPPORTED_PROFILE");
+        assertThat(value.toString()).doesNotContain("/private/", "sensitive-command", "directory", "command");
+    }
+
+    @Test void aDerivedSelectionCannotSilentlyUseAnOriginalTargetFromAnOlderServer() {
+        String name = "doenaai-trained:web-" + UUID.randomUUID();
+        when(client.inference("GET", "/api/models/installed", Map.of(), false)).thenReturn(Map.of("models", List.of(Map.of("name", name))));
+        var original = Map.of("sourceModel", "qwen3.8:27b", "baseModel", "example/base", "revision", "a".repeat(40), "digest", digest);
+        when(client.training("GET", "/api/training/capabilities?model=" + java.net.URLEncoder.encode(name, java.nio.charset.StandardCharsets.UTF_8), Map.of()))
+                .thenReturn(Map.of("trainingExecution", true, "dataset", Map.of("target", original)));
+        when(client.training("GET", "/api/training/jobs", Map.of())).thenReturn(Map.of("jobs", List.of()));
+        var value = service.training(name);
+        assertThat((Map<?, ?>) value.get("dataset")).isEmpty();
+        assertThat(((Map<?, ?>) value.get("capabilities")).get("trainingExecution")).isEqualTo(false);
     }
 
     @Test void installedTrainedModelMetadataPreservesJobIdentityWithoutClaimingQualityOrExposingPaths() {

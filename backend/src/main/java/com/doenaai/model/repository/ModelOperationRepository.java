@@ -42,7 +42,7 @@ public class ModelOperationRepository {
     public List<Map<String, Object>> training(String target, String sourceModel, int limit) {
         return jdbc.query("""
                 select * from public.model_management_operations where target_key = ? and action = 'TRAINING_START'
-                and coalesce(result->'target'->>'sourceModel', request->>'model') = ?
+                and coalesce(result->'target'->>'selectedModel', request->>'model', result->'target'->>'sourceModel') = ?
                 order by created_at desc, id desc limit ?
                 """, this::row, target, sourceModel, limit);
     }

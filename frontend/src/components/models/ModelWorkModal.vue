@@ -28,7 +28,6 @@ const busy = computed(() => runtimeBusy.value || trainingBusy.value || adapterBu
 let generation = 0
 let disposed = false
 const choices = computed(() => (Array.isArray(installed.value?.models) ? installed.value.models : []))
-const trainingModelName = computed(() => choices.value.find((model) => model.name === selectedName.value)?.sourceModel || selectedName.value)
 const options = computed(() => [
     { value: '', label: '작업할 모델을 선택하세요' },
     ...choices.value.map((model) => ({
@@ -155,7 +154,7 @@ onBeforeUnmount(() => {
             />
             <ModelTrainingPanel
                 v-show="activeAction === 'training'"
-                :model-name="trainingModelName"
+                :model-name="selectedName"
                 :visible="modelValue && activeAction === 'training' && loaded && !loading"
                 :can-train="canTrain && loaded && !loading"
                 :refresh-key="refreshKey"
@@ -165,7 +164,7 @@ onBeforeUnmount(() => {
             />
             <ModelTrainedModelPanel
                 v-show="activeAction === 'adapter'"
-                :model-name="trainingModelName"
+                :model-name="selectedName"
                 :visible="modelValue && activeAction === 'adapter'"
                 :available="loaded && !loading"
                 :can-deploy="canDeploy"

@@ -111,6 +111,8 @@ public class ModelExecutionService {
         String reasonCode = null;
         String reason = "AI 학습 서버 주소·전송 키·실행 설정과 서버 업데이트를 확인해 주세요.";
         Map<String, Object> dataset = Map.of();
+        Map<String, Object> trainingProfile = Map.of();
+        Map<String, Object> modelExport = Map.of();
         String requestedModel = selectedModel == null ? "" : selectedModel;
         Map<String, Map<String, Object>> remoteJobs = new HashMap<>();
         try {
@@ -119,7 +121,9 @@ public class ModelExecutionService {
                     + java.net.URLEncoder.encode(requestedModel, java.nio.charset.StandardCharsets.UTF_8), Map.of());
             reasonCode = code(capabilities.get("trainingReasonCode"));
             dataset = safeDataset(capabilities.get("dataset"));
-            if (dataset.get("target") instanceof Map<?, ?> selected && !requestedModel.equals(selected.get("sourceModel"))) dataset = Map.of();
+            trainingProfile = safeTrainingProfile(capabilities.get("trainingProfile"));
+            modelExport = safeModelExport(capabilities.get("modelExport"));
+            if (dataset.get("target") instanceof Map<?, ?> selected && !requestedModel.equals(trainingSelection(selected))) dataset = Map.of();
             executable = Boolean.TRUE.equals(capabilities.get("trainingExecution")) && dataset.containsKey("target");
             reason = executable ? "검증된 수신 자료로 짧은 시험 학습을 시작할 수 있습니다. 운영 모델은 자동 변경되지 않습니다."
                     : "MODEL_NOT_REGISTERED".equals(capabilities.get("trainingReasonCode"))
@@ -153,7 +157,7 @@ public class ModelExecutionService {
             var job = publicValue(row);
             boolean active = ACTIVE.contains(job.get("status"));
             if (active) activeJobs.put((String) row.get("id"), job);
-            if (active || requestedModel.equals(sourceModel(row))) jobs.add(job);
+            if (active || requestedModel.equals(trainingSelection(row))) jobs.add(job);
         }
         for (var entry : remoteJobs.entrySet()) if (entry.getValue().get("status") instanceof String state && ACTIVE.contains(state)) {
             var job = snapshot(entry.getValue());
@@ -168,16 +172,28 @@ public class ModelExecutionService {
         if (reasonCode != null) capabilities.put("reasonCode", reasonCode);
         result.put("capabilities", capabilities);
         result.put("dataset", dataset); result.put("requestedModel", requestedModel); result.put("selectedModel", selectedModel == null ? requestedModel : selectedModel); result.put("jobs", jobs);
+        if (!trainingProfile.isEmpty()) result.put("trainingProfile", trainingProfile);
+        if (!modelExport.isEmpty()) result.put("modelExport", modelExport);
         result.put("busy", !activeJobs.isEmpty()); result.put("activeJobs", new ArrayList<>(activeJobs.values()));
         result.put("limit", 100); result.put("truncated", rows.size() > 100);
         return result;
     }
 
-    private static String sourceModel(Map<String, Object> row) {
+    private static String sourceModel(Map<?, ?> row) {
         if (row.get("result") instanceof Map<?, ?> result && result.get("target") instanceof Map<?, ?> target
                 && target.get("sourceModel") instanceof String model && validModel(model)) return model;
         if (row.get("request") instanceof Map<?, ?> request && request.get("model") instanceof String model && validModel(model)) return model;
         return "";
+    }
+
+    /** 자료 출처와 구분해 사용자가 실제 선택한 연속 학습 대상을 보존한다. */
+    private static String trainingSelection(Map<?, ?> row) {
+        if (row.get("result") instanceof Map<?, ?> result && result.get("target") instanceof Map<?, ?> target
+                && target.get("selectedModel") instanceof String model && validModel(model)) return model;
+        if (row.get("request") instanceof Map<?, ?> request && request.get("model") instanceof String model && validModel(model)) return model;
+        if (row.get("selectedModel") instanceof String model && validModel(model)) return model;
+        if (!sourceModel(row).isBlank()) return sourceModel(row);
+        return row.get("sourceModel") instanceof String model && validModel(model) ? model : "";
     }
 
     /** 모델명은 설치 목록에 있는 식별자와 정확히 일치해야 한다. */
@@ -185,19 +201,14 @@ public class ModelExecutionService {
         var status = client.inference("GET", "/api/models/installed", Map.of(), false);
         if (status == null || !(status.get("models") instanceof List<?> rows))
             throw new ModelExecutionClient.RemoteFailure("MODEL_SELECTION_UNAVAILABLE", false, 503);
-        return rows.stream().anyMatch(row -> row instanceof Map<?, ?> item && (model.equals(item.get("name"))
-                || (hasTrainingSource(item) && model.equals(item.get("sourceModel")))));
+        return rows.stream().anyMatch(row -> row instanceof Map<?, ?> item && model.equals(item.get("name")));
     }
 
     private String selectedTrainingModel(String selectedModel) {
         var installed = client.inference("GET", "/api/models/installed", Map.of(), false);
         if (installed == null || !(installed.get("models") instanceof List<?> rows))
             throw new ModelExecutionClient.RemoteFailure("MODEL_SELECTION_UNAVAILABLE", false, 503);
-        for (var row : rows) if (row instanceof Map<?, ?> item) {
-            boolean trained = hasTrainingSource(item);
-            if (selectedModel.equals(item.get("name"))) return trained ? (String) item.get("sourceModel") : selectedModel;
-            if (trained && selectedModel.equals(item.get("sourceModel"))) return selectedModel;
-        }
+        for (var row : rows) if (row instanceof Map<?, ?> item && selectedModel.equals(item.get("name"))) return selectedModel;
         throw new ModelCatalogException(HttpStatus.BAD_REQUEST, "선택한 학습 모델이 분석 서버의 설치 목록에 없습니다. 모델 목록을 새로고침해 주세요.");
     }
 
@@ -206,7 +217,6 @@ public class ModelExecutionService {
         var status = client.inference("GET", "/api/models/installed", Map.of(), false);
         if (status == null || !(status.get("model") instanceof String model) || !validModel(model))
             throw new ModelExecutionClient.RemoteFailure("MODEL_SELECTION_UNAVAILABLE", false, 503);
-        if (hasTrainingSource(status)) return (String) status.get("sourceModel");
         return model;
     }
 
@@ -232,9 +242,47 @@ public class ModelExecutionService {
     private static Map<String, Object> safeTrainingTarget(Object supplied) {
         if (supplied instanceof Map<?, ?> target && target.get("sourceModel") instanceof String source && validModel(source)
                 && target.get("baseModel") instanceof String base && validModel(base)
-                && target.get("revision") instanceof String revision && revision.matches("[0-9a-f]{40}") && safeDigest(target.get("digest")) != null)
-            return Map.of("sourceModel", source, "baseModel", base, "revision", revision, "digest", safeDigest(target.get("digest")));
+                && target.get("revision") instanceof String revision && revision.matches("[0-9a-f]{40}") && safeDigest(target.get("digest")) != null) {
+            var result = new LinkedHashMap<String, Object>();
+            result.put("sourceModel", source); result.put("baseModel", base); result.put("revision", revision); result.put("digest", safeDigest(target.get("digest")));
+            if (target.get("selectedModel") instanceof String selected && validModel(selected)) result.put("selectedModel", selected);
+            if (target.get("resumeJobId") instanceof String id && validUuid(id)) result.put("resumeJobId", id);
+            if (safeDigest(target.get("parentAdapterSha256")) != null) result.put("parentAdapterSha256", safeDigest(target.get("parentAdapterSha256")));
+            if (safeDigest(target.get("parentConfigSha256")) != null) result.put("parentConfigSha256", safeDigest(target.get("parentConfigSha256")));
+            return result;
+        }
         return Map.of();
+    }
+
+    /** 학습 프로필은 실행 설정의 숫자와 식별자만 전달하고 경로·명령은 제거한다. */
+    private static Map<String, Object> safeTrainingProfile(Object supplied) {
+        var result = new LinkedHashMap<String, Object>();
+        if (!(supplied instanceof Map<?, ?> profile)) return result;
+        if (profile.get("trainer") instanceof String trainer && trainer.matches("[a-z0-9-]{1,60}")) result.put("trainer", trainer);
+        if (profile.get("modelType") instanceof String type && type.matches("[A-Za-z0-9_\\-]{1,100}")) result.put("modelType", type);
+        for (String key : List.of("loraLayers", "loraRank", "maxSequenceLength", "batchSize")) {
+            int minimum = key.equals("maxSequenceLength") ? 32 : 1;
+            int maximum = key.equals("maxSequenceLength") ? 32768 : key.equals("batchSize") ? 4 : 128;
+            if (profile.get(key) instanceof Number number && Double.isFinite(number.doubleValue())
+                    && number.doubleValue() == number.longValue() && number.longValue() >= minimum && number.longValue() <= maximum)
+                result.put(key, number.longValue());
+        }
+        if (profile.get("continuation") instanceof Boolean continuation) result.put("continuation", continuation);
+        if (profile.get("parentJobId") instanceof String id && validUuid(id)) result.put("parentJobId", id);
+        return result;
+    }
+
+    /** 변환 지원은 학습 실행 가능 여부와 별도로 표시하며 원격 설명 원문은 전달하지 않는다. */
+    private static Map<String, Object> safeModelExport(Object supplied) {
+        if (!(supplied instanceof Map<?, ?> export) || !(export.get("supported") instanceof Boolean supported)) return Map.of();
+        var result = new LinkedHashMap<String, Object>();
+        result.put("supported", supported);
+        if (code(export.get("reasonCode")) != null) result.put("reasonCode", code(export.get("reasonCode")));
+        if (export.get("architecture") instanceof String architecture && architecture.matches("[A-Za-z0-9_\\-]{1,100}")) result.put("architecture", architecture);
+        result.put("message", supported
+                ? "새 분석 모델을 만드는 변환 경로를 지원합니다. 실제 생성 전에 도구와 저장 공간을 확인합니다."
+                : "이 모델의 새 분석 모델 변환은 아직 지원하지 않습니다. 어댑터 학습·저장·재로딩은 별도로 확인합니다.");
+        return result;
     }
 
     public Map<String, Object> operations() {
@@ -322,6 +370,10 @@ public class ModelExecutionService {
         adapterMetadata(remote, value);
         var target = safeTrainingTarget(remote.get("target"));
         if (!target.isEmpty()) value.put("target", target);
+        var profile = safeTrainingProfile(remote.get("trainingProfile"));
+        if (!profile.isEmpty()) value.put("trainingProfile", profile);
+        var export = safeModelExport(remote.get("modelExport"));
+        if (!export.isEmpty()) value.put("modelExport", export);
         if (remote.get("status") instanceof String state && STATES.contains(state)) value.put("status", state);
         for (String key : List.of("model", "previousModel")) if (remote.get(key) instanceof String name && validModel(name)) value.put(key, name);
         for (String key : List.of("digest", "currentDigest")) if (safeDigest(remote.get(key)) != null) value.put(key, safeDigest(remote.get(key)));
@@ -345,6 +397,7 @@ public class ModelExecutionService {
         if (value.remove("result") instanceof Map<?, ?> result) result.forEach((key, item) -> { if (key instanceof String text) value.put(text, item); });
         value.put("status", row.get("status"));
         if ("TRAINING_START".equals(row.get("action")) && !sourceModel(row).isBlank()) value.put("sourceModel", sourceModel(row));
+        if ("TRAINING_START".equals(row.get("action")) && !trainingSelection(row).isBlank()) value.put("selectedModel", trainingSelection(row));
         if (row.get("request") instanceof Map<?, ?> request && request.get("iterations") instanceof Number iterations) value.put("iterations", iterations);
         value.put("message", message((String) row.get("status"), (String) row.get("errorCode")));
         return value;
@@ -386,13 +439,6 @@ public class ModelExecutionService {
                 || !(supplied.get("sourceModel") instanceof String source) || !validModel(source)) return;
         result.put("provider", "mlx"); result.put("adapterId", adapter); result.put("sourceModel", source);
         result.put("qualityEvaluated", false);
-    }
-
-    private static boolean hasTrainingSource(Map<?, ?> supplied) {
-        if (!(supplied.get("sourceModel") instanceof String source) || !validModel(source)) return false;
-        return ("mlx".equals(supplied.get("provider")) && supplied.get("adapterId") instanceof String adapter && validUuid(adapter))
-                || ("ollama".equals(supplied.get("provider")) && Boolean.TRUE.equals(supplied.get("trainedModel"))
-                && supplied.get("trainingJobId") instanceof String id && validUuid(id));
     }
 
     private static boolean validUuid(String value) {

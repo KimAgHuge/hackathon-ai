@@ -26,12 +26,15 @@ const validation = ref('')
 let disposed = false
 const jobs = computed(() => (Array.isArray(state.value?.jobs) ? state.value.jobs : []))
 const trainingTarget = computed(() => state.value?.dataset?.target)
+const trainingProfile = computed(() => state.value?.trainingProfile)
+const modelExport = computed(() => state.value?.modelExport)
+const selectedTrainingModel = computed(() => trainingTarget.value?.selectedModel || trainingTarget.value?.sourceModel)
 const trainingSamples = computed(() => (Array.isArray(state.value?.dataset?.samples) ? state.value.dataset.samples : []))
 const hasActive = computed(() => state.value?.busy === true || jobs.value.some((job) => activeTrainingStatuses.has(job.status)))
 const canStart = computed(
     () =>
         props.canTrain &&
-        trainingTarget.value?.sourceModel === props.modelName &&
+        selectedTrainingModel.value === props.modelName &&
         state.value?.capabilities?.trainingExecution === true &&
         Boolean(trainingTarget.value?.digest) &&
         !hasActive.value &&
@@ -43,13 +46,20 @@ const monitor = createTrainingPoller({
     fetchStatus: () => getModelTraining(props.modelName),
     isHidden: () => document.hidden || !props.visible,
     applyStatus(value) {
+        if ((value.selectedModel && value.selectedModel !== props.modelName) || (value.requestedModel && value.requestedModel !== props.modelName)) {
+            state.value = null
+            throw new Error('MODEL_TARGET_MISMATCH')
+        }
         state.value = value
         loading.value = false
         error.value = ''
     },
     onError(failure) {
         loading.value = false
-        error.value = operationErrorMessage(failure, '학습 작업 조회에 실패해 자동 조회를 멈췄습니다. 수동으로 다시 불러와 주세요.')
+        error.value =
+            failure.message === 'MODEL_TARGET_MISMATCH'
+                ? '선택한 모델과 학습 서버가 확인한 대상이 다릅니다. 모델 대응 등록과 서버 상태를 확인해 주세요.'
+                : operationErrorMessage(failure, '학습 작업 조회에 실패해 자동 조회를 멈췄습니다. 수동으로 다시 불러와 주세요.')
     },
 })
 const refresh = async () => {
@@ -129,7 +139,7 @@ const submit = async () => {
             return
         }
         pending.value = {
-            body: { operationId: crypto.randomUUID(), iterations: value, model: trainingTarget.value.sourceModel, digest: trainingTarget.value.digest },
+            body: { operationId: crypto.randomUUID(), iterations: value, model: props.modelName, digest: trainingTarget.value.digest },
         }
     }
     busy.value = true
@@ -189,10 +199,11 @@ defineExpose({ openStart, refresh })
         </div>
         <section class="mb-5 rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-900 sm:p-6">
             <h3 class="text-sm font-bold">학습 대상과 사용 자료</h3>
-            <p v-if="state?.requestedModel" class="mt-2 break-all text-xs text-slate-500 dark:text-slate-400">선택한 모델 · {{ state.requestedModel }}</p>
+            <p v-if="modelName" class="mt-2 break-all text-xs text-slate-500 dark:text-slate-400">선택한 모델 · {{ modelName }}</p>
             <p class="mt-1 text-xs leading-6 text-slate-500 dark:text-slate-400">선택한 모델에 대응하는 학습 기반 모델과 버전을 자동으로 확인합니다.</p>
             <template v-if="trainingTarget">
-                <p class="mt-3 break-all text-sm font-bold">{{ trainingTarget.sourceModel }} → {{ trainingTarget.baseModel }}</p>
+                <p class="mt-3 break-all text-sm font-bold">학습 기반 모델 · {{ trainingTarget.baseModel }}</p>
+                <p class="mt-1 break-all text-xs text-slate-500 dark:text-slate-400">승인 자료 출처 모델 · {{ trainingTarget.sourceModel }}</p>
                 <p class="mt-1 break-all text-xs text-slate-500 dark:text-slate-400">기반 모델 버전 · {{ trainingTarget.revision }}</p>
                 <p class="mt-3 text-xs leading-6 text-slate-500 dark:text-slate-400">
                     같은 모델로 분석하고 승인한 자료만 사용합니다. 생성 모델이 다르거나 기록이 없는 자료는 제외합니다.
@@ -209,10 +220,48 @@ defineExpose({ openStart, refresh })
                 </p>
             </template>
             <p v-else class="mt-2 text-sm text-slate-500">호환되는 학습 대상 모델을 확인하지 못했습니다. 모델 대응 등록과 서버 연결을 확인해 주세요.</p>
+            <div v-if="trainingProfile" class="mt-5 border-t border-slate-200 pt-4 dark:border-slate-700">
+                <h4 class="text-sm font-bold">적용할 학습 설정</h4>
+                <dl class="mt-3 grid gap-3 text-xs sm:grid-cols-2">
+                    <div>
+                        <dt class="text-slate-500">학습 방식</dt>
+                        <dd class="mt-1 break-all">{{ trainingProfile.trainer || '미확인' }}</dd>
+                    </div>
+                    <div>
+                        <dt class="text-slate-500">모델 구조</dt>
+                        <dd class="mt-1 break-all">{{ trainingProfile.modelType || '미확인' }}</dd>
+                    </div>
+                    <div>
+                        <dt class="text-slate-500">학습층 / LoRA rank</dt>
+                        <dd class="mt-1">{{ trainingProfile.loraLayers ?? '미확인' }} / {{ trainingProfile.loraRank ?? '미확인' }}</dd>
+                    </div>
+                    <div>
+                        <dt class="text-slate-500">최대 토큰 / 배치 크기</dt>
+                        <dd class="mt-1">{{ trainingProfile.maxSequenceLength ?? '미확인' }} / {{ trainingProfile.batchSize ?? '미확인' }}</dd>
+                    </div>
+                    <div>
+                        <dt class="text-slate-500">시작 지점</dt>
+                        <dd class="mt-1">{{ trainingProfile.continuation ? '선택한 이전 어댑터에서 연속 학습' : '등록된 기반 모델에서 새 학습' }}</dd>
+                    </div>
+                    <div v-if="trainingProfile.parentJobId">
+                        <dt class="text-slate-500">이전 학습 작업</dt>
+                        <dd class="mt-1 break-all">{{ trainingProfile.parentJobId }}</dd>
+                    </div>
+                </dl>
+                <p v-if="trainingProfile.continuation" class="mt-3 text-xs leading-6 text-slate-500 dark:text-slate-400">
+                    선택한 모델과 연결된 로컬 어댑터를 이어서 학습합니다. 승인 자료는 위에 표시한 출처 모델을 기준으로 확인합니다.
+                </p>
+            </div>
+            <div v-if="modelExport" class="mt-5 rounded-lg bg-slate-50 p-4 text-xs leading-6 dark:bg-slate-800">
+                <p class="font-bold">분석용 모델 변환 · {{ modelExport.supported ? '지원' : '지원 준비 필요' }}</p>
+                <p class="mt-1">{{ modelExport.message }}</p>
+                <p v-if="modelExport.architecture" class="mt-1 break-all">변환 구조 · {{ modelExport.architecture }}</p>
+                <p v-if="modelExport.reasonCode" class="mt-1 break-all text-slate-500">상태 코드 · {{ modelExport.reasonCode }}</p>
+            </div>
         </section>
         <p v-if="state?.capabilities?.reason" class="mb-4 rounded-lg bg-slate-100 p-3 text-sm leading-6 dark:bg-slate-800">{{ state.capabilities.reason }}</p>
         <p v-if="trainingTarget" class="mb-5 rounded-xl bg-blue-50 p-4 text-sm font-bold leading-7 text-blue-900 dark:bg-blue-950/40 dark:text-blue-100">
-            {{ trainingTarget.sourceModel }}에 승인 자료 {{ state.dataset.total ?? 0 }}건으로 {{ iterations }}회 시험 학습합니다.
+            {{ modelName }}에 승인 자료 {{ state.dataset.total ?? 0 }}건으로 {{ iterations }}회 시험 학습합니다.
         </p>
         <p v-if="hasActive" class="mb-4 text-xs text-blue-700 dark:text-blue-300">
             학습 서버에서 진행 중인 작업이 있어 새 학습을 시작할 수 없습니다. 활성 작업은 5초마다 순서대로 확인합니다. 화면이 숨겨지면 멈추며 조회 오류 뒤에는
@@ -250,12 +299,13 @@ defineExpose({ openStart, refresh })
                     학습 서버의 GPU·메모리·전원과 저장 공간을 사용하며, 다른 작업의 응답 속도에 영향을 줄 수 있습니다. 승인된 자료만 사용하며 학습·저장·재로딩을
                     수행합니다.
                 </p>
-                <p class="break-all font-bold">학습 대상 · {{ trainingTarget?.sourceModel }} / {{ trainingTarget?.baseModel }}</p>
+                <p class="break-all font-bold">학습 대상 · {{ modelName }} / {{ trainingTarget?.baseModel }}</p>
                 <BaseInput v-model="iterations" label="학습 반복 횟수" type="number" min="1" max="20" step="1" :disabled="busy || Boolean(pending)" />
-                <p>
+                <p v-if="modelExport?.supported !== false">
                     학습이 끝나면 ‘학습 결과 적용’에서 기반 모델과 합쳐 새 모델을 만들고 분석 서버에 등록합니다. 응답 검증 후 적용하며 현재 분석 모델은 자동
                     변경되지 않습니다.
                 </p>
+                <p v-else>현재 이 모델은 어댑터 학습·저장·재로딩까지 확인합니다. 분석 서버용 새 모델 변환은 지원 준비가 필요합니다.</p>
                 <label class="flex items-start gap-3"
                     ><input v-model="confirmed" type="checkbox" class="mt-1.5 h-4 w-4 shrink-0" :disabled="busy || Boolean(pending)" /><span
                         >실제 자원 사용과 운영 모델에 자동 적용되지 않는 범위를 확인했습니다.</span
