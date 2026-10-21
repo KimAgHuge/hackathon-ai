@@ -21,6 +21,9 @@ def settings(**overrides):
     values = {
         "ai_internal_api_key": "test-internal-api-key-at-least-32-characters",
         "ai_max_validation_retries": 1,
+        # 이 모듈은 기존 두 단계 계약을 분리 검사한다. 최종 정리는 별도 테스트에서 켠다.
+        "ai_final_reconciliation_enabled": False,
+        "ai_requirement_fast_path_enabled": False,
     }
     values.update(overrides)
     return Settings(**values)
@@ -54,7 +57,8 @@ def requirement_request():
                     {"schema": "public", "name": "project_members", "columns": [{"name": "user_id"}]},
                 ],
             },
-            "relations": [],
+            "relations": [{"schema": "public", "table": "projects", "file": "src/ProjectStore.java", "line": 3, "kind": "ORM_TABLE"},
+                          {"schema": "public", "table": "project_members", "file": "src/MemberStore.java", "line": 5, "kind": "SQL_SELECT"}],
         }
     )
 
@@ -197,6 +201,74 @@ UNRELATED_GENERAL_MODEL_JSON = json.dumps({
 
 def db_only(full_response):
     return json.dumps(json.loads(full_response)["databaseImpact"], ensure_ascii=False)
+
+
+def test_database_receives_source_connections_not_only_table_metadata():
+    payload = requirement_request().model_dump(mode="json", by_alias=True)
+    payload["sourceSummary"]["sourceConnections"] = {"links": [{
+        "file": "app/routes.py", "line": 4, "targetFile": "src/ProjectStore.java", "targetLine": 3,
+        "kind": "STATIC_IMPORT_REFERENCE"}]}
+    client = FakeClient(chat_responses=[REQUIREMENT_GENERAL_MODEL_JSON, db_only(AMBIGUOUS_DB_JSON)])
+    asyncio.run(LlmService(settings(), client=client).analyze(ProjectAnalysisRequest.model_validate(payload)))
+    message = json.loads(client.chat_kwargs[1]["messages"][1]["content"])
+    assert message["sourceContext"]["links"][0]["file"] == "app/routes.py"
+    assert message["sourceContext"]["tableReferences"][0]["table"] == "projects"
+
+
+def test_database_rejects_a_target_backed_only_by_table_name_similarity():
+    payload = requirement_request().model_dump(mode="json", by_alias=True)
+    payload["relations"] = []
+    client = FakeClient(chat_responses=[REQUIREMENT_GENERAL_MODEL_JSON, db_only(CONCRETE_DB_JSON)])
+    with pytest.raises(InvalidModelResponseError):
+        asyncio.run(LlmService(settings(ai_max_validation_retries=0), client=client)
+                    .analyze(ProjectAnalysisRequest.model_validate(payload)))
+
+
+def test_explicit_human_qualified_table_can_support_a_target_without_source_mapping():
+    payload = requirement_request().model_dump(mode="json", by_alias=True)
+    payload["relations"] = []
+    payload["sourceSummary"]["changeRequirement"]["refinedContent"] = "public.projects에 팀 식별자를 추가합니다."
+    client = FakeClient(chat_responses=[REQUIREMENT_GENERAL_MODEL_JSON, db_only(CONCRETE_DB_JSON)])
+    result = asyncio.run(LlmService(settings(), client=client).analyze(ProjectAnalysisRequest.model_validate(payload)))
+    assert result.database_impact.proposed_changes[0].target_table == "public.projects"
+
+
+def test_final_reconciliation_updates_summary_but_preserves_original_training_stage():
+    final = json.loads(REQUIREMENT_GENERAL_MODEL_JSON)
+    final["summary"] = "확인한 DB 구조에는 별도 팀 연결이 없어 스키마·이관 검토가 필요합니다."
+    final["evidences"] = [{"file": "src/ProjectStore.java", "line": 3, "description": "관찰한 저장 대상"}]
+    client = FakeClient(chat_responses=[REQUIREMENT_GENERAL_MODEL_JSON, db_only(CONCRETE_DB_JSON), json.dumps(final, ensure_ascii=False)])
+    events = []
+
+    async def progress(code, detail):
+        events.append(code)
+
+    result = asyncio.run(LlmService(settings(ai_final_reconciliation_enabled=True), client=client).analyze(requirement_request(), progress))
+    assert result.summary == final["summary"]
+    assert result.general_analysis.summary == json.loads(REQUIREMENT_GENERAL_MODEL_JSON)["summary"]
+    assert "RECONCILIATION_STARTED" in events and "RECONCILIATION_COMPLETED" in events
+    assert client.chat_calls == 3
+    assert all("think" not in call and "num_predict" not in call.get("options", {}) for call in client.chat_kwargs)
+
+
+@pytest.mark.parametrize("unrelated", [True, False])
+def test_final_reconciliation_rejects_changed_relevance_or_invented_evidence(unrelated):
+    final = json.loads(REQUIREMENT_GENERAL_MODEL_JSON)
+    if unrelated:
+        final["databaseRelevance"] = "UNRELATED"
+    else:
+        final["evidences"] = [{"file": "invented/Unknown.py", "line": 999, "description": "수집하지 않은 근거"}]
+    client = FakeClient(chat_responses=[REQUIREMENT_GENERAL_MODEL_JSON, db_only(AMBIGUOUS_DB_JSON), json.dumps(final)])
+    with pytest.raises(InvalidModelResponseError):
+        asyncio.run(LlmService(settings(ai_final_reconciliation_enabled=True, ai_max_validation_retries=0), client=client)
+                    .analyze(requirement_request()))
+
+
+def test_unrelated_question_skips_database_and_final_reconciliation():
+    client = FakeClient(chat_responses=[UNRELATED_GENERAL_MODEL_JSON])
+    result = asyncio.run(LlmService(settings(ai_final_reconciliation_enabled=True), client=client).analyze(presentation_requirement_request()))
+    assert client.chat_calls == 1
+    assert result.database_impact.status == "NOT_APPLICABLE"
 
 
 def test_analyze_validates_structured_response():

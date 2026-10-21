@@ -78,13 +78,21 @@ class RiskFactor(ApiModel):
     reason: str = Field(min_length=1)
 
 
+class RiskFactor20(RiskFactor):
+    score: int = Field(ge=0, le=20)
+
+
+class RiskFactor10(RiskFactor):
+    score: int = Field(ge=0, le=10)
+
+
 class RiskAssessment(ApiModel):
     """변경 자체의 위험과 아직 남은 불확실성을 분리한 근거별 점수다."""
     change_scope: RiskFactor
-    data_impact: RiskFactor
+    data_impact: RiskFactor20
     security_impact: RiskFactor
-    delivery_complexity: RiskFactor
-    uncertainty: RiskFactor
+    delivery_complexity: RiskFactor20
+    uncertainty: RiskFactor10
 
     @model_validator(mode="after")
     def check_factor_ranges(self):
@@ -228,9 +236,40 @@ class GeneralAnalysisResponse(ApiModel):
         return sentence
 
 
+class DatabaseReviewPlan(ApiModel):
+    """모델이 제안한 우선 검토 범위다. 서버에서 실제 소스·DB 근거와 대조한 뒤 사용한다."""
+    target_tables: List[str]
+    evidence_files: List[str]
+    requires_full_review: bool
+    reason: str = Field(min_length=1)
+
+
 class RequirementGeneralAnalysisResponse(GeneralAnalysisResponse):
     database_relevance: DatabaseRelevance
     database_relevance_reason: str = Field(min_length=1)
+    database_review_plan: Optional[DatabaseReviewPlan] = Field(default=None, exclude_if=lambda value: value is None)
+
+
+class FinalDatabaseFactsReview(ApiModel):
+    """마지막 단계가 실제로 받은 컬럼 근거를 읽었는지 대조하는 내부 확인값이다."""
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
+    table: str = Field(min_length=1)
+    columns_available: bool = Field(strict=True)
+    collected_column_count: Optional[int] = Field(ge=0, strict=True)
+    included_column_names: List[str]
+    all_collected_columns_included: bool = Field(strict=True)
+
+
+class FinalAnalysisUpdate(ApiModel):
+    """DB 검토 후 설명·위험·권장 사항을 필수로 정리한다. DB 결론 자체는 바꾸지 않는다."""
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
+    summary: str = Field(min_length=1)
+    plain_language_summary: str = Field(min_length=1, max_length=200)
+    risk_assessment: RiskAssessment
+    impact_areas: List[str]
+    evidences: Optional[List[Dict[str, Any]]] = None
+    recommendations: List[str]
+    database_facts_review: List[FinalDatabaseFactsReview]
 
 
 class ProjectAnalysisResponse(GeneralAnalysisResponse):
@@ -238,6 +277,7 @@ class ProjectAnalysisResponse(GeneralAnalysisResponse):
     database_impact: DatabaseImpact
     # DB 분석 후 조정한 최종 결과와 구분해 학습 초안에 쓸 원래 단계 응답을 보존한다.
     general_analysis: Optional[RequirementGeneralAnalysisResponse] = None
+    database_review_coverage: Optional[Dict[str, Any]] = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class ModelHealthResponse(ApiModel):

@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     ai_db_batch_max_tables: int = Field(default=6, ge=1, le=40)
     ai_checkpoints_enabled: bool = True
     ai_checkpoint_max_age_seconds: int = Field(default=86400, ge=60, le=604800)
+    ai_final_reconciliation_enabled: bool = True
+    ai_requirement_fast_path_enabled: bool = True
+    ai_db_merge_max_chars: int = Field(default=24000, ge=1000, le=90000)
     training_shared_dir: str = ""
     training_receiver_url: str = ""
     training_transfer_key: SecretStr = SecretStr("")

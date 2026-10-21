@@ -42,6 +42,8 @@ def test_every_table_is_reviewed_without_disabling_thinking_and_cross_table_keys
     merge = json.loads(client.chat_kwargs[3]["messages"][1]["content"])
     assert merge["observedConstraints"][1]["uniqueIndexes"][0]["name"] == "index_example"
     assert merge["coverage"]["reviewedTables"] == ["public.project_members", "public.projects"]
+    assert all(part["sourceContext"]["tableReferences"] for part in parts)
+    assert merge["sourceContext"]["tableReferences"] == parts[0]["sourceContext"]["tableReferences"]
     assert ("DATABASE_BATCH_STARTED", 1) in events
     assert ("DATABASE_BATCH_COMPLETED", 2) in events
     assert ("DATABASE_MERGE_COMPLETED", 1) in events
@@ -79,6 +81,35 @@ def test_retry_after_timeout_reuses_general_and_completed_batch_across_service_r
     assert resumed.chat_calls == 2
     assert ("GENERAL_REUSED", None) in events
     assert ("DATABASE_BATCH_REUSED", 1) in events
+
+
+def test_final_stage_timeout_reuses_general_and_database_before_resuming(tmp_path):
+    class FinalTimeoutClient(FakeClient):
+        async def chat(self, **kwargs):
+            if self.chat_calls == 2:
+                raise httpx.ReadTimeout("최종 단계 시간 초과 시험")
+            return await super().chat(**kwargs)
+
+    config = settings(ai_final_reconciliation_enabled=True)
+    store = StageCheckpoints(tmp_path / "final-stages", "test-only-signing-key")
+    first = FinalTimeoutClient(chat_responses=[REQUIREMENT_GENERAL_MODEL_JSON, db_only(CONCRETE_DB_JSON)],
+                               list_response=checkpoint_client([]).list_response)
+    with pytest.raises(ModelTimeoutError):
+        asyncio.run(LlmService(config, client=first, checkpoints=store).analyze(requirement_request()))
+    resumed = checkpoint_client([REQUIREMENT_GENERAL_MODEL_JSON])
+    events = []
+
+    async def progress(code, number):
+        events.append(code)
+
+    result = asyncio.run(LlmService(config, client=resumed, checkpoints=store).analyze(requirement_request(), progress))
+    assert resumed.chat_calls == 1
+    assert result.database_impact.status.value == "CHANGE_REQUIRED"
+    assert "GENERAL_REUSED" in events and "DATABASE_REUSED" in events
+    complete = checkpoint_client([])
+    asyncio.run(LlmService(config, client=complete, checkpoints=store).analyze(requirement_request(), progress))
+    assert complete.chat_calls == 0
+    assert "RECONCILIATION_REUSED" in events
 
 
 @pytest.mark.parametrize("change", ["requirement", "database", "model"])

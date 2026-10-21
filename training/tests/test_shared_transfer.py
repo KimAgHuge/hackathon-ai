@@ -87,7 +87,7 @@ class SharedTransferTests(unittest.TestCase):
         self.assertEqual(responses[-1][0], 401)
         handler._authorized = lambda body: True
         handler.do_GET()
-        self.assertEqual(responses[-1], (200, {"validationVersion": 2, "features": ["FILE_LEVEL_EVIDENCE", "DATABASE_SCOPE_REVIEW", "DATABASE_CHANGE_SEMANTICS_V2"]}))
+        self.assertEqual(responses[-1], (200, {"validationVersion": 2, "features": ["FILE_LEVEL_EVIDENCE", "DATABASE_SCOPE_REVIEW", "DATABASE_CHANGE_SEMANTICS_V2", "DATABASE_REVIEW_PLAN_V1"]}))
 
     def test_file_only_case_with_db_exclusion_reaches_verified_inbox(self):
         self.record = case(related=False)

@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from dataset_contract import DatasetError, digest, strict_json, validate_case, validate_response, review_flags
+from dataset_contract import DatasetError, digest, strict_json, validate_case, validate_response, review_flags, messages_for, prompt_contract
 from evaluate_model import compare_runs, evaluator_hash, load_test_set, score
 from export_dataset import export, prepare
 
@@ -54,6 +54,18 @@ class DatasetTests(unittest.TestCase):
     def setUp(self):
         self.records = [case("p1"), case("p2"), case("p3", related=False)]
         self.splits = {"train": ["p1"], "valid": ["p2"], "test": ["p3"]}
+
+    def test_training_and_operating_prompts_share_the_same_source_context(self):
+        from app.services.source_context import general_overview
+        from app.services.database_scope import database_source_context
+        record = case()
+        bundle, _ = prompt_contract()
+        self.assertEqual(bundle["messageFormatVersion"], 3)
+        general_message = messages_for(record, "general", bundle)[1]["content"]
+        payload = json.loads(general_message.split("return only the required JSON object:\n", 1)[1])
+        self.assertEqual(payload, general_overview(record["request"]))
+        database_payload = json.loads(messages_for(record, "database", bundle)[1]["content"])
+        self.assertEqual(database_payload["sourceContext"], database_source_context(record["request"], record["request"]["databaseSummary"]["tables"]))
 
     def test_unapproved_and_missing_review_rejected(self):
         for field in ("humanApproved", "sanitized"):
