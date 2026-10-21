@@ -101,7 +101,8 @@ Mac Studio/Ollama 배포에는 모델별 변환·호환성 검증이 추가로 �
 평가된 모델도 SSH 직접 전송 대신 공유 NAS 역할의 iCloud Drive에 게시하고,
 AI 분석/추론 서버가 가져와 검증한 뒤 적용하는 방향을 채택했습니다.
 [모델 배포 방침](MODEL_DELIVERY.md)에 중단 시 재시도, 배포 승인, 기존 모델 유지와
-되돌리기 기준을 정리했습니다. 자동 모델 배포 기능이 구현됐다는 뜻은 아닙니다.
+되돌리기 기준을 정리했습니다. 아래 `model_delivery.py`로 시험 어댑터의 패키지 준비·게시·수동 검증은
+실행할 수 있으며, 자동 가져오기·Ollama 등록·운영 전환은 아직 구현하지 않았습니다.
 
 `export_dataset.py`는 승인된 로컬 사례를 검사해 JSONL로 변환합니다.
 승인 화면의 자동 전달을 사용할 경우 AI 학습 서버에서 `receiver_service.py`를 실행하면
@@ -193,6 +194,41 @@ training/.venv/bin/python training/trial_train.py reload \
 세 분할을 지원하는 기존 `export_dataset.py`의 프로젝트 분리 정책은 유지합니다.
 
 공식 안내: https://github.com/ml-explore/mlx-lm/blob/main/mlx_lm/LORA.md
+
+## 시험 어댑터를 iCloud로 전달
+
+`model_delivery.py`는 학습·재로딩·원본 보존 검사를 마친 시험 어댑터를 버전별로 묶습니다.
+기존 `training/.env`의 공유 폴더 `DOENAAI_TRAINING_SHARED_DIR`와 공통 키
+`DOENAAI_TRAINING_TRANSFER_KEY`를 사용합니다. 전역 옵션 `--env-file`은 하위 명령 앞에 적습니다.
+
+```bash
+training/.venv/bin/python training/model_delivery.py --env-file training/.env stage \
+  --adapter training/adapters/trial-20261021-7srnohr-v3 \
+  --reports training/outputs/trial-20261021-7srnohr-v3/dataset \
+  --output training/outputs/model-packages/qwen-trial-20261021-v3 \
+  --version qwen-trial-20261021-v3
+
+training/.venv/bin/python training/model_delivery.py --env-file training/.env publish \
+  --package training/outputs/model-packages/qwen-trial-20261021-v3
+
+training/.venv/bin/python training/model_delivery.py --env-file training/.env verify \
+  --package training/outputs/model-packages/qwen-trial-20261021-v3
+```
+
+공유 폴더의 `model-deliveries/qwen-trial-20261021-v3/`에는 `adapters.safetensors`,
+`adapter_config.json`, `evaluation-summary.json`, `manifest.json`, `READY.json`만 게시합니다.
+사례 원문·대화·전체 보고서·비밀값은 제외합니다. 전용 구분값이 있는 HMAC 서명과 명세 해시,
+전달 파일 전체의 크기·해시를 검사하며 같은 버전·같은 명세만 중복 게시를 허용합니다.
+버전이 충돌하면 기존 파일을 보존합니다. 로컬 게시 기록은 `.publish-state.json`에 저장합니다.
+
+게시 후 상태는 `WAITING_FOR_REMOTE_VERIFICATION`이며 `cloudUploadVerified=false`입니다.
+맥북의 로컬 복사 성공만으로 iCloud 업로드나 스튜디오 도착을 확정하지 않습니다.
+스튜디오에서도 같은 키와 코드로 동기화된 패키지 경로에 `verify`를 실행해야 합니다.
+이 명령의 성공 상태 `VERIFIED_TRIAL_ONLY`는 파일 검증 완료만 의미합니다.
+이 패키지는 시험용이며 답변 품질은 미평가, 운영은 미승인, Ollama 호환성은 미검증 상태입니다.
+이번 확인에서는 실제 어댑터의 로컬 패키지 준비·검증까지 완료했습니다.
+실제 iCloud 게시는 명시적 승인 대기 상태로 실행하지 않았습니다.
+장비별 검증 명령과 다음 배포 단계는 [모델 전달 안내](MODEL_DELIVERY.md)를 참고합니다.
 
 ## Qwen3.8 호환성 시험
 
