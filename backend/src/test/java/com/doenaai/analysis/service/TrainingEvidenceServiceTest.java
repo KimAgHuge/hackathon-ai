@@ -47,6 +47,41 @@ class TrainingEvidenceServiceTest {
         verifyNoInteractions(git);
     }
 
+    @Test void preservesTheSavedAdapterIdentityAndRejectsChangingOrRemovingIt() {
+        approved();
+        String runtimeModel = "doenaai-mlx:web-" + UUID.randomUUID();
+        var adapter = Map.of("model", runtimeModel, "digest", "b".repeat(64));
+        var saved = new LinkedHashMap<>(sample(1));
+        saved.put("sourceModel", "qwen3.8:27b");
+        saved.put("sourceAdapter", adapter);
+        when(results.trainingDraft(jobId, userId)).thenReturn(new TrainingCaseDraftResponse(saved, List.of()));
+
+        var checked = service.verifiedCase(jobId, userId, new LinkedHashMap<>(saved));
+        assertThat(checked).containsEntry("sourceModel", "qwen3.8:27b").containsEntry("sourceAdapter", adapter);
+        for (var forgedAdapter : List.of(
+                Map.of("model", "doenaai-mlx:web-" + UUID.randomUUID(), "digest", "b".repeat(64)),
+                Map.of("model", runtimeModel, "digest", "c".repeat(64)))) {
+            var submitted = new LinkedHashMap<>(saved);
+            submitted.put("sourceAdapter", forgedAdapter);
+            assertThatThrownBy(() -> service.verifiedCase(jobId, userId, submitted))
+                    .isInstanceOf(TrainingTransferClient.CaseValidationException.class);
+        }
+        var missing = new LinkedHashMap<>(saved);
+        missing.remove("sourceAdapter");
+        assertThatThrownBy(() -> service.verifiedCase(jobId, userId, missing))
+                .isInstanceOf(TrainingTransferClient.CaseValidationException.class);
+        verifyNoInteractions(git);
+    }
+
+    @Test void cannotInventAnAdapterForAnOrdinaryAnalysis() {
+        approved();
+        var submitted = new LinkedHashMap<>(sample(1));
+        submitted.put("sourceAdapter", Map.of("model", "doenaai-mlx:web-" + UUID.randomUUID(), "digest", "b".repeat(64)));
+        assertThatThrownBy(() -> service.verifiedCase(jobId, userId, submitted))
+                .isInstanceOf(TrainingTransferClient.CaseValidationException.class);
+        verifyNoInteractions(git);
+    }
+
     @Test void addsVerifiedExcerptOnlyToCopyAndResetsReviewFlags() throws Exception {
         approved();
         var root = Files.createDirectory(directory.resolve("checkout"));

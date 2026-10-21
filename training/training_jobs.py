@@ -19,6 +19,8 @@ from uuid import UUID
 from dataset_contract import DatasetError, digest, read_jsonl, validate_case
 from shared_transfer import HASH, write_json_atomic
 from model_registry import RegistryError, resolve, QWEN_SOURCE, QWEN_BASE, QWEN_TRAINER
+from model_delivery import (PackageError, create_package, execution_summary, publish_package,
+                            verify_package, read_json as delivery_json)
 from transfer_cases import TransferError, content_hash, private_directory
 
 ROOT = Path(__file__).resolve().parent
@@ -48,6 +50,8 @@ ERRORS = {
     "JOB_INTERRUPTED": "학습 서비스가 중단되어 이전 작업을 실패로 확정했습니다. 자동으로 다시 실행하지 않습니다.",
     "TRAINING_INTERNAL_ERROR": "학습 작업을 처리하지 못했습니다. 서버 상태를 확인하세요.",
     "NOT_FOUND": "학습 작업을 찾을 수 없습니다.",
+    "DELIVERY_NOT_READY": "저장과 재로딩을 마친 학습 작업만 전달할 수 있습니다.",
+    "DELIVERY_FAILED": "학습 어댑터의 무결성 검사 또는 공유 폴더 게시를 완료하지 못했습니다.",
 }
 logger = logging.getLogger("doenaai.training.jobs")
 
@@ -269,6 +273,45 @@ class TrainingJobStore:
             records = [value for path in self.state_dir.glob("*.json") if (value := self._read(path))]
             records.sort(key=lambda item: (item["createdAt"], item["id"]), reverse=True)
             return {"jobs": [self._public(value) for value in records[:100]], "limit": 100, "truncated": len(records) > 100}
+
+    def delivery(self, identifier, secret):
+        """완료 작업의 고정 산출물만 검증해 공유 폴더에 게시하며 학습은 실행하지 않는다."""
+        identifier = job_id(identifier)
+        with self.lock:
+            record = self._read(self._path(identifier))
+            if record is None:
+                raise TrainingJobError("NOT_FOUND", http_status=404)
+            target = record.get("target")
+            if (record["status"] != "SUCCEEDED" or not isinstance(target, dict)
+                    or target.get("sourceModel") != QWEN_SOURCE or target.get("baseModel") != QWEN_BASE
+                    or target.get("trainer") != QWEN_TRAINER):
+                raise TrainingJobError("DELIVERY_NOT_READY")
+            version = "web-" + identifier
+            adapter = self.root / "adapters" / ("trial-web-" + identifier)
+            reports = self.work_root / identifier / "dataset"
+            output = self.root / "outputs/model-packages" / version
+            try:
+                config, identity, summary = execution_summary(adapter, reports)
+                if identity != {"modelId": target["baseModel"], "revision": target.get("revision")}:
+                    raise PackageError("학습 작업과 산출물의 기반 모델 버전이 다릅니다.")
+                if output.exists() or output.is_symlink():
+                    verified = verify_package(output, secret)
+                    manifest = delivery_json(output / "manifest.json")
+                    training = delivery_json(reports / "training-report.json")
+                    entries = {item["path"]: item for item in manifest["files"]}
+                    if (manifest["version"] != version or manifest["model"] != identity
+                            or entries["adapters.safetensors"]["sha256"] != training.get("adapterSha256")
+                            or delivery_json(output / "adapter_config.json") != config
+                            or delivery_json(output / "evaluation-summary.json") != summary):
+                        raise PackageError("기존 전달 패키지가 완료 작업과 다릅니다.")
+                else:
+                    verified = create_package(adapter, reports, output, version, secret)
+                publish_package(output, self.receiver.shared_dir, secret)
+                return {"status": "PUBLISHED", "jobId": identifier, "version": version,
+                        "manifestSha256": verified["manifestSha256"], "sourceModel": target["sourceModel"],
+                        "baseModel": identity["modelId"], "baseRevision": identity["revision"]}
+            except (OSError, ValueError, TypeError, KeyError):
+                raise TrainingJobError("DELIVERY_FAILED", http_status=409) from None
 
     def _set(self, record, status, progress, error=None, metrics=None):
         record.update(status=status, progress=progress, updatedAt=now())

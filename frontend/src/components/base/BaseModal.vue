@@ -9,6 +9,7 @@ const props = defineProps({
 })
 const emit = defineEmits(['update:modelValue'])
 const dialog = ref(null)
+const content = ref(null)
 const titleId = useId()
 let previousOverflow = null
 
@@ -28,6 +29,8 @@ watch(
             previousOverflow = document.body.style.overflow
             document.body.style.overflow = 'hidden'
             dialog.value.showModal()
+            dialog.value.scrollTop = 0
+            if (content.value) content.value.scrollTop = 0
         } else if (!open && dialog.value.open) {
             dialog.value.close()
             restoreScroll()
@@ -56,7 +59,7 @@ onBeforeUnmount(() => {
                 <h2 :id="titleId">{{ title }}</h2>
                 <button type="button" class="button secondary" :disabled="busy" autofocus @click="requestClose">닫기</button>
             </header>
-            <div class="base-modal-body" :aria-busy="busy">
+            <div ref="content" class="base-modal-body" :aria-busy="busy">
                 <slot />
             </div>
             <footer class="base-modal-footer">

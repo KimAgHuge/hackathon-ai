@@ -275,6 +275,8 @@ class FinalAnalysisUpdate(ApiModel):
 class ProjectAnalysisResponse(GeneralAnalysisResponse):
     """구조 분석과 요구사항 분석 모두에 적용되는 최종 API 응답 형식."""
     analysis_model: Optional[str] = Field(default=None, exclude_if=lambda value: value is None)
+    analysis_source_model: Optional[str] = Field(default=None, exclude_if=lambda value: value is None)
+    analysis_adapter_digest: Optional[str] = Field(default=None, exclude_if=lambda value: value is None)
     database_impact: DatabaseImpact
     # DB 분석 후 조정한 최종 결과와 구분해 학습 초안에 쓸 원래 단계 응답을 보존한다.
     general_analysis: Optional[RequirementGeneralAnalysisResponse] = None

@@ -18,6 +18,7 @@ const makeNode = (type, text = '') => ({
     style: { overflow: '' },
     parent: null,
     open: false,
+    scrollTop: 0,
     showModal() {
         this.open = true
     },
@@ -132,13 +133,15 @@ test('처리 중에는 Escape로 닫히지 않고 완료 후에는 닫을 수 �
     }
 })
 
-test('모달을 다시 열어도 편집 영역을 새로 만들지 않는다', async () => {
+test('모달을 다시 열면 스크롤은 처음으로 돌아가고 편집 영역은 유지된다', async () => {
     const modal = await mountModal()
     try {
         modal.open.value = true
         await modal.settle()
         const content = modal.dialog.children.find((node) => node.props.class === 'base-modal-body')
         const editor = content.children.find((node) => node.type === 'textarea')
+        content.scrollTop = 280
+        modal.dialog.scrollTop = 40
         modal.open.value = false
         await modal.settle()
         modal.open.value = true
@@ -148,6 +151,8 @@ test('모달을 다시 열어도 편집 영역을 새로 만들지 않는다', a
             editor
         )
         assert.equal(editor.props.value, '편집 중인 초안')
+        assert.equal(content.scrollTop, 0)
+        assert.equal(modal.dialog.scrollTop, 0)
     } finally {
         modal.cleanup()
     }

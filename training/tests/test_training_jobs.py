@@ -28,6 +28,7 @@ class TrainingJobApiTests(unittest.TestCase):
         self.jobs.submit.return_value = self.job
         self.jobs.get_job.return_value = self.job
         self.jobs.cancel.return_value = {**self.job, "status": "CANCELLED"}
+        self.jobs.delivery.return_value = {"status": "PUBLISHED", "jobId": self.job_id, "version": "web-" + self.job_id}
         self.jobs.list_jobs.return_value = {"jobs": [self.job], "limit": 100, "truncated": False}
 
     def request(self, method, path, value=None, *, authorized=True, jobs=True, raw_body=None):
@@ -52,7 +53,8 @@ class TrainingJobApiTests(unittest.TestCase):
         routes = [("GET", "/api/training/jobs", None),
                   ("GET", f"/api/training/jobs/{self.job_id}", None),
                   ("POST", "/api/training/jobs", {"jobId": self.job_id}),
-                  ("POST", f"/api/training/jobs/{self.job_id}/cancel", {})]
+                  ("POST", f"/api/training/jobs/{self.job_id}/cancel", {}),
+                  ("POST", f"/api/training/jobs/{self.job_id}/delivery", {})]
         for method, path, value in routes:
             with self.subTest(method=method, path=path):
                 self.assertEqual(self.request(method, path, value, authorized=False)[0], 401)
@@ -95,6 +97,15 @@ class TrainingJobApiTests(unittest.TestCase):
         self.assertEqual(self.request("POST", f"/api/training/jobs/{self.job_id}/cancel", value),
                          (200, self.jobs.cancel.return_value))
         self.jobs.cancel.assert_called_once_with(self.job_id, value)
+        self.jobs.submit.assert_not_called()
+
+    def test_delivery_requires_empty_body_and_uses_server_secret(self):
+        path = f"/api/training/jobs/{self.job_id}/delivery"
+        self.assertEqual(self.request("POST", path, {}), (200, self.jobs.delivery.return_value))
+        self.jobs.delivery.assert_called_once_with(self.job_id, self.secret)
+        self.jobs.reset_mock()
+        self.assertEqual(self.request("POST", path, {"path": "/private/file"})[0], 422)
+        self.jobs.delivery.assert_not_called()
         self.jobs.submit.assert_not_called()
 
     def test_capabilities_keep_existing_validation_contract(self):

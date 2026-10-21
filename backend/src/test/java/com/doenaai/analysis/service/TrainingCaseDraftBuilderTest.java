@@ -144,6 +144,36 @@ class TrainingCaseDraftBuilderTest {
         assertThat(correctedGeneral.containsKey("databaseReviewPlan")).isFalse();
     }
 
+    @Test void adapterAnalysisPreservesTheOriginalTrainingFamilyAndTheExactAdapterIdentity() {
+        String runtimeModel = "doenaai-mlx:web-" + UUID.randomUUID();
+        String adapterDigest = "c".repeat(64);
+        var original = legacyResult("NO_CHANGE");
+        var facts = new java.util.LinkedHashMap<>(original.facts());
+        facts.put("analysisModel", runtimeModel);
+        facts.put("analysisSourceModel", "qwen3.8:27b");
+        facts.put("analysisAdapterDigest", adapterDigest);
+        var result = new AnalysisResultResponse(jobId, projectId, original.summary(), original.riskLevel(), original.riskScore(),
+                original.result(), facts, now, "APPROVED", null, "근거를 검토했습니다.", reviewerId, now);
+
+        var response = TrainingCaseDraftBuilder.build(jobWithActivity(List.of()), result, reviewerId);
+        assertThat(response.caseDraft().get("sourceModel")).isEqualTo("qwen3.8:27b");
+        assertThat(response.caseDraft().get("sourceAdapter")).isEqualTo(Map.of("model", runtimeModel, "digest", adapterDigest));
+        assertThat(response.reviewRequired()).noneMatch(item -> item.startsWith("sourceModel:"));
+        assertThat(result.facts().get("analysisModel")).isEqualTo(runtimeModel);
+    }
+
+    @Test void ordinaryAnalysisKeepsItsSavedModelWithoutInventingAnAdapter() {
+        var original = legacyResult("NO_CHANGE");
+        var facts = new java.util.LinkedHashMap<>(original.facts());
+        facts.put("analysisModel", "qwen3.8:27b");
+        var result = new AnalysisResultResponse(jobId, projectId, original.summary(), original.riskLevel(), original.riskScore(),
+                original.result(), facts, now, "APPROVED", null, "근거를 검토했습니다.", reviewerId, now);
+
+        var draft = TrainingCaseDraftBuilder.build(jobWithActivity(List.of()), result, reviewerId).caseDraft();
+        assertThat(draft.get("sourceModel")).isEqualTo("qwen3.8:27b");
+        assertThat(draft).doesNotContainKey("sourceAdapter");
+    }
+
     private AnalysisJobResponse jobWithActivity(List<AnalysisActivityEvent> events) {
         return new AnalysisJobResponse(jobId, projectId, requirementVersionId, "COMPLETED", 100, 100, 100, 100,
                 now, null, now, now.plusMinutes(5), events);

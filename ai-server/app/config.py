@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     ai_final_reconciliation_enabled: bool = True
     ai_requirement_fast_path_enabled: bool = True
     ai_db_merge_max_chars: int = Field(default=24000, ge=1000, le=90000)
+    ai_mlx_model_dir: str = ""
+    ai_mlx_python: str = ""
+    ai_mlx_adapter_dir: str = ""
     ai_model_state_file: str = ""
     ai_model_admin_timeout_seconds: float = Field(default=10, gt=0, le=30)
     ai_model_probe_timeout_seconds: float = Field(default=60, gt=0, le=120)

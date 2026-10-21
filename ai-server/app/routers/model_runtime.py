@@ -32,6 +32,26 @@ class RollbackInput(RuntimeInput):
     expected_revision: StrictInt = Field(ge=0)
 
 
+class AdapterImportInput(RuntimeInput):
+    job_id: UUID
+    version: str = Field(pattern=r"^web-[0-9a-f-]{36}$")
+    manifest_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    source_model: str = Field(min_length=1, max_length=200)
+    base_model: str = Field(min_length=1, max_length=200)
+    base_revision: str = Field(pattern=r"^[0-9a-f]{40}$")
+
+
+@router.post("/adapters/import")
+async def import_adapter(body: AdapterImportInput, response: Response, service: ModelRuntimeService = Depends(get_model_runtime_service)):
+    """서명된 공유 패키지를 로컬에 준비하며 추론과 모델 전환은 실행하지 않는다."""
+    from app.services.mlx_adapter_runtime import MlxAdapterError
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return await service.adapters.prepare(body.model_dump(mode="json", by_alias=True))
+    except MlxAdapterError as error:
+        raise HTTPException(error.status, detail={"code": error.code, "message": error.message}) from None
+
+
 def unavailable(error):
     return HTTPException(status_code=error.status, detail={"code": error.code, "message": error.message})
 

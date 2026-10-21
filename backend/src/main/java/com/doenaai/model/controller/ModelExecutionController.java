@@ -45,7 +45,7 @@ public class ModelExecutionController {
 
     @GetMapping("/training")
     @PreAuthorize("@permissionChecker.has(authentication, 'MODEL_READ')")
-    public ResponseEntity<Map<String, Object>> training() { return response(execution.training()); }
+    public ResponseEntity<Map<String, Object>> training(@RequestParam(required = false) String model) { return response(execution.training(model)); }
 
     @PostMapping("/training")
     @PreAuthorize("@permissionChecker.has(authentication, 'MODEL_TRAIN')")

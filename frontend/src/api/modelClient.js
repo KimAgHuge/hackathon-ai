@@ -27,14 +27,17 @@ export const createModelApi = (client) => ({
     async rollbackInstalledModel(body) {
         return (await client.post('/models/rollback', body, { timeout: 15000 })).data
     },
-    async getModelTraining() {
-        return (await client.get('/models/training')).data
+    async getModelTraining(model) {
+        return (await client.get('/models/training', model ? { params: { model } } : undefined)).data
     },
     async startModelTraining(body) {
         return (await client.post('/models/training', body, { timeout: 15000 })).data
     },
     async cancelModelTraining(id, body) {
         return (await client.post(`/models/training/${encodeURIComponent(id)}/cancel`, body, { timeout: 15000 })).data
+    },
+    async prepareModelAdapter(id) {
+        return (await client.post(`/models/adapters/${encodeURIComponent(id)}/prepare`, {}, { timeout: 30000 })).data
     },
     async getModelOperations() {
         return (await client.get('/models/operations')).data

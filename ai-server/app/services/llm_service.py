@@ -155,6 +155,9 @@ class LlmService:
             host=str(settings.ollama_url).rstrip("/"),
             timeout=settings.ai_request_timeout_seconds,
         )
+        if client is None and runtime is not None and hasattr(runtime, "adapters"):
+            from app.services.hybrid_model_client import HybridModelClient
+            self._client = HybridModelClient(self._client, runtime.adapters)
 
     @property
     def _model(self):
@@ -176,6 +179,8 @@ class LlmService:
         configured_model = selection.model if selection is not None else self._settings.ai_model
         try:
             response = await self._client.list()
+        except ModelRuntimeError as error:
+            raise ModelUnavailableError(error.message) from None
         except httpx.TimeoutException as exc:
             raise ModelTimeoutError("Ollama model health check timed out.") from exc
         except (httpx.RequestError, ConnectionError, OSError) as exc:
@@ -231,7 +236,11 @@ class LlmService:
                     raise ModelUnavailableError("선택 모델의 설치 파일을 확인하지 못했습니다. 관리자에게 모델 상태를 확인해 주세요.") from None
             result = await self._analyze(request, progress)
             # 생성 모델은 모델 답변이나 현재 화면 선택값이 아닌 요청에 고정한 값으로 기록한다.
-            return result.model_copy(update={"analysis_model": self._model})
+            metadata = {"analysis_model": self._model}
+            if self._runtime is not None and hasattr(self._runtime, "adapters") and self._runtime.adapters.owns(self._model):
+                metadata["analysis_source_model"] = self._runtime.adapters.source_model(self._model)
+                metadata["analysis_adapter_digest"] = selection.digest
+            return result.model_copy(update=metadata)
         finally:
             self._request_model.reset(token)
 
@@ -668,6 +677,10 @@ class LlmService:
                     keep_alive=self._settings.ai_keep_alive,
                     **generation,
                 )
+            except ModelRuntimeError as error:
+                if error.status == 504:
+                    raise ModelTimeoutError(error.message) from None
+                raise ModelUnavailableError(error.message) from None
             except httpx.TimeoutException as exc:
                 logger.warning(
                     "model_attempt_timeout model=%s response_type=%s attempt=%s duration_ms=%s input_chars=%s",

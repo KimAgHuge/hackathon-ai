@@ -215,6 +215,10 @@ public class AnalysisWorker {
             var finalResult = new LinkedHashMap<>(result);
             var analysisModel = finalResult.remove("analysisModel");
             if (analysisModel instanceof String name && name.matches("[A-Za-z0-9][A-Za-z0-9._:/@+\\-]{0,199}")) facts.put("analysisModel", name);
+            var sourceModel = finalResult.remove("analysisSourceModel");
+            if (sourceModel instanceof String name && name.matches("[A-Za-z0-9][A-Za-z0-9._:/@+\\-]{0,199}")) facts.put("analysisSourceModel", name);
+            var adapterDigest = finalResult.remove("analysisAdapterDigest");
+            if (adapterDigest instanceof String hash && hash.matches("[0-9a-f]{64}")) facts.put("analysisAdapterDigest", hash);
             var generalAnalysis = finalResult.remove("generalAnalysis");
             if (generalAnalysis instanceof Map<?, ?>) facts.put("generalAnalysis", generalAnalysis);
             results.complete(job.jobId(), finalResult, facts);

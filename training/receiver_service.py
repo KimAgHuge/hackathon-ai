@@ -30,6 +30,7 @@ CAPABILITIES_PATH = "/api/training/capabilities"
 JOBS_PATH = "/api/training/jobs"
 JOB_PATH = re.compile(r"/api/training/jobs/([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})\Z")
 CANCEL_PATH = re.compile(r"/api/training/jobs/([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})/cancel\Z")
+DELIVERY_PATH = re.compile(r"/api/training/jobs/([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})/delivery\Z")
 logger = logging.getLogger("doenaai.training.receiver")
 
 
@@ -192,7 +193,8 @@ def make_handler(store, secret, jobs=None):
 
         def do_POST(self):
             cancel = CANCEL_PATH.fullmatch(self.path)
-            job_request = self.path == JOBS_PATH or cancel is not None
+            delivery = DELIVERY_PATH.fullmatch(self.path)
+            job_request = self.path == JOBS_PATH or cancel is not None or delivery is not None
             if self.path != "/api/training/transfers" and not job_request:
                 self._send(404, {"code": "NOT_FOUND"})
                 return
@@ -218,8 +220,13 @@ def make_handler(store, secret, jobs=None):
                     self._send(422, {"code": "INVALID_JOB_REQUEST", "message": "학습 요청의 JSON 형식을 확인하세요."})
                     return
                 try:
-                    value = jobs.cancel(cancel.group(1), value) if cancel else jobs.submit(value)
-                    self._send(200 if cancel else 202, value)
+                    if delivery:
+                        if value != {}:
+                            raise TrainingJobError("INVALID_JOB_REQUEST", http_status=422)
+                        value = jobs.delivery(delivery.group(1), secret)
+                    else:
+                        value = jobs.cancel(cancel.group(1), value) if cancel else jobs.submit(value)
+                    self._send(200 if cancel or delivery else 202, value)
                 except Exception as error:
                     self._job_error(error)
                 return

@@ -9,8 +9,7 @@ import ViewHeading from '@/components/common/ViewHeading.vue'
 import ModelStateBadge from '@/components/models/ModelStateBadge.vue'
 import ModelVersionDetailModal from '@/components/models/ModelVersionDetailModal.vue'
 import ModelVersionRegisterModal from '@/components/models/ModelVersionRegisterModal.vue'
-import ModelRuntimeControl from '@/components/models/ModelRuntimeControl.vue'
-import ModelTrainingPanel from '@/components/models/ModelTrainingPanel.vue'
+import ModelWorkModal from '@/components/models/ModelWorkModal.vue'
 import ModelOperationsPanel from '@/components/models/ModelOperationsPanel.vue'
 import { useAuthStore } from '@/stores/authStore'
 
@@ -25,7 +24,7 @@ const notice = ref('')
 const activeTab = ref('versions')
 const search = ref('')
 const statusFilter = ref('')
-const runtimeOpen = ref(false)
+const modelWorkOpen = ref(false)
 const registerOpen = ref(false)
 const registerBusy = ref(false)
 const registerError = ref('')
@@ -53,7 +52,6 @@ const versions = computed(() => asList(registry.value?.versions))
 const deployments = computed(() => asList(registry.value?.deployments))
 const tabs = computed(() => [
     { key: 'versions', label: '모델 버전', count: versions.value.length },
-    { key: 'trainingJobs', label: '학습 작업', count: null },
     { key: 'deployments', label: '배포 이력', count: deployments.value.length },
     { key: 'operations', label: '실행 작업 이력', count: null },
 ])
@@ -92,7 +90,7 @@ const filteredRows = computed(() => {
     })
 })
 const executionReason = computed(
-    () => registry.value?.capabilities?.reason || '등록 파일의 수신·변환·직접 배포는 지원하지 않습니다. 설치 모델 전환은 별도 영역에서 진행합니다.'
+    () => registry.value?.capabilities?.reason || '모델 버전 등록은 관리 정보를 저장합니다. 분석 모델 변경, 학습과 학습 결과 적용은 모델 작업에서 진행합니다.'
 )
 const truncated = computed(() => registry.value?.truncated?.[activeTab.value] === true)
 const versionColumns = [
@@ -307,26 +305,28 @@ onBeforeUnmount(() => {
                     <p class="mt-2 text-xs leading-6 text-blue-200">설치·응답 확인이며 메모리 적재와 실제 추론 완료를 보증하지 않습니다.</p>
                 </div>
                 <div class="border-t border-white/15 bg-white/5 p-5 sm:p-6 lg:border-l lg:border-t-0">
-                    <p class="text-xs font-semibold text-blue-200">모델 실행 설정</p>
-                    <h3 class="mt-3 text-lg font-extrabold">분석에 사용할 모델을 관리하세요</h3>
-                    <p class="mt-2 text-sm leading-6 text-blue-100">설치된 모델을 확인하고 응답 검증을 거쳐 변경할 수 있습니다.</p>
+                    <p class="text-xs font-semibold text-blue-200">모델 작업</p>
+                    <h3 class="mt-3 text-lg font-extrabold">모델 선택부터 학습 결과 적용까지</h3>
+                    <p class="mt-2 text-sm leading-6 text-blue-100">같은 모델을 기준으로 분석 설정, 승인 자료 학습과 학습 결과 적용을 진행합니다.</p>
                     <button
                         type="button"
                         class="mt-5 inline-flex min-h-11 items-center justify-center gap-3 rounded-xl bg-white px-5 py-3 text-sm font-bold text-blue-900 shadow-sm transition hover:bg-blue-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white"
-                        @click="runtimeOpen = true"
+                        @click="modelWorkOpen = true"
                     >
-                        사용 모델 변경
+                        모델 작업
                     </button>
-                    <p class="mt-3 text-xs leading-6 text-blue-200">변경한 모델은 새 분석부터 적용됩니다.</p>
+                    <p class="mt-3 text-xs leading-6 text-blue-200">실행할 작업과 적용 범위를 확인한 뒤 시작합니다.</p>
                 </div>
             </div>
         </section>
-        <ModelRuntimeControl
-            v-model="runtimeOpen"
+        <ModelWorkModal
+            v-model="modelWorkOpen"
+            :can-train="canTrain"
             :can-deploy="canDeploy"
             :can-rollback="canRollback"
             :refresh-key="operationRefreshKey"
             @changed="refreshAfterOperation"
+            @show-operations="selectTab('operations')"
         />
         <div class="mt-5 grid gap-3 sm:grid-cols-3">
             <section
@@ -358,13 +358,13 @@ onBeforeUnmount(() => {
             <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
                 <div>
                     <h2 class="text-base font-extrabold text-slate-900 dark:text-slate-100">모델 관리 기록</h2>
-                    <p class="mt-1 text-xs leading-6 text-slate-500 dark:text-slate-400">모델 버전과 학습 작업, 변경 이력을 확인합니다.</p>
+                    <p class="mt-1 text-xs leading-6 text-slate-500 dark:text-slate-400">모델 버전과 배포 기록, 학습을 포함한 실행 작업 이력을 확인합니다.</p>
                 </div>
                 <BaseButton v-if="canRegister && activeTab === 'versions'" :disabled="!registryAvailable || loading || registerBusy" @click="openRegister"
                     >모델 버전 등록</BaseButton
                 >
             </div>
-            <div class="flex flex-wrap gap-2 border-b border-slate-200 pb-4 dark:border-slate-700" aria-label="모델 관리 목록">
+            <div class="mb-6 flex flex-wrap gap-2 border-b border-slate-200 pb-4 dark:border-slate-700" aria-label="모델 관리 목록">
                 <button
                     v-for="tab in tabs"
                     :key="tab.key"
@@ -384,7 +384,7 @@ onBeforeUnmount(() => {
                     }}</span>
                 </button>
             </div>
-            <div v-if="['versions', 'deployments'].includes(activeTab)" class="my-4 grid items-end gap-3 sm:grid-cols-[minmax(0,1fr)_180px_auto]">
+            <div v-if="['versions', 'deployments'].includes(activeTab)" class="mb-4 grid items-end gap-3 sm:grid-cols-[minmax(0,1fr)_180px_auto]">
                 <BaseInput v-model="search" label="목록 검색" type="search" placeholder="모델 이름, 버전, 식별자, 서버 검색" :disabled="!registry" />
                 <BaseSelect v-model="statusFilter" label="상태" :options="statusOptions" :disabled="!registry" />
                 <BaseButton variant="secondary" :disabled="!search && !statusFilter" @click="resetFilters">초기화</BaseButton>
@@ -398,17 +398,15 @@ onBeforeUnmount(() => {
                     최근 {{ registry.limit || 100 }}개만 불러왔습니다. 검색과 필터는 불러온 목록 안에서 적용됩니다.
                 </p>
             </div>
-            <ModelTrainingPanel
-                v-show="activeTab === 'trainingJobs'"
-                :visible="activeTab === 'trainingJobs'"
+            <ModelOperationsPanel
+                v-show="activeTab === 'operations'"
+                :visible="activeTab === 'operations'"
                 :can-train="canTrain"
                 :refresh-key="operationRefreshKey"
                 @changed="refreshAfterOperation"
             />
-            <ModelOperationsPanel v-if="activeTab === 'operations'" :refresh-key="operationRefreshKey" />
-            <template v-else-if="activeTab === 'trainingJobs'"></template>
             <div
-                v-else-if="!registry && registryError"
+                v-if="activeTab !== 'operations' && !registry && registryError"
                 class="rounded-xl border border-dashed border-slate-300 p-8 text-center text-sm leading-6 text-slate-500 dark:border-slate-700 dark:text-slate-400"
             >
                 관리 기록을 불러오지 못해 목록을 표시할 수 없습니다. 위의 다시 불러오기로 연결 상태를 확인해 주세요.
@@ -481,7 +479,7 @@ onBeforeUnmount(() => {
                     </article>
                 </div>
             </template>
-            <template v-else>
+            <template v-else-if="activeTab === 'deployments'">
                 <div
                     class="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200"
                 >
@@ -490,9 +488,7 @@ onBeforeUnmount(() => {
                     <div class="mt-3 flex flex-wrap gap-2">
                         <BaseButton disabled size="small">등록 파일 직접 배포 불가</BaseButton>
                     </div>
-                    <p class="mt-3 text-xs">
-                        설치된 모델의 전환과 복구는 상단의 사용 모델 변경 버튼에서 진행합니다. 등록한 LoRA 파일을 바로 적용하는 기능은 아닙니다.
-                    </p>
+                    <p class="mt-3 text-xs">모델 전환과 복구, 학습 결과 적용은 상단의 모델 작업에서 진행합니다.</p>
                 </div>
                 <BaseTable
                     :columns="deploymentColumns"

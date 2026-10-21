@@ -34,6 +34,7 @@ public class TrainingEvidenceController {
         var expected = results.trainingDraft(jobId, UUID.fromString(jwt.getSubject())).caseDraft();
         var value = request.caseDraft();
         if (!Objects.equals(expected.get("sourceModel"), value.get("sourceModel"))
+                || !Objects.equals(expected.get("sourceAdapter"), value.get("sourceAdapter"))
                 || !Objects.equals(expected.get("caseId"), value.get("caseId"))
                 || !(value.get("request") instanceof Map<?, ?> input)
                 || !(value.get("snapshot") instanceof Map<?, ?> snapshot)

@@ -39,11 +39,20 @@ public class ModelOperationRepository {
         return jdbc.query("select * from public.model_management_operations order by created_at desc, id desc limit ?", this::row, limit);
     }
 
-    public List<Map<String, Object>> training(String target, int limit) {
+    public List<Map<String, Object>> training(String target, String sourceModel, int limit) {
         return jdbc.query("""
                 select * from public.model_management_operations where target_key = ? and action = 'TRAINING_START'
+                and coalesce(result->'target'->>'sourceModel', request->>'model') = ?
                 order by created_at desc, id desc limit ?
-                """, this::row, target, limit);
+                """, this::row, target, sourceModel, limit);
+    }
+
+    public List<Map<String, Object>> activeTraining(String target) {
+        return jdbc.query("""
+                select * from public.model_management_operations where target_key = ? and action = 'TRAINING_START'
+                and status in ('PENDING', 'PREPARING', 'TRAINING', 'VERIFYING', 'UNKNOWN')
+                order by created_at desc, id desc
+                """, this::row, target);
     }
 
     public List<Map<String, Object>> events(UUID id) {

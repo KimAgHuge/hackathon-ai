@@ -105,3 +105,21 @@ test('변경 응답이 끊겨도 어댑터가 자동으로 새 요청을 만들�
     await assert.rejects(api.activateInstalledModel({ operationId: 'preserved-id' }), (error) => error === failure)
     assert.equal(count, 1)
 })
+
+test('선택 모델을 학습 조회 조건으로 보내고 해당 완료 작업에 어댑터 준비를 요청한다', async () => {
+    const calls = []
+    const api = createModelApi({
+        async get(path, options) {
+            calls.push({ path, options })
+            return { data: {} }
+        },
+        async post(path, body, options) {
+            calls.push({ path, body, options })
+            return { data: { status: 'WAITING' } }
+        },
+    })
+    await api.getModelTraining('other:model')
+    assert.deepEqual(calls[0], { path: '/models/training', options: { params: { model: 'other:model' } } })
+    await api.prepareModelAdapter('job/id?x=1')
+    assert.deepEqual(calls[1], { path: '/models/adapters/job%2Fid%3Fx%3D1/prepare', body: {}, options: { timeout: 30000 } })
+})

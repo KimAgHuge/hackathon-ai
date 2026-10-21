@@ -31,6 +31,7 @@ public class ModelExecutionService {
                 value.put("size", item.get("size") instanceof Number number ? Math.max(0, number.longValue()) : null);
                 value.put("selectable", Boolean.TRUE.equals(item.get("selectable")));
                 value.put("reason", Boolean.TRUE.equals(item.get("selectable")) ? "시험 응답 확인 후 선택할 수 있습니다." : "이 분석 경로에서 사용할 수 없는 모델입니다.");
+                adapterMetadata(item, value);
                 value.put("capabilities", item.get("capabilities") instanceof List<?> list ? list.stream().filter(v -> v instanceof String text && text.matches("[a-z_]{1,40}")).limit(20).toList() : List.of());
                 models.add(value);
             }
@@ -73,9 +74,9 @@ public class ModelExecutionService {
             default -> throw invalid();
         }
         try {
-            // 추론 선택이 바뀐 뒤 이전 화면에서 보낸 학습 요청은 실행하지 않는다.
-            if (action.equals("TRAINING_START") && !Objects.equals(input.model(), currentInferenceModel()))
-                return publicValue(repository.record(id, created ? "FAILED" : "UNKNOWN", "TRAINING_MODEL_CHANGED", Map.of()));
+            // 분석에 사용하는 모델과 별개로 화면에서 선택한 설치 모델을 학습한다.
+            if (action.equals("TRAINING_START") && !installedSelection(input.model()))
+                return publicValue(repository.record(id, created ? "FAILED" : "UNKNOWN", "TRAINING_MODEL_NOT_INSTALLED", Map.of()));
             var remote = training ? client.training("POST", path, body) : client.inference("POST", path, body, action.equals("MODEL_PROBE"));
             var state = snapshot(remote);
             String status = state.get("status") instanceof String value ? value : "UNKNOWN";
@@ -101,23 +102,28 @@ public class ModelExecutionService {
         }
     }
 
-    public Map<String, Object> training() {
+    public Map<String, Object> training() { return training(null); }
+
+    public Map<String, Object> training(String selectedModel) {
+        if (selectedModel != null && !validModel(selectedModel)) throw invalid();
         String target = client.targetKey(true);
         boolean executable = false;
+        String reasonCode = null;
         String reason = "AI 학습 서버 주소·전송 키·실행 설정과 서버 업데이트를 확인해 주세요.";
         Map<String, Object> dataset = Map.of();
-        String requestedModel = "";
+        String requestedModel = selectedModel == null ? "" : selectedModel;
         Map<String, Map<String, Object>> remoteJobs = new HashMap<>();
         try {
-            requestedModel = currentInferenceModel();
+            requestedModel = selectedModel == null ? currentInferenceModel() : selectedTrainingModel(selectedModel);
             var capabilities = client.training("GET", "/api/training/capabilities?model="
                     + java.net.URLEncoder.encode(requestedModel, java.nio.charset.StandardCharsets.UTF_8), Map.of());
+            reasonCode = code(capabilities.get("trainingReasonCode"));
             dataset = safeDataset(capabilities.get("dataset"));
             if (dataset.get("target") instanceof Map<?, ?> selected && !requestedModel.equals(selected.get("sourceModel"))) dataset = Map.of();
             executable = Boolean.TRUE.equals(capabilities.get("trainingExecution")) && dataset.containsKey("target");
             reason = executable ? "검증된 수신 자료로 짧은 시험 학습을 시작할 수 있습니다. 운영 모델은 자동 변경되지 않습니다."
                     : "MODEL_NOT_REGISTERED".equals(capabilities.get("trainingReasonCode"))
-                    ? "현재 사용 모델에 대응하는 로컬 MLX 모델이 학습 서버에 등록되지 않았습니다. 다른 모델로 대신 학습하지 않습니다."
+                    ? "선택한 모델에 대응하는 로컬 MLX 모델이 학습 서버에 등록되지 않았습니다. 다른 모델로 대신 학습하지 않습니다."
                     : "TRAINER_UNSUPPORTED".equals(capabilities.get("trainingReasonCode"))
                     ? "대응하는 MLX 모델은 등록됐지만 이 모델의 학습기는 아직 지원되지 않습니다."
                     : "AI 학습 서버의 모델 경로·호환성·실행 설정을 확인해 주세요.";
@@ -129,29 +135,81 @@ public class ModelExecutionService {
                     remoteJobs.put(key, item);
                 }
             }
-        } catch (ModelExecutionClient.RemoteFailure ignored) {
+        } catch (ModelExecutionClient.RemoteFailure failure) {
+            reasonCode = failure.code;
             executable = false;
             reason = "AI 학습 서버의 설정 또는 작업 상태를 확인하지 못했습니다. 저장 이력은 보존하며 새 실행은 잠시 막습니다.";
         }
-        var rows = repository.training(target, 101);
+        var rows = repository.training(target, requestedModel, 101);
+        var combined = new LinkedHashMap<String, Map<String, Object>>();
+        for (var row : rows.stream().limit(100).toList()) combined.put((String) row.get("id"), row);
+        // 오래된 진행 작업도 선택 모델이나 최근 완료 목록의 개수 때문에 사라지지 않게 한다.
+        for (var row : repository.activeTraining(target)) combined.putIfAbsent((String) row.get("id"), row);
         var jobs = new ArrayList<Map<String, Object>>();
-        for (var row : rows.stream().limit(100).toList()) {
+        var activeJobs = new LinkedHashMap<String, Map<String, Object>>();
+        for (var row : combined.values()) {
             var remote = remoteJobs.get(row.get("id"));
             if (remote != null && ACTIVE.contains(row.get("status"))) row = recordRemote(row, remote);
             var job = publicValue(row);
-            if (dataset.get("target") instanceof Map<?, ?> selected && job.get("target") instanceof Map<?, ?> recorded
-                    && Objects.equals(selected.get("sourceModel"), recorded.get("sourceModel")))
-                jobs.add(job);
+            boolean active = ACTIVE.contains(job.get("status"));
+            if (active) activeJobs.put((String) row.get("id"), job);
+            if (active || requestedModel.equals(sourceModel(row))) jobs.add(job);
         }
-        return Map.of("capabilities", Map.of("trainingExecution", executable, "reason", reason), "dataset", dataset, "requestedModel", requestedModel, "jobs", jobs,
-                "limit", 100, "truncated", rows.size() > 100);
+        for (var entry : remoteJobs.entrySet()) if (entry.getValue().get("status") instanceof String state && ACTIVE.contains(state)) {
+            var job = snapshot(entry.getValue());
+            if (validUuid(entry.getKey())) {
+                job.put("id", entry.getKey());
+                activeJobs.putIfAbsent(entry.getKey(), job);
+            }
+        }
+        var result = new LinkedHashMap<String, Object>();
+        var capabilities = new LinkedHashMap<String, Object>();
+        capabilities.put("trainingExecution", executable); capabilities.put("reason", reason);
+        if (reasonCode != null) capabilities.put("reasonCode", reasonCode);
+        result.put("capabilities", capabilities);
+        result.put("dataset", dataset); result.put("requestedModel", requestedModel); result.put("selectedModel", selectedModel == null ? requestedModel : selectedModel); result.put("jobs", jobs);
+        result.put("busy", !activeJobs.isEmpty()); result.put("activeJobs", new ArrayList<>(activeJobs.values()));
+        result.put("limit", 100); result.put("truncated", rows.size() > 100);
+        return result;
     }
 
-    /** 화면의 임의 모델 대신 추론 서버가 현재 선택한 모델을 학습 조회 기준으로 사용한다. */
+    private static String sourceModel(Map<String, Object> row) {
+        if (row.get("result") instanceof Map<?, ?> result && result.get("target") instanceof Map<?, ?> target
+                && target.get("sourceModel") instanceof String model && validModel(model)) return model;
+        if (row.get("request") instanceof Map<?, ?> request && request.get("model") instanceof String model && validModel(model)) return model;
+        return "";
+    }
+
+    /** 모델명은 설치 목록에 있는 식별자와 정확히 일치해야 한다. */
+    private boolean installedSelection(String model) {
+        var status = client.inference("GET", "/api/models/installed", Map.of(), false);
+        if (status == null || !(status.get("models") instanceof List<?> rows))
+            throw new ModelExecutionClient.RemoteFailure("MODEL_SELECTION_UNAVAILABLE", false, 503);
+        return rows.stream().anyMatch(row -> row instanceof Map<?, ?> item && (model.equals(item.get("name"))
+                || ("mlx".equals(item.get("provider")) && item.get("adapterId") instanceof String adapter && validUuid(adapter)
+                && model.equals(item.get("sourceModel")))));
+    }
+
+    private String selectedTrainingModel(String selectedModel) {
+        var installed = client.inference("GET", "/api/models/installed", Map.of(), false);
+        if (installed == null || !(installed.get("models") instanceof List<?> rows))
+            throw new ModelExecutionClient.RemoteFailure("MODEL_SELECTION_UNAVAILABLE", false, 503);
+        for (var row : rows) if (row instanceof Map<?, ?> item) {
+            boolean adapter = "mlx".equals(item.get("provider")) && item.get("adapterId") instanceof String id && validUuid(id)
+                    && item.get("sourceModel") instanceof String source && validModel(source);
+            if (selectedModel.equals(item.get("name"))) return adapter ? (String) item.get("sourceModel") : selectedModel;
+            if (adapter && selectedModel.equals(item.get("sourceModel"))) return selectedModel;
+        }
+        throw new ModelCatalogException(HttpStatus.BAD_REQUEST, "선택한 학습 모델이 분석 서버의 설치 목록에 없습니다. 모델 목록을 새로고침해 주세요.");
+    }
+
+    /** 별도 선택이 없을 때는 추론 서버의 현재 모델을 학습 조회 기준으로 사용한다. */
     private String currentInferenceModel() {
         var status = client.inference("GET", "/api/models/installed", Map.of(), false);
         if (status == null || !(status.get("model") instanceof String model) || !validModel(model))
             throw new ModelExecutionClient.RemoteFailure("MODEL_SELECTION_UNAVAILABLE", false, 503);
+        if ("mlx".equals(status.get("provider")) && status.get("adapterId") instanceof String adapter && validUuid(adapter)
+                && status.get("sourceModel") instanceof String source && validModel(source)) return source;
         return model;
     }
 
@@ -264,6 +322,7 @@ public class ModelExecutionService {
     /** 정해진 안전 필드만 보존한다. 원격 원문, 경로, 토큰과 임의 메모는 보존하지 않는다. */
     private static Map<String, Object> snapshot(Map<String, Object> remote) {
         var value = new LinkedHashMap<String, Object>();
+        adapterMetadata(remote, value);
         var target = safeTrainingTarget(remote.get("target"));
         if (!target.isEmpty()) value.put("target", target);
         if (remote.get("status") instanceof String state && STATES.contains(state)) value.put("status", state);
@@ -288,6 +347,7 @@ public class ModelExecutionService {
         value.remove("request"); value.remove("targetKey");
         if (value.remove("result") instanceof Map<?, ?> result) result.forEach((key, item) -> { if (key instanceof String text) value.put(text, item); });
         value.put("status", row.get("status"));
+        if ("TRAINING_START".equals(row.get("action")) && !sourceModel(row).isBlank()) value.put("sourceModel", sourceModel(row));
         if (row.get("request") instanceof Map<?, ?> request && request.get("iterations") instanceof Number iterations) value.put("iterations", iterations);
         value.put("message", message((String) row.get("status"), (String) row.get("errorCode")));
         return value;
@@ -298,9 +358,9 @@ public class ModelExecutionService {
     }
 
     private static String message(String status, String code) {
-        if ("TRAINING_MODEL_CHANGED".equals(code)) return "UNKNOWN".equals(status)
-                ? "현재 사용 모델이 바뀌어 기존 요청을 재전송하지 않았습니다. 실제 실행 여부는 실행 이력에서 계속 확인해 주세요."
-                : "현재 사용 모델이 바뀌어 학습을 시작하지 않았습니다. 학습 작업을 새로고침한 뒤 대상 모델을 확인해 주세요.";
+        if ("TRAINING_MODEL_NOT_INSTALLED".equals(code)) return "UNKNOWN".equals(status)
+                ? "선택 모델이 설치 목록에서 사라져 재전송하지 않았습니다. 기존 작업의 상태를 실행 이력에서 확인해 주세요."
+                : "선택한 모델이 분석 서버에 설치돼 있지 않아 학습을 시작하지 않았습니다. 모델 목록을 새로고침해 주세요.";
         if ("UNCONFIGURED".equals(code)) return "대상 서버 주소와 인증 설정을 확인해 주세요. 원격 실행을 시작하지 않았습니다.";
         return switch (status) {
             case "PASSED" -> "짧은 JSON 응답 시험을 통과했습니다. 실제 업무 정확도나 긴 입력 처리를 보장하지는 않습니다.";
@@ -315,6 +375,18 @@ public class ModelExecutionService {
             case "VERIFYING" -> "저장한 어댑터를 별도 프로세스에서 다시 불러와 검사하고 있습니다.";
             default -> "요청을 기록했습니다. 대상 서버의 처리 결과를 확인하고 있습니다.";
         };
+    }
+
+    private static void adapterMetadata(Map<?, ?> supplied, Map<String, Object> result) {
+        if (!"mlx".equals(supplied.get("provider")) || !(supplied.get("adapterId") instanceof String adapter) || !validUuid(adapter)
+                || !(supplied.get("sourceModel") instanceof String source) || !validModel(source)) return;
+        result.put("provider", "mlx"); result.put("adapterId", adapter); result.put("sourceModel", source);
+        result.put("qualityEvaluated", false);
+    }
+
+    private static boolean validUuid(String value) {
+        try { return UUID.fromString(value).toString().equals(value); }
+        catch (IllegalArgumentException ignored) { return false; }
     }
 
     private static boolean validModel(String value) { return value != null && value.matches("[A-Za-z0-9][A-Za-z0-9._:/@+\\-]{0,199}") && !value.contains("://") && !value.contains(".."); }

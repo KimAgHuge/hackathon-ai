@@ -15,6 +15,7 @@ export const {
     getModelTraining,
     startModelTraining,
     cancelModelTraining,
+    prepareModelAdapter,
     getModelOperations,
     getModelOperation,
 } = createModelApi(httpClient)

@@ -77,6 +77,7 @@ const apiModule = moduleUrl(
         'getModelTraining',
         'startModelTraining',
         'cancelModelTraining',
+        'prepareModelAdapter',
         'getModelOperations',
         'getModelOperation',
     ]
@@ -119,7 +120,12 @@ const makeNode = (type, text = '') => ({ type, text, children: [], props: {}, pa
 const mountScreen = async (api, permissions = null) => {
     globalThis.document = { hidden: false, addEventListener() {}, removeEventListener() {} }
     globalThis[dependenciesKey].api = {
-        getInstalledModels: async () => ({ model: null, currentRevision: 0, models: [], canRollback: false }),
+        getInstalledModels: async () => ({
+            model: 'qwen3.8:27b',
+            currentRevision: 0,
+            models: [{ name: 'qwen3.8:27b', digest: 'b'.repeat(64), selectable: true }],
+            canRollback: false,
+        }),
         getModelTraining: async () => ({ capabilities: { trainingExecution: false }, jobs: [] }),
         getModelOperations: async () => ({ operations: [] }),
         ...api,
@@ -161,7 +167,7 @@ const mountScreen = async (api, permissions = null) => {
     const all = (node = root) => [node, ...node.children.flatMap((child) => all(child))]
     const text = (node = root) => (node.type === 'comment' ? '' : `${node.text} ${node.children.map((child) => text(child)).join(' ')}`)
     const button = (label) => {
-        const element = all().find((node) => node.type === 'button' && text(node).trim() === label)
+        const element = all().find((node) => node.type === 'button' && text(node).trim().replace(/\s+/g, ' ') === label)
         assert.ok(element, `버튼을 찾을 수 없습니다: ${label}`)
         return element
     }
@@ -288,9 +294,9 @@ const installed = {
     models: [{ name: 'candidate:model', digest: 'a'.repeat(64), selectable: true, capabilities: ['completion'] }],
 }
 const selectCandidate = async (screen) => {
-    screen.button('사용 모델 변경').props.onClick()
+    screen.button('모델 작업').props.onClick()
     await screen.settle()
-    const input = screen.all().find((node) => node.props['data-label'] === '전환할 설치 모델')
+    const input = screen.all().find((node) => node.props['data-label'] === '작업할 설치 모델')
     input.props.onChange({ target: { value: 'candidate:model' } })
     await screen.settle()
 }
@@ -319,7 +325,7 @@ test('조회 권한만 있는 사용자는 설치 목록을 보되 검증·전�
     try {
         await selectCandidate(screen)
         assert.equal(screen.button('JSON 응답 검증').props.disabled, true)
-        assert.equal(screen.button('모델 전환').props.disabled, true)
+        assert.equal(screen.button('분석 모델로 사용').props.disabled, true)
         assert.equal(screen.button('이전 모델로 복구').props.disabled, true)
         screen.button('JSON 응답 검증').props.onClick()
         await screen.settle()
@@ -349,13 +355,18 @@ test('JSON 검증 중 중복 클릭을 막고 선택이 바뀌면 전환용 증�
         verify.props.onClick()
         verify.props.onClick()
         assert.equal(calls, 1)
+        await screen.settle()
+        assert.equal(screen.all().find((node) => node.props['data-label'] === '작업할 설치 모델').props.disabled, true)
+        assert.equal(screen.button('선택 모델 학습 승인 자료로 시험 학습').props.disabled, true)
         complete(probeResult)
         await screen.settle()
-        assert.equal(screen.button('모델 전환').props.disabled, false)
-        const input = screen.all().find((node) => node.props['data-label'] === '전환할 설치 모델')
+        assert.equal(screen.all().find((node) => node.props['data-label'] === '작업할 설치 모델').props.disabled, false)
+        assert.equal(screen.button('선택 모델 학습 승인 자료로 시험 학습').props.disabled, false)
+        assert.equal(screen.button('분석 모델로 사용').props.disabled, false)
+        const input = screen.all().find((node) => node.props['data-label'] === '작업할 설치 모델')
         input.props.onChange({ target: { value: '' } })
         await screen.settle()
-        assert.equal(screen.button('모델 전환').props.disabled, true)
+        assert.equal(screen.button('분석 모델로 사용').props.disabled, true)
     } finally {
         screen.cleanup()
     }
@@ -372,7 +383,7 @@ test('기존 검증 조회에 전환 토큰이 없으면 새 시험을 안내하
         await selectCandidate(screen)
         screen.button('JSON 응답 검증').props.onClick()
         await screen.settle()
-        assert.equal(screen.button('모델 전환').props.disabled, true)
+        assert.equal(screen.button('분석 모델로 사용').props.disabled, true)
         assert.match(screen.text(), /전환용 시험 토큰은 다시 발급되지 않습니다/)
     } finally {
         screen.cleanup()
@@ -395,7 +406,7 @@ test('전환 결과가 불명확하면 자동 재실행하지 않고 같은 식�
         await selectCandidate(screen)
         screen.button('JSON 응답 검증').props.onClick()
         await screen.settle()
-        screen.button('모델 전환').props.onClick()
+        screen.button('분석 모델로 사용').props.onClick()
         await screen.settle()
         const checkbox = screen.all().find((node) => node.type === 'input' && node.props.type === 'checkbox')
         assert.ok(checkbox)
@@ -435,7 +446,9 @@ test('학습은 확인 전 실행하지 않고 횟수를 검사하며 불명확�
         },
     })
     try {
-        screen.button('학습 작업').props.onClick()
+        screen.button('모델 작업').props.onClick()
+        await screen.settle()
+        screen.button('선택 모델 학습 승인 자료로 시험 학습').props.onClick()
         await screen.settle()
         screen.button('학습 시작').props.onClick()
         await screen.settle()
@@ -494,7 +507,9 @@ test('학습 접수 뒤 목록 조회 실패를 시작 실패로 바꾸거나 �
         },
     })
     try {
-        screen.button('학습 작업').props.onClick()
+        screen.button('모델 작업').props.onClick()
+        await screen.settle()
+        screen.button('선택 모델 학습 승인 자료로 시험 학습').props.onClick()
         await screen.settle()
         screen.button('학습 시작').props.onClick()
         await screen.settle()
@@ -521,7 +536,9 @@ test('학습 생성 모델과 기반 버전이 없는 이전 서버 응답에서
         getModelTraining: async () => ({ capabilities: { trainingExecution: true }, jobs: [] }),
     })
     try {
-        screen.button('학습 작업').props.onClick()
+        screen.button('모델 작업').props.onClick()
+        await screen.settle()
+        screen.button('선택 모델 학습 승인 자료로 시험 학습').props.onClick()
         await screen.settle()
         assert.equal(screen.button('학습 시작').props.disabled, true)
         assert.match(screen.text(), /학습 대상 모델을 확인하지 못했습니다/)
@@ -547,7 +564,9 @@ test('학습 시작 확인 중 기반 버전이 바뀌면 이전 확인을 해�
         }),
     })
     try {
-        screen.button('학습 작업').props.onClick()
+        screen.button('모델 작업').props.onClick()
+        await screen.settle()
+        screen.button('선택 모델 학습 승인 자료로 시험 학습').props.onClick()
         await screen.settle()
         screen.button('학습 시작').props.onClick()
         await screen.settle()
@@ -562,6 +581,520 @@ test('학습 시작 확인 중 기반 버전이 바뀌면 이전 확인을 해�
         await screen.settle()
         assert.equal(screen.button('확인 후 학습 시작').props.disabled, true)
         assert.match(screen.text(), /기반 버전이 바뀌었습니다/)
+    } finally {
+        screen.cleanup()
+    }
+})
+
+const completedTraining = {
+    id: '424b376d-2419-4c80-a776-87d7d863b6d2',
+    status: 'SUCCEEDED',
+    iterations: 10,
+    target: { sourceModel: 'qwen3.8:27b', baseModel: 'mlx-community/Qwen3.8-27B-4bit', revision: 'a'.repeat(40), digest: 'b'.repeat(64) },
+}
+const preparedAdapter = {
+    status: 'READY',
+    model: `doenaai-mlx:web-${completedTraining.id}`,
+    digest: 'c'.repeat(64),
+    sourceModel: 'qwen3.8:27b',
+    adapterId: completedTraining.id,
+    message: '학습 어댑터 준비를 확인했습니다.',
+}
+const openAdapterAction = async (screen) => {
+    screen.button('모델 작업').props.onClick()
+    await screen.settle()
+    screen.button('학습 결과 적용 완료한 어댑터 적용').props.onClick()
+    await screen.settle()
+    screen
+        .all()
+        .find((node) => node.props['data-label'] === '완료한 학습 결과')
+        .props.onChange({ target: { value: completedTraining.id } })
+    await screen.settle()
+}
+const checkConfirmation = async (screen) => {
+    screen
+        .all()
+        .find((node) => node.type === 'input' && node.props.type === 'checkbox')
+        .props['onUpdate:modelValue'](true)
+    await screen.settle()
+}
+
+test('어댑터는 같은 모델의 완료 작업만 선택하고 명시적 확인 전에는 전달하지 않는다', async () => {
+    const prepared = [],
+        requested = []
+    const screen = await mountScreen({
+        getModelRegistry: async () => registry,
+        getModelRuntime: async () => runtime,
+        getModelTraining: async (model) => {
+            requested.push(model)
+            return {
+                jobs: [
+                    completedTraining,
+                    { ...completedTraining, id: 'other-model-result', target: { sourceModel: 'other:model' } },
+                    { ...completedTraining, id: 'unfinished-result', status: 'TRAINING' },
+                ],
+            }
+        },
+        prepareModelAdapter: async (id) => {
+            prepared.push(id)
+            return { status: 'WAITING', message: '파일 전달을 기다립니다.' }
+        },
+    })
+    try {
+        await openAdapterAction(screen)
+        assert.ok(requested.every((model) => model === 'qwen3.8:27b'))
+        assert.doesNotMatch(screen.text(), /other-model-result|unfinished-result/)
+        screen.button('어댑터 전달 준비').props.onClick()
+        await screen.settle()
+        assert.equal(screen.button('확인 후 전달 준비').props.disabled, true)
+        assert.equal(prepared.length, 0)
+        assert.match(screen.text(), /가중치·설정과 숫자 요약/)
+        await checkConfirmation(screen)
+        screen.button('확인 후 전달 준비').props.onClick()
+        await screen.settle()
+        assert.deepEqual(prepared, [completedTraining.id])
+        assert.match(screen.text(), /파일 전달을 기다립니다/)
+        assert.ok(!screen.all().some((node) => node.type === 'button' && screen.text(node).trim() === '학습 결과 응답 검증'))
+    } finally {
+        screen.cleanup()
+    }
+})
+
+test('준비한 어댑터는 응답 검증 뒤 별도 확인을 받아 새 분석에 적용한다', async () => {
+    let prepared = false,
+        active = false
+    const probes = [],
+        activations = []
+    const screen = await mountScreen({
+        getModelRegistry: async () => registry,
+        getModelRuntime: async () => runtime,
+        getInstalledModels: async () => ({
+            model: active ? preparedAdapter.model : 'qwen3.8:27b',
+            currentRevision: active ? 8 : 7,
+            models: [
+                { name: 'qwen3.8:27b', digest: 'b'.repeat(64), selectable: true },
+                ...(prepared
+                    ? [
+                          {
+                              name: preparedAdapter.model,
+                              digest: preparedAdapter.digest,
+                              selectable: true,
+                              provider: 'mlx',
+                              adapterId: completedTraining.id,
+                              sourceModel: 'qwen3.8:27b',
+                          },
+                      ]
+                    : []),
+            ],
+        }),
+        getModelTraining: async () => ({ jobs: [completedTraining] }),
+        prepareModelAdapter: async () => {
+            prepared = true
+            return preparedAdapter
+        },
+        probeInstalledModel: async (body) => {
+            probes.push(body)
+            return { ...probeResult, model: preparedAdapter.model, digest: preparedAdapter.digest }
+        },
+        activateInstalledModel: async (body) => {
+            activations.push(body)
+            active = true
+            return { status: 'APPLIED', message: '학습 결과를 새 분석에 적용했습니다.' }
+        },
+    })
+    try {
+        await openAdapterAction(screen)
+        screen.button('어댑터 전달 준비').props.onClick()
+        await screen.settle()
+        await checkConfirmation(screen)
+        screen.button('확인 후 전달 준비').props.onClick()
+        await screen.settle()
+        assert.equal(activations.length, 0)
+        assert.equal(screen.button('학습 결과 적용').props.disabled, true)
+        screen.button('학습 결과 응답 검증').props.onClick()
+        await screen.settle()
+        assert.equal(probes[0].model, preparedAdapter.model)
+        assert.equal(probes[0].digest, preparedAdapter.digest)
+        assert.equal(screen.button('학습 결과 적용').props.disabled, false)
+        screen.button('학습 결과 적용').props.onClick()
+        await screen.settle()
+        assert.match(screen.text(), /업무 품질을 평가하지 않은 시험 학습 어댑터/)
+        assert.equal(activations.length, 0)
+        await checkConfirmation(screen)
+        screen.button('확인 후 학습 결과 적용').props.onClick()
+        await screen.settle()
+        assert.equal(activations.length, 1)
+        assert.equal(activations[0].model, preparedAdapter.model)
+        assert.equal(activations[0].probeToken, probeResult.probeToken)
+        assert.equal(activations[0].expectedRevision, 7)
+        assert.match(screen.text(), /학습 결과를 새 분석에 적용했습니다/)
+    } finally {
+        screen.cleanup()
+    }
+})
+
+test('선택한 다른 모델을 운영 모델로 바꾸지 않고 그 모델의 자료로 학습한다', async () => {
+    const queries = [],
+        starts = []
+    let transitions = 0
+    const screen = await mountScreen({
+        getModelRegistry: async () => registry,
+        getModelRuntime: async () => runtime,
+        getInstalledModels: async () => ({
+            model: 'current:model',
+            currentRevision: 1,
+            models: [
+                { name: 'current:model', selectable: true },
+                { name: 'qwen3.8:27b', digest: 'b'.repeat(64), selectable: true },
+            ],
+        }),
+        getModelTraining: async (model) => {
+            queries.push(model)
+            return { dataset: { target: completedTraining.target, total: 3, samples: [] }, capabilities: { trainingExecution: true }, jobs: [] }
+        },
+        startModelTraining: async (body) => {
+            starts.push(body)
+            return { status: 'PENDING' }
+        },
+        activateInstalledModel: async () => {
+            transitions += 1
+        },
+    })
+    try {
+        screen.button('모델 작업').props.onClick()
+        await screen.settle()
+        screen
+            .all()
+            .find((node) => node.props['data-label'] === '작업할 설치 모델')
+            .props.onChange({ target: { value: 'qwen3.8:27b' } })
+        screen.button('선택 모델 학습 승인 자료로 시험 학습').props.onClick()
+        await screen.settle()
+        assert.ok(queries.every((model) => model === 'qwen3.8:27b'))
+        screen.button('학습 시작').props.onClick()
+        await screen.settle()
+        await checkConfirmation(screen)
+        screen.button('확인 후 학습 시작').props.onClick()
+        await screen.settle()
+        assert.equal(starts[0].model, 'qwen3.8:27b')
+        assert.equal(transitions, 0)
+    } finally {
+        screen.cleanup()
+    }
+})
+
+test('다른 모델이 학습 중이면 선택 모델의 작업 목록이 비어도 새 학습을 막는다', async () => {
+    const screen = await mountScreen({
+        getModelRegistry: async () => registry,
+        getModelRuntime: async () => runtime,
+        getModelTraining: async () => ({
+            busy: true,
+            jobs: [],
+            dataset: { target: completedTraining.target, total: 3 },
+            capabilities: { trainingExecution: true },
+        }),
+    })
+    try {
+        screen.button('모델 작업').props.onClick()
+        await screen.settle()
+        screen.button('선택 모델 학습 승인 자료로 시험 학습').props.onClick()
+        await screen.settle()
+        assert.equal(screen.button('학습 시작').props.disabled, true)
+        assert.match(screen.text(), /학습 서버에서 진행 중인 작업/)
+    } finally {
+        screen.cleanup()
+    }
+})
+
+test('조회 권한만 있으면 완료한 어댑터를 보되 전달 준비를 호출하지 못한다', async () => {
+    let preparations = 0
+    const screen = await mountScreen(
+        {
+            getModelRegistry: async () => registry,
+            getModelRuntime: async () => runtime,
+            getModelTraining: async () => ({ jobs: [completedTraining] }),
+            prepareModelAdapter: async () => {
+                preparations += 1
+            },
+        },
+        ['MODEL_READ']
+    )
+    try {
+        await openAdapterAction(screen)
+        assert.equal(screen.button('어댑터 전달 준비').props.disabled, true)
+        screen.button('어댑터 전달 준비').props.onClick()
+        await screen.settle()
+        assert.equal(preparations, 0)
+    } finally {
+        screen.cleanup()
+    }
+})
+
+test('학습 대상 상세가 없는 이전 작업도 생성 모델로 구분하고 안전하게 표시한다', async () => {
+    const legacy = { ...completedTraining, target: undefined, sourceModel: 'qwen3.8:27b' }
+    const screen = await mountScreen({
+        getModelRegistry: async () => registry,
+        getModelRuntime: async () => runtime,
+        getModelTraining: async () => ({ requestedModel: 'qwen3.8:27b', jobs: [legacy] }),
+        getModelOperations: async () => ({ operations: [{ ...legacy, action: 'TRAINING_START' }] }),
+    })
+    try {
+        screen.button('실행 작업 이력').props.onClick()
+        await screen.settle()
+        assert.match(screen.text(), /학습 모델 · qwen3\.8:27b/)
+        assert.doesNotMatch(screen.text(), /기존 작업: 모델 미기록/)
+        await openAdapterAction(screen)
+        assert.match(screen.text(), /학습 기반 모델 · 미기록/)
+        assert.equal(screen.button('어댑터 전달 준비').props.disabled, false)
+    } finally {
+        screen.cleanup()
+    }
+})
+
+test('설치된 어댑터를 선택해도 기반 모델의 완료한 학습을 조회한다', async () => {
+    const requested = []
+    const screen = await mountScreen({
+        getModelRegistry: async () => registry,
+        getModelRuntime: async () => runtime,
+        getInstalledModels: async () => ({
+            model: preparedAdapter.model,
+            currentRevision: 1,
+            models: [
+                { name: preparedAdapter.model, sourceModel: 'qwen3.8:27b', adapterId: completedTraining.id, selectable: true, digest: preparedAdapter.digest },
+            ],
+        }),
+        getModelTraining: async (model) => {
+            requested.push(model)
+            return { requestedModel: 'qwen3.8:27b', jobs: [completedTraining] }
+        },
+    })
+    try {
+        await openAdapterAction(screen)
+        assert.ok(requested.every((model) => model === 'qwen3.8:27b'))
+        assert.equal(screen.button('어댑터 전달 준비').props.disabled, false)
+    } finally {
+        screen.cleanup()
+    }
+})
+
+test('선택 모델과 다른 학습 대상 응답은 적용할 자료로 표시하지 않는다', async () => {
+    const screen = await mountScreen({
+        getModelRegistry: async () => registry,
+        getModelRuntime: async () => runtime,
+        getModelTraining: async () => ({ requestedModel: 'other:model', jobs: [completedTraining] }),
+    })
+    try {
+        await openAdapterAction(screen)
+        assert.match(screen.text(), /선택한 모델과 서버가 확인한 학습 대상이 다릅니다/)
+        assert.equal(screen.button('어댑터 전달 준비').props.disabled, true)
+    } finally {
+        screen.cleanup()
+    }
+})
+
+const trainingOperation = {
+    id: '78a368cd-1ed1-4fc6-b67f-46eb53dcae44',
+    action: 'TRAINING_START',
+    status: 'TRAINING',
+    progress: 45,
+    iterations: 10,
+    target: completedTraining.target,
+    createdAt: '2026-10-21T09:27:35Z',
+    updatedAt: '2026-10-21T09:28:35Z',
+    message: '서버에서 시험 학습을 진행하고 있습니다.',
+}
+const managementTabs = (screen) => {
+    const navigation = screen.all().find((node) => node.props['aria-label'] === '모델 관리 목록')
+    assert.ok(navigation)
+    return navigation.children.filter((node) => node.type === 'button')
+}
+const selectManagementTab = async (screen, label) => {
+    const tab = managementTabs(screen).find((node) => screen.text(node).trim().startsWith(label))
+    assert.ok(tab, `관리 탭을 찾을 수 없습니다: ${label}`)
+    tab.props.onClick()
+    await screen.settle()
+}
+
+test('학습 탭 없이 세 관리 탭을 표시하고 진행률과 완료 결과를 실행 이력에서 한 번씩 표시한다', async () => {
+    let listings = 0,
+        trainingListings = 0
+    const completed = {
+        ...trainingOperation,
+        id: completedTraining.id,
+        status: 'SUCCEEDED',
+        progress: 100,
+        metrics: {
+            trainingSamples: 7,
+            validationSamples: 2,
+            testSamples: 0,
+            excludedTestSamples: 1,
+            finalTrainingLoss: 1.4747,
+            validationLossBefore: 0.6343,
+            validationLossAfter: 0.6335,
+            adapterTensors: 6,
+            reloadMaxLogitDifference: 0,
+            qualityEvaluated: false,
+            independentTestExecuted: false,
+        },
+    }
+    const screen = await mountScreen({
+        getModelRegistry: async () => registry,
+        getModelRuntime: async () => runtime,
+        getModelTraining: async () => {
+            trainingListings += 1
+            return { jobs: [trainingOperation, completed] }
+        },
+        getModelOperations: async () => {
+            listings += 1
+            return { operations: [trainingOperation, completed] }
+        },
+    })
+    try {
+        const labels = managementTabs(screen).map((node) => screen.text(node).trim().replace(/\s+/g, ' '))
+        assert.deepEqual(labels, ['모델 버전 1', '배포 이력 0', '실행 작업 이력'])
+        assert.equal(listings, 0)
+        await selectManagementTab(screen, '실행 작업 이력')
+        assert.equal(listings, 1)
+        assert.equal(trainingListings, 0)
+        for (const operation of [trainingOperation, completed]) {
+            const cards = screen.all().filter((node) => node.type === 'article' && screen.text(node).includes(operation.id))
+            assert.equal(cards.length, 1)
+            assert.match(screen.text(cards[0]), /qwen3\.8:27b/)
+            assert.match(screen.text(cards[0]), new RegExp(`${operation.progress}%`))
+        }
+        assert.match(screen.text(), /학습 중/)
+        assert.match(screen.text(), /완료/)
+        assert.match(screen.text(), /1\.4747/)
+        assert.match(screen.text(), /0\.6343/)
+        assert.match(screen.text(), /0\.6335/)
+    } finally {
+        screen.cleanup()
+    }
+})
+
+test('실행 이력의 학습 취소는 대상 확인 전 호출하지 않고 확인 뒤 중복 클릭해도 한 번만 호출한다', async () => {
+    const cancellations = []
+    let finishCancellation
+    let cancelled = false
+    const screen = await mountScreen({
+        getModelRegistry: async () => registry,
+        getModelRuntime: async () => runtime,
+        getModelOperations: async () => ({ operations: [{ ...trainingOperation, status: cancelled ? 'CANCELLED' : 'TRAINING' }] }),
+        cancelModelTraining: (id, body) => {
+            cancellations.push({ id, body })
+            return new Promise((resolve) => {
+                finishCancellation = () => {
+                    cancelled = true
+                    resolve({ status: 'SUCCEEDED', message: '학습 취소 요청을 확인했습니다.' })
+                }
+            })
+        },
+    })
+    try {
+        await selectManagementTab(screen, '실행 작업 이력')
+        screen.button('취소 요청').props.onClick()
+        await screen.settle()
+        assert.match(screen.text(), new RegExp(trainingOperation.id))
+        assert.equal(screen.button('확인 후 취소 요청').props.disabled, true)
+        screen.button('확인 후 취소 요청').props.onClick()
+        await screen.settle()
+        assert.equal(cancellations.length, 0)
+        await checkConfirmation(screen)
+        const submit = screen.button('확인 후 취소 요청')
+        submit.props.onClick()
+        submit.props.onClick()
+        await screen.settle()
+        assert.equal(cancellations.length, 1)
+        assert.equal(cancellations[0].id, trainingOperation.id)
+        assert.match(cancellations[0].body.operationId, /^[0-9a-f-]{36}$/)
+        finishCancellation()
+        await screen.settle()
+        assert.match(screen.text(), /취소됨/)
+    } finally {
+        screen.cleanup()
+    }
+})
+
+test('조회 권한만 있으면 학습 진행률과 완료 결과를 보되 취소 요청은 표시하지 않는다', async () => {
+    let cancellations = 0
+    const screen = await mountScreen(
+        {
+            getModelRegistry: async () => registry,
+            getModelRuntime: async () => runtime,
+            getModelOperations: async () => ({ operations: [trainingOperation] }),
+            cancelModelTraining: async () => {
+                cancellations += 1
+            },
+        },
+        ['MODEL_READ']
+    )
+    try {
+        await selectManagementTab(screen, '실행 작업 이력')
+        assert.match(screen.text(), /45%/)
+        assert.ok(!screen.all().some((node) => node.type === 'button' && screen.text(node).trim() === '취소 요청'))
+        assert.equal(cancellations, 0)
+    } finally {
+        screen.cleanup()
+    }
+})
+
+for (const uncertain of ['UNKNOWN', 'NETWORK']) {
+    test(`학습 취소 ${uncertain === 'UNKNOWN' ? '결과 미확정' : '통신 실패'} 뒤 탭을 이동해도 같은 요청 식별자로만 수동 재시도한다`, async () => {
+        const cancellations = []
+        const screen = await mountScreen({
+            getModelRegistry: async () => registry,
+            getModelRuntime: async () => runtime,
+            getModelOperations: async () => ({ operations: [trainingOperation] }),
+            cancelModelTraining: async (id, body) => {
+                cancellations.push({ id, body })
+                if (uncertain === 'NETWORK') throw new Error('응답 연결이 끊어졌습니다.')
+                return { status: 'UNKNOWN' }
+            },
+        })
+        try {
+            await selectManagementTab(screen, '실행 작업 이력')
+            screen.button('취소 요청').props.onClick()
+            await screen.settle()
+            await checkConfirmation(screen)
+            screen.button('확인 후 취소 요청').props.onClick()
+            await screen.settle()
+            assert.equal(cancellations.length, 1)
+            await selectManagementTab(screen, '모델 버전')
+            await selectManagementTab(screen, '실행 작업 이력')
+            assert.equal(cancellations.length, 1)
+            screen.button('같은 요청 수동 재시도').props.onClick()
+            await screen.settle()
+            assert.equal(cancellations.length, 2)
+            assert.equal(cancellations[0].id, trainingOperation.id)
+            assert.deepEqual(cancellations[0], cancellations[1])
+        } finally {
+            screen.cleanup()
+        }
+    })
+}
+
+test('모델 작업의 학습 화면에서 실행 이력으로 이동하면 모달을 닫고 진행 상황을 표시한다', async () => {
+    let listings = 0
+    const screen = await mountScreen({
+        getModelRegistry: async () => registry,
+        getModelRuntime: async () => runtime,
+        getModelOperations: async () => {
+            listings += 1
+            return { operations: [trainingOperation] }
+        },
+    })
+    try {
+        screen.button('모델 작업').props.onClick()
+        await screen.settle()
+        screen.button('선택 모델 학습 승인 자료로 시험 학습').props.onClick()
+        await screen.settle()
+        assert.equal(listings, 0)
+        screen.button('실행 작업 이력 보기').props.onClick()
+        await screen.settle()
+        assert.ok(!screen.all().some((node) => node.props.role === 'dialog' && node.props['aria-label'] === '모델 작업'))
+        const tab = managementTabs(screen).find((node) => screen.text(node).trim() === '실행 작업 이력')
+        assert.equal(tab.props['aria-pressed'], true)
+        assert.equal(listings, 1)
+        assert.match(screen.text(), /45%/)
     } finally {
         screen.cleanup()
     }

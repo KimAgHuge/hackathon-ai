@@ -174,7 +174,10 @@ class ModelRuntimeService:
         self.settings, self.clock = settings, clock
         path = settings.ai_model_state_file or str(Path(__file__).resolve().parents[2] / ".runtime" / "model-selection.sqlite3")
         self.store = store or RuntimeStore(Path(path), settings.ai_model)
-        self.client = client or OllamaAdminClient(settings)
+        from app.services.mlx_adapter_runtime import MlxAdapterRuntime
+        from app.services.hybrid_model_client import HybridModelClient
+        self.adapters = MlxAdapterRuntime(settings)
+        self.client = client or HybridModelClient(OllamaAdminClient(settings), self.adapters)
 
     def selection(self):
         return self.store.selection()
@@ -225,7 +228,17 @@ class ModelRuntimeService:
         if (show.get("remote_model") or show.get("remote_host") or ":cloud" in model.lower()
                 or not isinstance(capabilities, list) or "completion" not in capabilities):
             raise ModelRuntimeError(409, "MODEL_NOT_EXECUTABLE", "로컬에서 문장 응답을 생성할 수 있는 설치 모델만 사용할 수 있습니다.")
-        return {**entry, "capabilities": [item for item in capabilities if isinstance(item, str) and re.fullmatch(r"[a-z_-]{1,40}", item)]}
+        metadata = {}
+        if self.adapters.owns(model):
+            source = show.get("sourceModel")
+            if not isinstance(source, str) or not NAME.fullmatch(source):
+                raise ModelRuntimeError(502, "MODEL_RESPONSE_INVALID", "어댑터의 기반 모델 출처를 확인하지 못했습니다.")
+            metadata = {"provider": "mlx", "sourceModel": source, "qualityEvaluated": False}
+            try:
+                metadata["adapterId"] = str(UUID(show["adapterId"]))
+            except (ValueError, TypeError, KeyError):
+                raise ModelRuntimeError(502, "MODEL_RESPONSE_INVALID", "어댑터 학습 작업을 확인하지 못했습니다.") from None
+        return {**entry, **metadata, "capabilities": [item for item in capabilities if isinstance(item, str) and re.fullmatch(r"[a-z_-]{1,40}", item)]}
 
     @staticmethod
     def _matching(entries, name):
@@ -245,7 +258,9 @@ class ModelRuntimeService:
 
         models = await self._call(asyncio.gather(*(describe(item) for item in entries[:100])))
         current = self._matching(entries, selection.model)
-        return {"model": selection.model, "currentDigest": selection.digest or (current["digest"] if current else None),
+        selected = next((item for item in models if item["name"] == selection.model), {})
+        metadata = {key: selected[key] for key in ("provider", "sourceModel", "adapterId", "qualityEvaluated") if key in selected}
+        return {**metadata, "model": selection.model, "currentDigest": selection.digest or (current["digest"] if current else None),
                 "currentRevision": selection.revision, "previousModel": selection.previous_model,
                 "canRollback": bool(selection.previous_model and selection.previous_digest),
                 "checkedAt": datetime.now(timezone.utc).isoformat(), "models": models, "truncated": len(entries) > 100,
@@ -329,7 +344,8 @@ class ModelRuntimeService:
                 previous_digest = before.digest or (current["digest"] if current else None)
                 if target["name"] == before.model and target["digest"] == previous_digest:
                     raise ModelRuntimeError(409, "MODEL_ALREADY_SELECTED", "이미 선택된 모델입니다. 현재 상태를 새로 확인하세요.")
-                result = {"operationId": operation_id, "status": "APPLIED" if kind == "ACTIVATE" else "ROLLED_BACK",
+                metadata = {key: target[key] for key in ("provider", "sourceModel", "adapterId", "qualityEvaluated") if key in target}
+                result = {**metadata, "operationId": operation_id, "status": "APPLIED" if kind == "ACTIVATE" else "ROLLED_BACK",
                           "previousModel": before.model, "model": target["name"], "digest": target["digest"], "revision": before.revision + 1,
                           "message": "새 분석 요청에 사용할 모델을 변경했습니다. 이미 진행 중인 분석은 기존 모델을 유지합니다."}
                 with self.store.connect() as connection:

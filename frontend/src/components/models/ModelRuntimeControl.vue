@@ -1,78 +1,52 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { getInstalledModels, probeInstalledModel, activateInstalledModel, rollbackInstalledModel, getModelOperation } from '@/api/modelApi'
+import { probeInstalledModel, activateInstalledModel, rollbackInstalledModel, getModelOperation } from '@/api/modelApi'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseModal from '@/components/base/BaseModal.vue'
-import BaseSelect from '@/components/base/BaseSelect.vue'
 import { operationErrorMessage, operationStatusLabel, probeMatchesSelection, uncertainRequestError } from '@/lib/modelOperations'
 
-const props = defineProps({ modelValue: Boolean, canDeploy: Boolean, canRollback: Boolean, refreshKey: { type: Number, default: 0 } })
-const emit = defineEmits(['changed', 'update:modelValue'])
-const installed = ref(null)
-const loaded = ref(false)
-const loading = ref(false)
-const selectedName = ref('')
+const props = defineProps({
+    snapshot: { type: Object, default: null },
+    modelName: { type: String, default: '' },
+    available: Boolean,
+    adapterMode: Boolean,
+    canDeploy: Boolean,
+    canRollback: Boolean,
+    reload: { type: Function, required: true },
+})
+const emit = defineEmits(['changed', 'locked', 'busy'])
+const installed = computed(() => props.snapshot)
+const loaded = computed(() => props.available)
+const selectedName = computed(() => props.modelName)
 const probe = ref(null)
 const probeRequest = ref(null)
 const pending = ref(null)
 const busy = ref('')
 const error = ref('')
-const loadError = ref('')
 const message = ref('')
 const confirmMode = ref('')
 const confirmed = ref(false)
 const now = ref(Date.now())
-let generation = 0
 let disposed = false
 let clock = null
 const choices = computed(() => (Array.isArray(installed.value?.models) ? installed.value.models : []))
 const selected = computed(() => choices.value.find((model) => model.name === selectedName.value) || null)
-const options = computed(() => [
-    { value: '', label: '설치 모델 선택' },
-    ...choices.value.map((model) => ({
-        value: model.name,
-        label: `${model.name}${model.name === installed.value?.model ? ' · 현재 설정' : ''}${model.selectable ? '' : ' · 선택 불가'}`,
-        disabled: !model.selectable,
-    })),
-])
 const probeValid = computed(() => loaded.value && probeMatchesSelection(probe.value, selected.value, installed.value, now.value))
-const load = async () => {
-    const current = ++generation
-    loading.value = true
-    try {
-        const value = await getInstalledModels()
-        if (disposed || current !== generation) return
-        if (installed.value?.currentRevision !== value.currentRevision) probe.value = null
-        installed.value = value
-        loaded.value = true
-        loadError.value = ''
-        if (!value.models?.some((model) => model.name === selectedName.value)) selectedName.value = ''
-    } catch (failure) {
-        if (disposed || current !== generation) return
-        loaded.value = false
-        loadError.value = operationErrorMessage(failure, 'AI 서버의 설치 모델 목록을 불러오지 못했습니다.')
-    } finally {
-        if (!disposed && current === generation) loading.value = false
-    }
-}
+const load = () => props.reload()
+watch(
+    () => Boolean(busy.value || pending.value || confirmMode.value),
+    (value) => emit('locked', value)
+)
+watch(
+    () => Boolean(busy.value),
+    (value) => emit('busy', value)
+)
 watch(selectedName, () => {
     probe.value = null
     probeRequest.value = null
     message.value = ''
     error.value = ''
 })
-watch(
-    () => props.refreshKey,
-    () => {
-        if (props.modelValue) load()
-    }
-)
-watch(
-    () => props.modelValue,
-    (open) => {
-        if (open) load()
-    }
-)
 const verify = async () => {
     if (!props.canDeploy || !selected.value?.selectable || busy.value || pending.value || !loaded.value) return
     const model = selected.value
@@ -187,64 +161,33 @@ const checkPending = async () => {
     }
 }
 onMounted(() => {
-    if (props.modelValue) load()
     clock = setInterval(() => {
         now.value = Date.now()
     }, 1000)
 })
 onBeforeUnmount(() => {
     disposed = true
-    generation += 1
     clearInterval(clock)
+    emit('locked', false)
+    emit('busy', false)
 })
 </script>
 
 <template>
-    <BaseModal
-        :model-value="modelValue"
-        title="사용 모델 변경"
-        :busy="Boolean(busy) || Boolean(confirmMode)"
-        footer-text="창을 닫아도 접수된 요청은 취소되지 않습니다. 변경 결과는 실행 작업 이력에서도 확인할 수 있습니다."
-        @update:model-value="emit('update:modelValue', $event)"
-    >
-        <section class="min-w-0">
-            <div class="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                    <h2 class="text-base font-extrabold">AI 서버에 설치된 모델</h2>
-                    <p class="mt-1 text-xs leading-6 text-slate-500 dark:text-slate-400">
-                        연결된 AI 분석/추론 서버의 모델 실행 환경에 설치된 모델 목록입니다. DB에 등록한 모델 버전과는 별도입니다.
-                    </p>
-                </div>
-                <BaseButton variant="secondary" size="small" :loading="loading" :disabled="Boolean(busy)" @click="load">설치 목록 새로고침</BaseButton>
-            </div>
-            <ol class="mt-5 grid grid-cols-3 gap-2 text-center text-xs font-bold text-blue-800 dark:text-blue-200" aria-label="모델 변경 순서">
-                <li class="rounded-lg bg-blue-50 px-2 py-3 dark:bg-blue-950/40">1. 모델 선택</li>
-                <li class="rounded-lg bg-blue-50 px-2 py-3 dark:bg-blue-950/40">2. 응답 검증</li>
-                <li class="rounded-lg bg-blue-50 px-2 py-3 dark:bg-blue-950/40">3. 변경 확인</li>
-            </ol>
-            <dl class="mt-4 grid gap-3 text-sm sm:grid-cols-2">
-                <div class="min-w-0">
-                    <dt class="text-xs text-slate-500 dark:text-slate-400">현재 설정 모델</dt>
-                    <dd class="mt-1 break-all font-bold">{{ installed?.model || '미확인' }}</dd>
-                </div>
-                <div class="min-w-0">
-                    <dt class="text-xs text-slate-500 dark:text-slate-400">복구 대상</dt>
-                    <dd class="mt-1 break-all font-bold">{{ installed?.previousModel || '복구 기록 없음' }}</dd>
-                </div>
-            </dl>
-            <div class="mt-4 grid items-end gap-3 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
-                <BaseSelect
-                    v-model="selectedName"
-                    label="전환할 설치 모델"
-                    :options="options"
-                    :disabled="!loaded || Boolean(busy) || Boolean(pending)"
-                /><BaseButton
+    <section class="min-w-0">
+        <div class="rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-900">
+            <h3 class="text-base font-extrabold">{{ adapterMode ? '준비한 학습 결과 적용' : '분석 모델로 사용' }}</h3>
+            <p class="mt-2 text-sm leading-6 text-slate-500 dark:text-slate-400">선택한 모델의 JSON 응답을 검증한 뒤 새 분석에 적용합니다.</p>
+            <div class="mt-5 flex flex-wrap gap-3">
+                <BaseButton
                     variant="secondary"
                     :disabled="!canDeploy || !selected?.selectable || !loaded || Boolean(busy) || Boolean(pending)"
                     :loading="busy === 'probe'"
                     @click="verify"
-                    >{{ probeRequest ? '같은 검증 재시도' : 'JSON 응답 검증' }}</BaseButton
-                ><BaseButton :disabled="!canDeploy || !probeValid || Boolean(busy) || Boolean(pending)" @click="openConfirm('activate')">모델 전환</BaseButton>
+                    >{{ probeRequest ? '같은 검증 재시도' : adapterMode ? '학습 결과 응답 검증' : 'JSON 응답 검증' }}</BaseButton
+                ><BaseButton :disabled="!canDeploy || !probeValid || Boolean(busy) || Boolean(pending)" @click="openConfirm('activate')">{{
+                    adapterMode ? '학습 결과 적용' : '분석 모델로 사용'
+                }}</BaseButton>
             </div>
             <p v-if="busy === 'probe'" role="status" class="mt-3 text-sm leading-6 text-blue-700 dark:text-blue-300">
                 AI 서버에서 모델을 불러와 실제 JSON 응답을 시험하고 있습니다. GPU·메모리를 사용하며 응답을 기다리는 동안 중복 요청을 보내지 마세요.
@@ -265,12 +208,8 @@ onBeforeUnmount(() => {
             <p v-if="message" role="status" class="mt-4 rounded-lg bg-blue-50 p-3 text-sm leading-6 text-blue-800 dark:bg-blue-950/40 dark:text-blue-200">
                 {{ message }}
             </p>
-            <p
-                v-if="error || loadError"
-                role="alert"
-                class="mt-4 rounded-lg bg-rose-50 p-3 text-sm leading-6 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300"
-            >
-                {{ error || loadError }}
+            <p v-if="error" role="alert" class="mt-4 rounded-lg bg-rose-50 p-3 text-sm leading-6 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">
+                {{ error }}
             </p>
             <div v-if="pending" class="mt-4 rounded-lg border border-amber-200 p-4 dark:border-amber-800">
                 <p class="break-all text-xs leading-6">확인 중인 요청 · {{ pending.body.operationId }}</p>
@@ -279,7 +218,7 @@ onBeforeUnmount(() => {
                     ><BaseButton size="small" variant="secondary" :disabled="Boolean(busy)" @click="apply">같은 요청 수동 재시도</BaseButton>
                 </div>
             </div>
-            <div class="mt-4 flex flex-wrap items-center gap-3">
+            <div v-if="!adapterMode" class="mt-4 flex flex-wrap items-center gap-3">
                 <BaseButton
                     variant="secondary"
                     :disabled="!canRollback || !loaded || !installed?.canRollback || Boolean(busy) || Boolean(pending)"
@@ -290,12 +229,11 @@ onBeforeUnmount(() => {
                 }}</span>
             </div>
             <p class="mt-4 text-xs leading-6 text-slate-500 dark:text-slate-400">
-                전환은 새 분석 요청부터 적용하며 진행 중인 분석은 시작할 때 고정한 모델을 유지합니다. 등록한 LoRA 파일을 실행하려면 호환되는 모델로
-                변환·가져오기를 별도로 완료해야 합니다.
+                변경은 새 분석부터 적용합니다. 학습한 어댑터는 ‘학습 결과 적용’에서 별도로 확인하고 적용할 수 있습니다.
             </p>
             <BaseModal
                 :model-value="Boolean(confirmMode)"
-                :title="confirmMode === 'rollback' ? '이전 모델 복구 확인' : '설치 모델 전환 확인'"
+                :title="confirmMode === 'rollback' ? '이전 모델 복구 확인' : adapterMode ? '학습 결과 적용 확인' : '설치 모델 전환 확인'"
                 :busy="Boolean(busy)"
                 footer-text="명시적으로 확인한 모델 설정만 변경합니다. 진행 중인 분석은 시작할 때의 모델을 유지합니다."
                 @update:model-value="
@@ -312,6 +250,10 @@ onBeforeUnmount(() => {
                         새 분석 요청의 모델 설정을 변경합니다. 짧은 JSON 검증은 업무 정답 품질과 운영 승인을 보증하지 않습니다. 진행 중인 분석의 모델은 바꾸지
                         않습니다.
                     </p>
+                    <p v-if="adapterMode || selected?.adapterId" class="rounded-lg bg-amber-50 p-4 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+                        업무 품질을 평가하지 않은 시험 학습 어댑터입니다. AI 분석 서버의 MLX 실행 환경에서 기반 모델과 함께 불러오며, 맥북의 학습 서버는 추론에
+                        사용하지 않습니다. 적용 뒤 새 분석부터 이 학습 결과를 사용합니다.
+                    </p>
                     <label class="flex items-start gap-3"
                         ><input v-model="confirmed" type="checkbox" class="mt-1.5 h-4 w-4 shrink-0" :disabled="Boolean(busy) || Boolean(pending)" /><span
                             >대상 모델과 새 요청부터 적용되는 범위를 확인했습니다.</span
@@ -320,12 +262,12 @@ onBeforeUnmount(() => {
                     <p v-if="error" role="alert" class="text-rose-700 dark:text-rose-300">{{ error }}</p>
                     <div class="flex flex-wrap gap-2">
                         <BaseButton :disabled="!confirmed || Boolean(pending)" :loading="Boolean(busy)" @click="apply">{{
-                            confirmMode === 'rollback' ? '확인 후 복구' : '확인 후 전환'
+                            confirmMode === 'rollback' ? '확인 후 복구' : adapterMode ? '확인 후 학습 결과 적용' : '확인 후 전환'
                         }}</BaseButton
                         ><BaseButton v-if="pending" variant="secondary" :disabled="Boolean(busy)" @click="checkPending">기존 요청 상태 확인</BaseButton>
                     </div>
                 </div>
             </BaseModal>
-        </section>
-    </BaseModal>
+        </div>
+    </section>
 </template>
