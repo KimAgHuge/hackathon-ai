@@ -90,7 +90,11 @@ def prompt_contract():
     if len(prompts) != 2:
         raise DatasetError("AI 분석/추론 서버의 프롬프트 상수를 찾지 못했습니다.")
     bundle = {"prompts": prompts, "schemas": {stage: model.model_json_schema(by_alias=True) for stage, model in STAGES.items()},
-              "messageFormatVersion": 3}
+              "messageFormatVersion": 3,
+              "inputTransformations": {
+                  name: hashlib.sha256((AI_ROOT / "app/services" / name).read_bytes()).hexdigest()
+                  for name in ("source_context.py", "database_scope.py")
+              }}
     return bundle, digest(bundle)
 
 
