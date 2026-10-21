@@ -102,10 +102,12 @@ public class ModelExecutionService {
         String target = client.targetKey(true);
         boolean executable = false;
         String reason = "AI 학습 서버 주소·전송 키·실행 설정과 서버 업데이트를 확인해 주세요.";
+        Map<String, Object> dataset = Map.of();
         Map<String, Map<String, Object>> remoteJobs = new HashMap<>();
         try {
             var capabilities = client.training("GET", "/api/training/capabilities", Map.of());
-            executable = Boolean.TRUE.equals(capabilities.get("trainingExecution"));
+            dataset = safeDataset(capabilities.get("dataset"));
+            executable = Boolean.TRUE.equals(capabilities.get("trainingExecution")) && dataset.containsKey("target");
             reason = executable ? "검증된 수신 자료로 짧은 시험 학습을 시작할 수 있습니다. 운영 모델은 자동 변경되지 않습니다."
                     : "AI 학습 서버의 모델 경로·호환성·실행 설정을 확인해 주세요.";
             var listing = client.training("GET", "/api/training/jobs", Map.of());
@@ -125,10 +127,40 @@ public class ModelExecutionService {
         for (var row : rows.stream().limit(100).toList()) {
             var remote = remoteJobs.get(row.get("id"));
             if (remote != null && ACTIVE.contains(row.get("status"))) row = recordRemote(row, remote);
-            jobs.add(publicValue(row));
+            var job = publicValue(row);
+            if (dataset.get("target") instanceof Map<?, ?> selected && job.get("target") instanceof Map<?, ?> recorded
+                    && Objects.equals(selected.get("sourceModel"), recorded.get("sourceModel")))
+                jobs.add(job);
         }
-        return Map.of("capabilities", Map.of("trainingExecution", executable, "reason", reason), "jobs", jobs,
+        return Map.of("capabilities", Map.of("trainingExecution", executable, "reason", reason), "dataset", dataset, "jobs", jobs,
                 "limit", 100, "truncated", rows.size() > 100);
+    }
+
+    /** 모델 식별자와 비식별 사례 식별자만 화면에 전달한다. 원문과 로컬 경로는 전달하지 않는다. */
+    private static Map<String, Object> safeDataset(Object supplied) {
+        var result = new LinkedHashMap<String, Object>();
+        if (!(supplied instanceof Map<?, ?> data)) return result;
+        var target = safeTrainingTarget(data.get("target"));
+        if (target.isEmpty()) return result;
+        result.put("target", target);
+        var samples = new ArrayList<Map<String, Object>>();
+        if (data.get("samples") instanceof List<?> rows) for (var row : rows.stream().limit(100).toList()) {
+            if (row instanceof Map<?, ?> item && item.get("caseId") instanceof String id
+                    && id.matches("[A-Za-z0-9][A-Za-z0-9._-]{0,99}") && target.get("sourceModel").equals(item.get("sourceModel")))
+                samples.add(Map.of("caseId", id, "sourceModel", target.get("sourceModel")));
+        }
+        result.put("samples", samples);
+        for (String key : List.of("total", "excluded")) if (data.get(key) instanceof Number count && count.longValue() >= 0) result.put(key, count.longValue());
+        result.put("truncated", Boolean.TRUE.equals(data.get("truncated")));
+        return result;
+    }
+
+    private static Map<String, Object> safeTrainingTarget(Object supplied) {
+        if (supplied instanceof Map<?, ?> target && target.get("sourceModel") instanceof String source && validModel(source)
+                && target.get("baseModel") instanceof String base && validModel(base)
+                && target.get("revision") instanceof String revision && revision.matches("[0-9a-f]{40}") && safeDigest(target.get("digest")) != null)
+            return Map.of("sourceModel", source, "baseModel", base, "revision", revision, "digest", safeDigest(target.get("digest")));
+        return Map.of();
     }
 
     public Map<String, Object> operations() {
@@ -198,6 +230,8 @@ public class ModelExecutionService {
         }
         if (action.equals("TRAINING_START")) {
             if (input.iterations() == null || input.iterations() < 1 || input.iterations() > 20) throw invalid();
+            if (!validModel(input.model()) || safeDigest(input.digest()) == null) throw invalid();
+            value.put("model", input.model()); value.put("digest", input.digest());
             value.put("iterations", input.iterations());
         }
         if (action.equals("TRAINING_CANCEL")) {
@@ -211,6 +245,8 @@ public class ModelExecutionService {
     /** 정해진 안전 필드만 보존한다. 원격 원문, 경로, 토큰과 임의 메모는 보존하지 않는다. */
     private static Map<String, Object> snapshot(Map<String, Object> remote) {
         var value = new LinkedHashMap<String, Object>();
+        var target = safeTrainingTarget(remote.get("target"));
+        if (!target.isEmpty()) value.put("target", target);
         if (remote.get("status") instanceof String state && STATES.contains(state)) value.put("status", state);
         for (String key : List.of("model", "previousModel")) if (remote.get(key) instanceof String name && validModel(name)) value.put(key, name);
         for (String key : List.of("digest", "currentDigest")) if (safeDigest(remote.get(key)) != null) value.put(key, safeDigest(remote.get(key)));

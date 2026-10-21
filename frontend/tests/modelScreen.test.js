@@ -288,6 +288,8 @@ const installed = {
     models: [{ name: 'candidate:model', digest: 'a'.repeat(64), selectable: true, capabilities: ['completion'] }],
 }
 const selectCandidate = async (screen) => {
+    screen.button('사용 모델 변경').props.onClick()
+    await screen.settle()
     const input = screen.all().find((node) => node.props['data-label'] === '전환할 설치 모델')
     input.props.onChange({ target: { value: 'candidate:model' } })
     await screen.settle()
@@ -418,14 +420,22 @@ test('학습은 확인 전 실행하지 않고 횟수를 검사하며 불명확�
     const screen = await mountScreen({
         getModelRegistry: async () => registry,
         getModelRuntime: async () => runtime,
-        getModelTraining: async () => ({ capabilities: { trainingExecution: true }, jobs: [] }),
+        getModelTraining: async () => ({
+            dataset: {
+                target: { sourceModel: 'qwen3.8:27b', baseModel: 'mlx-community/Qwen3.8-27B-4bit', revision: 'a'.repeat(40), digest: 'b'.repeat(64) },
+                samples: [],
+                total: 0,
+            },
+            capabilities: { trainingExecution: true },
+            jobs: [],
+        }),
         startModelTraining: async (body) => {
             calls.push(body)
             return { status: 'UNKNOWN' }
         },
     })
     try {
-        screen.button('웹 학습 관리').props.onClick()
+        screen.button('학습 작업').props.onClick()
         await screen.settle()
         screen.button('학습 시작').props.onClick()
         await screen.settle()
@@ -449,6 +459,8 @@ test('학습은 확인 전 실행하지 않고 횟수를 검사하며 불명확�
         await screen.settle()
         assert.equal(calls.length, 1)
         assert.equal(calls[0].iterations, 2)
+        assert.equal(calls[0].model, 'qwen3.8:27b')
+        assert.equal(calls[0].digest, 'b'.repeat(64))
         screen.button('같은 요청 수동 재시도').props.onClick()
         await screen.settle()
         assert.equal(calls.length, 2)
@@ -466,7 +478,15 @@ test('학습 접수 뒤 목록 조회 실패를 시작 실패로 바꾸거나 �
         getModelRuntime: async () => runtime,
         getModelTraining: async () => {
             if (++listing > 1) throw serverError('학습 목록 재조회 실패')
-            return { capabilities: { trainingExecution: true }, jobs: [] }
+            return {
+                dataset: {
+                    target: { sourceModel: 'qwen3.8:27b', baseModel: 'mlx-community/Qwen3.8-27B-4bit', revision: 'a'.repeat(40), digest: 'b'.repeat(64) },
+                    samples: [],
+                    total: 0,
+                },
+                capabilities: { trainingExecution: true },
+                jobs: [],
+            }
         },
         startModelTraining: async () => {
             starts += 1
@@ -474,7 +494,7 @@ test('학습 접수 뒤 목록 조회 실패를 시작 실패로 바꾸거나 �
         },
     })
     try {
-        screen.button('웹 학습 관리').props.onClick()
+        screen.button('학습 작업').props.onClick()
         await screen.settle()
         screen.button('학습 시작').props.onClick()
         await screen.settle()
@@ -489,6 +509,22 @@ test('학습 접수 뒤 목록 조회 실패를 시작 실패로 바꾸거나 �
         assert.match(screen.text(), /학습 요청을 접수했습니다/)
         assert.match(screen.text(), /학습 목록 재조회 실패/)
         assert.equal(screen.button('학습 시작').props.disabled, true)
+    } finally {
+        screen.cleanup()
+    }
+})
+
+test('학습 생성 모델과 기반 버전이 없는 이전 서버 응답에서는 학습 시작을 막는다', async () => {
+    const screen = await mountScreen({
+        getModelRegistry: async () => registry,
+        getModelRuntime: async () => runtime,
+        getModelTraining: async () => ({ capabilities: { trainingExecution: true }, jobs: [] }),
+    })
+    try {
+        screen.button('학습 작업').props.onClick()
+        await screen.settle()
+        assert.equal(screen.button('학습 시작').props.disabled, true)
+        assert.match(screen.text(), /학습 대상 모델을 확인하지 못했습니다/)
     } finally {
         screen.cleanup()
     }

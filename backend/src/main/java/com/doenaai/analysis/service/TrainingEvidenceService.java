@@ -35,6 +35,7 @@ public class TrainingEvidenceService {
     public Map<String, Object> verifiedCase(UUID jobId, UUID userId, Map<String, Object> submitted) {
         var expected = results.trainingDraft(jobId, userId).caseDraft();
         if (submitted == null || !Objects.equals(expected.get("caseId"), submitted.get("caseId"))) throw invalid();
+        if (!Objects.equals(expected.get("sourceModel"), submitted.get("sourceModel"))) throw invalid();
         var expectedRequest = object(expected.get("request"));
         var expectedSnapshot = object(expected.get("snapshot"));
         var request = new LinkedHashMap<>(object(submitted.get("request")));

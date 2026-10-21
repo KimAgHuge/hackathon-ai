@@ -12,7 +12,7 @@ from unittest.mock import Mock, patch
 from uuid import uuid4
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from dataset_contract import DatasetError
+from dataset_contract import read_jsonl, DatasetError
 from receiver_config import load_receiver_env
 from receiver_service import ReceiverStore
 from shared_transfer import canonical_bytes, write_json_atomic
@@ -52,6 +52,8 @@ class TrainingWorkerTests(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
         self.receiver = ReceiverStore(self.root / "shared", self.root / "receiver", self.root / "staging", self.root / "inbox")
+        (self.root / "model").mkdir()
+        write_json_atomic(self.root / "model/download_manifest.json", {"modelId": "mlx-community/Qwen3.8-27B-4bit", "revision": "a" * 40})
         self.store = TrainingJobStore(self.receiver, self.root / "model", root=self.root)
         self.addCleanup(self.store.close)
         self.configuration = patch.object(self.store, "_configuration_error", return_value=None)
@@ -62,12 +64,18 @@ class TrainingWorkerTests(unittest.TestCase):
         mocked.return_value.is_alive.return_value = False
         self.addCleanup(self.threads.stop)
 
-    def submit(self, iterations=2):
-        return self.store.submit({"jobId": str(uuid4()), "iterations": iterations})
+    def submit_body(self, body):
+        target = self.store.training_target()
+        return self.store.submit({"model": "qwen3.8:27b", "digest": target["digest"] if target else "a" * 64, **body})
 
-    def verified(self, values=None):
+    def submit(self, iterations=2):
+        return self.submit_body({"jobId": str(uuid4()), "iterations": iterations})
+
+    def verified(self, values=None, source_model="qwen3.8:27b"):
         values = records() if values is None else values
         for record in values:
+            if source_model is not None:
+                record.setdefault("sourceModel", source_model)
             payload = canonical_bytes(record)
             temporary = self.root / "case.jsonl"
             temporary.write_bytes(payload)
@@ -76,22 +84,60 @@ class TrainingWorkerTests(unittest.TestCase):
             write_json_atomic(self.receiver.state_dir / f"{checksum}.json",
                               {"sha256": checksum, "cases": 1, "size": size, "status": "VERIFIED"})
 
+    def test_catalog_and_worker_exclude_other_models_and_unknown_legacy_sources(self):
+        values = records()
+        for value in values:
+            value["sourceModel"] = "qwen3.8:27b"
+        other = copy.deepcopy(values[0])
+        other.update(caseId="other-model-case", sourceModel="ingu627/exaone4.0:32b")
+        legacy = copy.deepcopy(values[0])
+        legacy["caseId"] = "legacy-model-case"
+        legacy.pop("sourceModel")
+        self.verified([*values, other, legacy], source_model=None)
+        catalog = self.store.dataset_catalog()
+        self.assertEqual(catalog["total"], 3)
+        self.assertEqual(catalog["excluded"], 2)
+        directory = self.root / "snapshot-test"
+        directory.mkdir()
+        sources = self.store._snapshot(directory)
+        selected = [value for path in sources.glob("*.jsonl") for value in read_jsonl(path)]
+        self.assertEqual(len(selected), 3)
+        self.assertTrue(all(value["sourceModel"] == "qwen3.8:27b" for value in selected))
+        self.assertEqual(len(list(self.receiver.inbox.glob("*.jsonl"))), 5)
+
+    def test_wrong_model_or_changed_base_revision_cannot_start_training(self):
+        target = self.store.training_target()
+        for model, checksum in (("gemma4:26b", target["digest"]), (target["sourceModel"], "0" * 64)):
+            with self.assertRaises(TrainingJobError):
+                self.store.submit({"jobId": str(uuid4()), "iterations": 2, "model": model, "digest": checksum})
+        with self.assertRaises(TrainingJobError):
+            self.store.submit({"jobId": str(uuid4()), "iterations": 2})
+        self.assertEqual(self.store.list_jobs()["jobs"], [])
+
+    def test_model_change_after_acceptance_stops_before_dataset_or_gpu_work(self):
+        job = self.submit()
+        write_json_atomic(self.root / "model/download_manifest.json", {"modelId": "mlx-community/Qwen3.8-27B-4bit", "revision": "b" * 40})
+        with patch.object(self.store, "_execute") as execute:
+            self.store._run(job["id"])
+        execute.assert_not_called()
+        self.assertEqual(self.store.get_job(job["id"])["errorCode"], "TRAINING_UNAVAILABLE")
+
     def test_only_exact_id_and_bounded_integer_request_is_accepted(self):
         for value in ({"jobId": "../private", "iterations": 2}, {"jobId": str(uuid4()), "iterations": True},
                       {"jobId": str(uuid4()), "iterations": 0}, {"jobId": str(uuid4()), "iterations": 21},
                       {"jobId": str(uuid4()), "iterations": 2, "model": "/private/model"},
                       {"jobId": str(uuid4()), "iterations": 2, "command": "unsafe"}):
             with self.subTest(value=value), self.assertRaises(TrainingJobError):
-                self.store.submit(value)
+                self.submit_body(value)
         self.assertEqual(self.store.list_jobs()["jobs"], [])
 
     def test_job_is_idempotent_and_other_conditions_or_concurrent_job_are_refused(self):
         job = self.submit()
-        self.assertEqual(self.store.submit({"jobId": job["id"], "iterations": 2}), job)
+        self.assertEqual(self.submit_body({"jobId": job["id"], "iterations": 2}), job)
         for body, code in (({"jobId": job["id"], "iterations": 3}, "JOB_CONFLICT"),
                            ({"jobId": str(uuid4()), "iterations": 2}, "TRAINING_BUSY")):
             with self.assertRaises(TrainingJobError) as error:
-                self.store.submit(body)
+                self.submit_body(body)
             self.assertEqual(error.exception.code, code)
 
     def test_two_store_instances_share_process_lock_and_restart_does_not_retrain(self):
@@ -104,7 +150,7 @@ class TrainingWorkerTests(unittest.TestCase):
             recovered = second.get_job(job["id"])
             self.assertEqual(recovered["status"], "FAILED")
             self.assertEqual(recovered["errorCode"], "JOB_INTERRUPTED")
-            self.assertEqual(second.submit({"jobId": job["id"], "iterations": 2}), recovered)
+            self.assertEqual(second.submit({"jobId": job["id"], "iterations": 2, "model": "qwen3.8:27b", "digest": job["target"]["digest"]}), recovered)
 
     def test_empty_or_unverified_inbox_never_starts_subprocess(self):
         self.verified(records()[:1])
@@ -149,9 +195,9 @@ class TrainingWorkerTests(unittest.TestCase):
     def test_compatible_local_configuration_is_checked_without_importing_gpu_modules(self):
         self.configuration.stop()
         model = self.store.model_dir
-        model.mkdir()
+        model.mkdir(exist_ok=True)
         write_json_atomic(model / "config.json", {"model_type": "qwen3_5", "text_config": {"tie_word_embeddings": False}})
-        write_json_atomic(model / "download_manifest.json", {"revision": "a" * 40})
+        write_json_atomic(model / "download_manifest.json", {"modelId": "mlx-community/Qwen3.8-27B-4bit", "revision": "a" * 40})
         (model / "weights.safetensors").write_bytes(b"synthetic-not-a-model")
         with patch("training_jobs.sys.platform", "darwin"), patch("training_jobs.importlib.util.find_spec", return_value=object()):
             self.assertTrue(self.store.capabilities()["trainingExecution"])

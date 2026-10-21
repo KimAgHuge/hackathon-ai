@@ -25,6 +25,7 @@ const notice = ref('')
 const activeTab = ref('versions')
 const search = ref('')
 const statusFilter = ref('')
+const runtimeOpen = ref(false)
 const registerOpen = ref(false)
 const registerBusy = ref(false)
 const registerError = ref('')
@@ -265,8 +266,6 @@ onBeforeUnmount(() => {
                 <BaseButton variant="secondary" :loading="loading" :disabled="registerBusy || evaluationBusy" @click="refreshAfterOperation"
                     >새로고침</BaseButton
                 >
-                <BaseButton v-if="canTrain" variant="secondary" @click="selectTab('trainingJobs')">웹 학습 관리</BaseButton>
-                <BaseButton v-if="canRegister" :disabled="!registryAvailable || loading || registerBusy" @click="openRegister">모델 버전 등록</BaseButton>
             </template>
         </ViewHeading>
         <p v-if="canRegister && !registryAvailable" class="mb-4 text-xs text-slate-500 dark:text-slate-400">
@@ -308,24 +307,27 @@ onBeforeUnmount(() => {
                     <p class="mt-2 text-xs leading-6 text-blue-200">설치·응답 확인이며 메모리 적재와 실제 추론 완료를 보증하지 않습니다.</p>
                 </div>
                 <div class="border-t border-white/15 bg-white/5 p-5 sm:p-6 lg:border-l lg:border-t-0">
-                    <h3 class="text-sm font-bold">모델 관리 순서</h3>
-                    <ol class="mt-4 grid gap-3 text-sm text-blue-100">
-                        <li class="flex items-center gap-3">
-                            <span class="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-white/15 text-xs font-bold">1</span>학습 산출물과 파일 위치
-                            확인
-                        </li>
-                        <li class="flex items-center gap-3">
-                            <span class="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-white/15 text-xs font-bold">2</span>모델 버전 등록
-                        </li>
-                        <li class="flex items-center gap-3">
-                            <span class="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-white/15 text-xs font-bold">3</span>별도로 수행한 평가 기록
-                        </li>
-                    </ol>
-                    <p class="mt-4 text-xs leading-6 text-blue-200">등록과 평가는 관리 기록만 저장하며 파일 자동 수신이나 배포를 실행하지 않습니다.</p>
+                    <p class="text-xs font-semibold text-blue-200">모델 실행 설정</p>
+                    <h3 class="mt-3 text-lg font-extrabold">분석에 사용할 모델을 관리하세요</h3>
+                    <p class="mt-2 text-sm leading-6 text-blue-100">설치된 모델을 확인하고 응답 검증을 거쳐 변경할 수 있습니다.</p>
+                    <button
+                        type="button"
+                        class="mt-5 inline-flex min-h-11 items-center justify-center gap-3 rounded-xl bg-white px-5 py-3 text-sm font-bold text-blue-900 shadow-sm transition hover:bg-blue-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white"
+                        @click="runtimeOpen = true"
+                    >
+                        사용 모델 변경
+                    </button>
+                    <p class="mt-3 text-xs leading-6 text-blue-200">변경한 모델은 새 분석부터 적용됩니다.</p>
                 </div>
             </div>
         </section>
-        <ModelRuntimeControl :can-deploy="canDeploy" :can-rollback="canRollback" :refresh-key="operationRefreshKey" @changed="refreshAfterOperation" />
+        <ModelRuntimeControl
+            v-model="runtimeOpen"
+            :can-deploy="canDeploy"
+            :can-rollback="canRollback"
+            :refresh-key="operationRefreshKey"
+            @changed="refreshAfterOperation"
+        />
         <div class="mt-5 grid gap-3 sm:grid-cols-3">
             <section
                 v-for="item in [
@@ -353,6 +355,15 @@ onBeforeUnmount(() => {
             <BaseButton class="mt-3" variant="secondary" :loading="loading" @click="refreshModels">다시 불러오기</BaseButton>
         </div>
         <section class="mt-6 min-w-0">
+            <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+                <div>
+                    <h2 class="text-base font-extrabold text-slate-900 dark:text-slate-100">모델 관리 기록</h2>
+                    <p class="mt-1 text-xs leading-6 text-slate-500 dark:text-slate-400">모델 버전과 학습 작업, 변경 이력을 확인합니다.</p>
+                </div>
+                <BaseButton v-if="canRegister && activeTab === 'versions'" :disabled="!registryAvailable || loading || registerBusy" @click="openRegister"
+                    >모델 버전 등록</BaseButton
+                >
+            </div>
             <div class="flex flex-wrap gap-2 border-b border-slate-200 pb-4 dark:border-slate-700" aria-label="모델 관리 목록">
                 <button
                     v-for="tab in tabs"
@@ -480,7 +491,7 @@ onBeforeUnmount(() => {
                         <BaseButton disabled size="small">등록 파일 직접 배포 불가</BaseButton>
                     </div>
                     <p class="mt-3 text-xs">
-                        설치된 Ollama 모델의 전환과 복구는 상단의 설치 모델 영역에서 진행합니다. 등록한 LoRA 파일을 바로 적용하는 기능은 아닙니다.
+                        설치된 모델의 전환과 복구는 상단의 사용 모델 변경 버튼에서 진행합니다. 등록한 LoRA 파일을 바로 적용하는 기능은 아닙니다.
                     </p>
                 </div>
                 <BaseTable

@@ -134,5 +134,20 @@ class ModelExecutionServiceTest {
         assertThat(result).doesNotContainKeys("targetKey", "request", "result");
     }
 
-    private static ModelExecutionRequest training(UUID id, int count) { return new ModelExecutionRequest(id, null, null, null, null, count); }
+    @Test void trainingCatalogAndHistoryOnlyExposeTheMatchingSourceModel() {
+        var target = Map.<String, Object>of("sourceModel", "qwen3.8:27b", "baseModel", "mlx-community/Qwen3.8-27B-4bit",
+                "revision", "a".repeat(40), "digest", "b".repeat(64));
+        when(client.training("GET", "/api/training/capabilities", Map.of())).thenReturn(Map.of("trainingExecution", true,
+                "dataset", Map.of("target", target, "samples", List.of(
+                        Map.of("caseId", "qwen-case", "sourceModel", "qwen3.8:27b"),
+                        Map.of("caseId", "other-case", "sourceModel", "gemma4:26b")), "total", 1)));
+        when(client.training("GET", "/api/training/jobs", Map.of())).thenReturn(Map.of("jobs", List.of()));
+        when(repository.training("training-target", 101)).thenReturn(List.of(
+                Map.of("id", "matching", "status", "SUCCEEDED", "result", Map.of("target", target)),
+                Map.of("id", "legacy", "status", "SUCCEEDED", "result", Map.of())));
+        var result = service.training();
+        assertThat(result.toString()).contains("qwen-case", "matching").doesNotContain("other-case", "legacy");
+    }
+
+    private static ModelExecutionRequest training(UUID id, int count) { return new ModelExecutionRequest(id, "qwen3.8:27b", "a".repeat(64), null, null, count); }
 }

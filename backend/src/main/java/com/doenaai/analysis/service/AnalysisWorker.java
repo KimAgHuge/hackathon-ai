@@ -213,6 +213,8 @@ public class AnalysisWorker {
             Map<String, Object> facts = new LinkedHashMap<>(Map.of("sourceSummary", payload.get("sourceSummary"),
                     "databaseSummary", payload.get("databaseSummary"), "relations", payload.get("relations")));
             var finalResult = new LinkedHashMap<>(result);
+            var analysisModel = finalResult.remove("analysisModel");
+            if (analysisModel instanceof String name && name.matches("[A-Za-z0-9][A-Za-z0-9._:/@+\\-]{0,199}")) facts.put("analysisModel", name);
             var generalAnalysis = finalResult.remove("generalAnalysis");
             if (generalAnalysis instanceof Map<?, ?>) facts.put("generalAnalysis", generalAnalysis);
             results.complete(job.jobId(), finalResult, facts);

@@ -6,8 +6,8 @@ import BaseModal from '@/components/base/BaseModal.vue'
 import BaseSelect from '@/components/base/BaseSelect.vue'
 import { operationErrorMessage, operationStatusLabel, probeMatchesSelection, uncertainRequestError } from '@/lib/modelOperations'
 
-const props = defineProps({ canDeploy: Boolean, canRollback: Boolean, refreshKey: { type: Number, default: 0 } })
-const emit = defineEmits(['changed'])
+const props = defineProps({ modelValue: Boolean, canDeploy: Boolean, canRollback: Boolean, refreshKey: { type: Number, default: 0 } })
+const emit = defineEmits(['changed', 'update:modelValue'])
 const installed = ref(null)
 const loaded = ref(false)
 const loading = ref(false)
@@ -61,7 +61,18 @@ watch(selectedName, () => {
     message.value = ''
     error.value = ''
 })
-watch(() => props.refreshKey, load)
+watch(
+    () => props.refreshKey,
+    () => {
+        if (props.modelValue) load()
+    }
+)
+watch(
+    () => props.modelValue,
+    (open) => {
+        if (open) load()
+    }
+)
 const verify = async () => {
     if (!props.canDeploy || !selected.value?.selectable || busy.value || pending.value || !loaded.value) return
     const model = selected.value
@@ -176,7 +187,7 @@ const checkPending = async () => {
     }
 }
 onMounted(() => {
-    load()
+    if (props.modelValue) load()
     clock = setInterval(() => {
         now.value = Date.now()
     }, 1000)
@@ -189,115 +200,132 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-    <section class="mt-5 min-w-0 rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-900">
-        <div class="flex flex-wrap items-center justify-between gap-3">
-            <div>
-                <h2 class="text-base font-extrabold">AI 서버에 설치된 모델</h2>
-                <p class="mt-1 text-xs leading-6 text-slate-500 dark:text-slate-400">
-                    이 PC가 아닌, 연결된 AI 분석/추론 서버의 Ollama 설치 목록입니다. DB 등록 버전과는 별도입니다.
-                </p>
+    <BaseModal
+        :model-value="modelValue"
+        title="사용 모델 변경"
+        :busy="Boolean(busy) || Boolean(confirmMode)"
+        footer-text="창을 닫아도 접수된 요청은 취소되지 않습니다. 변경 결과는 실행 작업 이력에서도 확인할 수 있습니다."
+        @update:model-value="emit('update:modelValue', $event)"
+    >
+        <section class="min-w-0">
+            <div class="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                    <h2 class="text-base font-extrabold">AI 서버에 설치된 모델</h2>
+                    <p class="mt-1 text-xs leading-6 text-slate-500 dark:text-slate-400">
+                        연결된 AI 분석/추론 서버의 모델 실행 환경에 설치된 모델 목록입니다. DB에 등록한 모델 버전과는 별도입니다.
+                    </p>
+                </div>
+                <BaseButton variant="secondary" size="small" :loading="loading" :disabled="Boolean(busy)" @click="load">설치 목록 새로고침</BaseButton>
             </div>
-            <BaseButton variant="secondary" size="small" :loading="loading" :disabled="Boolean(busy)" @click="load">설치 목록 새로고침</BaseButton>
-        </div>
-        <dl class="mt-4 grid gap-3 text-sm sm:grid-cols-2">
-            <div class="min-w-0">
-                <dt class="text-xs text-slate-500 dark:text-slate-400">현재 설정 모델</dt>
-                <dd class="mt-1 break-all font-bold">{{ installed?.model || '미확인' }}</dd>
+            <ol class="mt-5 grid grid-cols-3 gap-2 text-center text-xs font-bold text-blue-800 dark:text-blue-200" aria-label="모델 변경 순서">
+                <li class="rounded-lg bg-blue-50 px-2 py-3 dark:bg-blue-950/40">1. 모델 선택</li>
+                <li class="rounded-lg bg-blue-50 px-2 py-3 dark:bg-blue-950/40">2. 응답 검증</li>
+                <li class="rounded-lg bg-blue-50 px-2 py-3 dark:bg-blue-950/40">3. 변경 확인</li>
+            </ol>
+            <dl class="mt-4 grid gap-3 text-sm sm:grid-cols-2">
+                <div class="min-w-0">
+                    <dt class="text-xs text-slate-500 dark:text-slate-400">현재 설정 모델</dt>
+                    <dd class="mt-1 break-all font-bold">{{ installed?.model || '미확인' }}</dd>
+                </div>
+                <div class="min-w-0">
+                    <dt class="text-xs text-slate-500 dark:text-slate-400">복구 대상</dt>
+                    <dd class="mt-1 break-all font-bold">{{ installed?.previousModel || '복구 기록 없음' }}</dd>
+                </div>
+            </dl>
+            <div class="mt-4 grid items-end gap-3 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
+                <BaseSelect
+                    v-model="selectedName"
+                    label="전환할 설치 모델"
+                    :options="options"
+                    :disabled="!loaded || Boolean(busy) || Boolean(pending)"
+                /><BaseButton
+                    variant="secondary"
+                    :disabled="!canDeploy || !selected?.selectable || !loaded || Boolean(busy) || Boolean(pending)"
+                    :loading="busy === 'probe'"
+                    @click="verify"
+                    >{{ probeRequest ? '같은 검증 재시도' : 'JSON 응답 검증' }}</BaseButton
+                ><BaseButton :disabled="!canDeploy || !probeValid || Boolean(busy) || Boolean(pending)" @click="openConfirm('activate')">모델 전환</BaseButton>
             </div>
-            <div class="min-w-0">
-                <dt class="text-xs text-slate-500 dark:text-slate-400">복구 대상</dt>
-                <dd class="mt-1 break-all font-bold">{{ installed?.previousModel || '복구 기록 없음' }}</dd>
-            </div>
-        </dl>
-        <div class="mt-4 grid items-end gap-3 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
-            <BaseSelect
-                v-model="selectedName"
-                label="전환할 설치 모델"
-                :options="options"
-                :disabled="!loaded || Boolean(busy) || Boolean(pending)"
-            /><BaseButton
-                variant="secondary"
-                :disabled="!canDeploy || !selected?.selectable || !loaded || Boolean(busy) || Boolean(pending)"
-                :loading="busy === 'probe'"
-                @click="verify"
-                >{{ probeRequest ? '같은 검증 재시도' : 'JSON 응답 검증' }}</BaseButton
-            ><BaseButton :disabled="!canDeploy || !probeValid || Boolean(busy) || Boolean(pending)" @click="openConfirm('activate')">모델 전환</BaseButton>
-        </div>
-        <p v-if="busy === 'probe'" role="status" class="mt-3 text-sm leading-6 text-blue-700 dark:text-blue-300">
-            AI 서버에서 모델을 불러와 실제 JSON 응답을 시험하고 있습니다. GPU·메모리를 사용하며 응답을 기다리는 동안 중복 요청을 보내지 마세요.
-        </p>
-        <p v-if="selected" class="mt-2 break-all text-xs text-slate-500 dark:text-slate-400">
-            {{ selected.reason || '설치 파일 식별자를 확인한 뒤 검증과 전환을 진행합니다.' }} · {{ selected.digest }}
-        </p>
-        <p v-if="probe && !probeValid" class="mt-2 text-xs text-amber-700 dark:text-amber-300">
-            검증 결과가 만료되었거나 현재 선택·설정과 다릅니다. 다시 검증해 주세요.
-        </p>
-        <div v-if="choices.some((model) => !model.selectable)" class="mt-3 grid gap-2">
-            <p v-for="model in choices.filter((item) => !item.selectable)" :key="model.name" class="break-all text-xs text-slate-500 dark:text-slate-400">
-                선택 불가 · {{ model.name }} · {{ model.reason || '이 모델은 전환할 수 없습니다.' }}
+            <p v-if="busy === 'probe'" role="status" class="mt-3 text-sm leading-6 text-blue-700 dark:text-blue-300">
+                AI 서버에서 모델을 불러와 실제 JSON 응답을 시험하고 있습니다. GPU·메모리를 사용하며 응답을 기다리는 동안 중복 요청을 보내지 마세요.
             </p>
-        </div>
-        <p v-if="loaded && !choices.length" class="mt-4 text-sm text-slate-500 dark:text-slate-400">AI 서버에서 확인한 설치 모델이 없습니다.</p>
-        <p v-if="!canDeploy" class="mt-3 text-xs text-slate-500 dark:text-slate-400">검증과 전환에는 MODEL_DEPLOY 권한이 필요합니다.</p>
-        <p v-if="message" role="status" class="mt-4 rounded-lg bg-blue-50 p-3 text-sm leading-6 text-blue-800 dark:bg-blue-950/40 dark:text-blue-200">
-            {{ message }}
-        </p>
-        <p v-if="error || loadError" role="alert" class="mt-4 rounded-lg bg-rose-50 p-3 text-sm leading-6 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">
-            {{ error || loadError }}
-        </p>
-        <div v-if="pending" class="mt-4 rounded-lg border border-amber-200 p-4 dark:border-amber-800">
-            <p class="break-all text-xs leading-6">확인 중인 요청 · {{ pending.body.operationId }}</p>
-            <div class="mt-3 flex flex-wrap gap-2">
-                <BaseButton size="small" variant="secondary" :disabled="Boolean(busy)" @click="checkPending">작업 상태 확인</BaseButton
-                ><BaseButton size="small" variant="secondary" :disabled="Boolean(busy)" @click="apply">같은 요청 수동 재시도</BaseButton>
+            <p v-if="selected" class="mt-2 break-all text-xs text-slate-500 dark:text-slate-400">
+                {{ selected.reason || '설치 파일 식별자를 확인한 뒤 검증과 전환을 진행합니다.' }} · {{ selected.digest }}
+            </p>
+            <p v-if="probe && !probeValid" class="mt-2 text-xs text-amber-700 dark:text-amber-300">
+                검증 결과가 만료되었거나 현재 선택·설정과 다릅니다. 다시 검증해 주세요.
+            </p>
+            <div v-if="choices.some((model) => !model.selectable)" class="mt-3 grid gap-2">
+                <p v-for="model in choices.filter((item) => !item.selectable)" :key="model.name" class="break-all text-xs text-slate-500 dark:text-slate-400">
+                    선택 불가 · {{ model.name }} · {{ model.reason || '이 모델은 전환할 수 없습니다.' }}
+                </p>
             </div>
-        </div>
-        <div class="mt-4 flex flex-wrap items-center gap-3">
-            <BaseButton
-                variant="secondary"
-                :disabled="!canRollback || !loaded || !installed?.canRollback || Boolean(busy) || Boolean(pending)"
-                @click="openConfirm('rollback')"
-                >이전 모델로 복구</BaseButton
-            ><span class="text-xs text-slate-500 dark:text-slate-400">{{
-                canRollback ? '서버가 확인한 이전 설정 모델로만 복구합니다.' : '복구에는 MODEL_ROLLBACK 권한이 필요합니다.'
-            }}</span>
-        </div>
-        <p class="mt-4 text-xs leading-6 text-slate-500 dark:text-slate-400">
-            전환은 새 분석 요청부터 적용하며 진행 중인 분석은 시작할 때 고정한 모델을 유지합니다. LoRA 파일 등록은 Ollama 설치가 아니므로 변환·가져오기를 별도로
-            완료해야 합니다.
-        </p>
-        <BaseModal
-            :model-value="Boolean(confirmMode)"
-            :title="confirmMode === 'rollback' ? '이전 모델 복구 확인' : '설치 모델 전환 확인'"
-            :busy="Boolean(busy)"
-            footer-text="명시적으로 확인한 모델 설정만 변경합니다. 진행 중인 분석은 시작할 때의 모델을 유지합니다."
-            @update:model-value="
-                (open) => {
-                    if (!open && !busy) confirmMode = ''
-                }
-            "
-        >
-            <div class="grid gap-4 text-sm leading-7">
-                <p class="break-all font-bold">
-                    {{ installed?.model || '미확인' }} → {{ confirmMode === 'rollback' ? installed?.previousModel : selected?.name }}
-                </p>
-                <p>
-                    새 분석 요청의 모델 설정을 변경합니다. 짧은 JSON 검증은 업무 정답 품질과 운영 승인을 보증하지 않습니다. 진행 중인 분석의 모델은 바꾸지
-                    않습니다.
-                </p>
-                <label class="flex items-start gap-3"
-                    ><input v-model="confirmed" type="checkbox" class="mt-1.5 h-4 w-4 shrink-0" :disabled="Boolean(busy) || Boolean(pending)" /><span
-                        >대상 모델과 새 요청부터 적용되는 범위를 확인했습니다.</span
-                    ></label
-                >
-                <p v-if="error" role="alert" class="text-rose-700 dark:text-rose-300">{{ error }}</p>
-                <div class="flex flex-wrap gap-2">
-                    <BaseButton :disabled="!confirmed || Boolean(pending)" :loading="Boolean(busy)" @click="apply">{{
-                        confirmMode === 'rollback' ? '확인 후 복구' : '확인 후 전환'
-                    }}</BaseButton
-                    ><BaseButton v-if="pending" variant="secondary" :disabled="Boolean(busy)" @click="checkPending">기존 요청 상태 확인</BaseButton>
+            <p v-if="loaded && !choices.length" class="mt-4 text-sm text-slate-500 dark:text-slate-400">AI 서버에서 확인한 설치 모델이 없습니다.</p>
+            <p v-if="!canDeploy" class="mt-3 text-xs text-slate-500 dark:text-slate-400">검증과 전환에는 MODEL_DEPLOY 권한이 필요합니다.</p>
+            <p v-if="message" role="status" class="mt-4 rounded-lg bg-blue-50 p-3 text-sm leading-6 text-blue-800 dark:bg-blue-950/40 dark:text-blue-200">
+                {{ message }}
+            </p>
+            <p
+                v-if="error || loadError"
+                role="alert"
+                class="mt-4 rounded-lg bg-rose-50 p-3 text-sm leading-6 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300"
+            >
+                {{ error || loadError }}
+            </p>
+            <div v-if="pending" class="mt-4 rounded-lg border border-amber-200 p-4 dark:border-amber-800">
+                <p class="break-all text-xs leading-6">확인 중인 요청 · {{ pending.body.operationId }}</p>
+                <div class="mt-3 flex flex-wrap gap-2">
+                    <BaseButton size="small" variant="secondary" :disabled="Boolean(busy)" @click="checkPending">작업 상태 확인</BaseButton
+                    ><BaseButton size="small" variant="secondary" :disabled="Boolean(busy)" @click="apply">같은 요청 수동 재시도</BaseButton>
                 </div>
             </div>
-        </BaseModal>
-    </section>
+            <div class="mt-4 flex flex-wrap items-center gap-3">
+                <BaseButton
+                    variant="secondary"
+                    :disabled="!canRollback || !loaded || !installed?.canRollback || Boolean(busy) || Boolean(pending)"
+                    @click="openConfirm('rollback')"
+                    >이전 모델로 복구</BaseButton
+                ><span class="text-xs text-slate-500 dark:text-slate-400">{{
+                    canRollback ? '서버가 확인한 이전 설정 모델로만 복구합니다.' : '복구에는 MODEL_ROLLBACK 권한이 필요합니다.'
+                }}</span>
+            </div>
+            <p class="mt-4 text-xs leading-6 text-slate-500 dark:text-slate-400">
+                전환은 새 분석 요청부터 적용하며 진행 중인 분석은 시작할 때 고정한 모델을 유지합니다. 등록한 LoRA 파일을 실행하려면 호환되는 모델로
+                변환·가져오기를 별도로 완료해야 합니다.
+            </p>
+            <BaseModal
+                :model-value="Boolean(confirmMode)"
+                :title="confirmMode === 'rollback' ? '이전 모델 복구 확인' : '설치 모델 전환 확인'"
+                :busy="Boolean(busy)"
+                footer-text="명시적으로 확인한 모델 설정만 변경합니다. 진행 중인 분석은 시작할 때의 모델을 유지합니다."
+                @update:model-value="
+                    (open) => {
+                        if (!open && !busy) confirmMode = ''
+                    }
+                "
+            >
+                <div class="grid gap-4 text-sm leading-7">
+                    <p class="break-all font-bold">
+                        {{ installed?.model || '미확인' }} → {{ confirmMode === 'rollback' ? installed?.previousModel : selected?.name }}
+                    </p>
+                    <p>
+                        새 분석 요청의 모델 설정을 변경합니다. 짧은 JSON 검증은 업무 정답 품질과 운영 승인을 보증하지 않습니다. 진행 중인 분석의 모델은 바꾸지
+                        않습니다.
+                    </p>
+                    <label class="flex items-start gap-3"
+                        ><input v-model="confirmed" type="checkbox" class="mt-1.5 h-4 w-4 shrink-0" :disabled="Boolean(busy) || Boolean(pending)" /><span
+                            >대상 모델과 새 요청부터 적용되는 범위를 확인했습니다.</span
+                        ></label
+                    >
+                    <p v-if="error" role="alert" class="text-rose-700 dark:text-rose-300">{{ error }}</p>
+                    <div class="flex flex-wrap gap-2">
+                        <BaseButton :disabled="!confirmed || Boolean(pending)" :loading="Boolean(busy)" @click="apply">{{
+                            confirmMode === 'rollback' ? '확인 후 복구' : '확인 후 전환'
+                        }}</BaseButton
+                        ><BaseButton v-if="pending" variant="secondary" :disabled="Boolean(busy)" @click="checkPending">기존 요청 상태 확인</BaseButton>
+                    </div>
+                </div>
+            </BaseModal>
+        </section>
+    </BaseModal>
 </template>

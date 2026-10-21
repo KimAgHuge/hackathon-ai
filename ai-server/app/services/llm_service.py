@@ -229,7 +229,9 @@ class LlmService:
                     await self._runtime.validate_selection(selection)
                 except ModelRuntimeError:
                     raise ModelUnavailableError("선택 모델의 설치 파일을 확인하지 못했습니다. 관리자에게 모델 상태를 확인해 주세요.") from None
-            return await self._analyze(request, progress)
+            result = await self._analyze(request, progress)
+            # 생성 모델은 모델 답변이나 현재 화면 선택값이 아닌 요청에 고정한 값으로 기록한다.
+            return result.model_copy(update={"analysis_model": self._model})
         finally:
             self._request_model.reset(token)
 

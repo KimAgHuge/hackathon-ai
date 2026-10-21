@@ -122,6 +122,8 @@ final class TrainingCaseDraftBuilder {
         draft.put("snapshot", snapshot);
         draft.put("request", request);
         draft.put("answers", answers);
+        if (facts.get("analysisModel") instanceof String model) draft.put("sourceModel", model);
+        else reviewRequired.add("sourceModel: 분석 생성 모델 기록이 없습니다. 모델별 학습에서는 제외하며 현재 설정으로 추정하지 않습니다.");
         reviewRequired.add("humanApproved, sanitized: 정답 검토와 비식별화가 필요합니다. 전송 화면의 확인란을 선택하면 자동으로 반영됩니다.");
         return new TrainingCaseDraftResponse(draft, List.copyOf(reviewRequired), List.copyOf(autoFilled));
     }

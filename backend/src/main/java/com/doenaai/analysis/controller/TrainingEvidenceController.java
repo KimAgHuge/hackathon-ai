@@ -33,7 +33,8 @@ public class TrainingEvidenceController {
             @Valid @RequestBody TrainingCaseRequest request, @AuthenticationPrincipal Jwt jwt) {
         var expected = results.trainingDraft(jobId, UUID.fromString(jwt.getSubject())).caseDraft();
         var value = request.caseDraft();
-        if (!Objects.equals(expected.get("caseId"), value.get("caseId"))
+        if (!Objects.equals(expected.get("sourceModel"), value.get("sourceModel"))
+                || !Objects.equals(expected.get("caseId"), value.get("caseId"))
                 || !(value.get("request") instanceof Map<?, ?> input)
                 || !(value.get("snapshot") instanceof Map<?, ?> snapshot)
                 || !Objects.equals(((Map<?, ?>) expected.get("request")).get("projectId"), input.get("projectId"))

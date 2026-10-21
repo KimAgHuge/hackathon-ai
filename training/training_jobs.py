@@ -7,7 +7,6 @@ import logging
 import math
 import os
 import re
-import shutil
 import signal
 import subprocess
 import sys
@@ -37,7 +36,7 @@ ERRORS = {
     "TRAINING_UNAVAILABLE": "학습 모델 경로와 호환 환경을 먼저 설정하세요.",
     "TRAINING_BUSY": "다른 학습 작업이 진행 중입니다. 완료하거나 취소한 뒤 다시 시도하세요.",
     "JOB_CONFLICT": "같은 작업 식별자로 다른 학습 조건을 요청할 수 없습니다.",
-    "INVALID_JOB_REQUEST": "작업 식별자와 1부터 20 사이의 정수 반복 횟수만 입력하세요.",
+    "INVALID_JOB_REQUEST": "작업 식별자·학습 대상 모델·버전 식별값과 1부터 20 사이의 정수 반복 횟수를 확인하세요.",
     "DATASET_TOO_SMALL": "서로 다른 원 요구사항의 짧은 일반 학습·검증 자료와 별도로 분리할 시험 그룹이 필요합니다.",
     "DATASET_INVALID": "수신 완료된 승인 자료의 계약과 무결성을 다시 확인하세요.",
     "DATASET_TOO_LARGE": "한 번에 준비할 수 있는 검증 자료의 크기 또는 파일 수를 초과했습니다.",
@@ -146,15 +145,66 @@ class TrainingJobStore:
             return "학습 모델 설정과 실행 환경을 확인하지 못했습니다."
         return None
 
-    def capabilities(self):
+    def training_target(self):
+        """검증한 기반 모델과 분석 모델의 명시적 대응만 허용한다."""
+        try:
+            manifest = json.loads((self.model_dir / "download_manifest.json").read_text())
+            if (manifest.get("modelId") != "mlx-community/Qwen3.8-27B-4bit"
+                    or not re.fullmatch(r"[0-9a-f]{40}", manifest.get("revision", ""))):
+                return None
+            target = {"sourceModel": "qwen3.8:27b", "baseModel": manifest["modelId"], "revision": manifest["revision"]}
+            return {**target, "digest": digest(target)}
+        except (OSError, ValueError, TypeError, AttributeError):
+            return None
+
+    def dataset_catalog(self):
+        """같은 생성 모델의 검증 자료만 표시하고 원문과 다른 모델의 사례는 노출하지 않는다."""
+        target = self.training_target()
+        samples = []
+        excluded = 0
+        total_bytes = 0
+        file_count = 0
+        with self.receiver.lock:
+            for path in sorted(self.receiver.state_dir.glob("*.json")):
+                if not HASH.fullmatch(path.stem):
+                    continue
+                receipt = self.receiver.status(path.stem)
+                if not receipt or receipt.get("status") != "VERIFIED":
+                    continue
+                source = self.receiver.inbox / f"{path.stem}.jsonl"
+                if source.is_symlink() or not source.is_file() or content_hash(source) != (path.stem, receipt.get("size")):
+                    raise TrainingJobError("DATASET_INVALID")
+                total_bytes += source.stat().st_size
+                file_count += 1
+                if total_bytes > 32 * 1024 * 1024 or file_count > 100:
+                    raise TrainingJobError("DATASET_TOO_LARGE")
+                values = read_jsonl(source)
+                if len(values) != receipt.get("cases"):
+                    raise TrainingJobError("DATASET_INVALID")
+                for value in values:
+                    try:
+                        validate_case(value)
+                    except DatasetError:
+                        raise TrainingJobError("DATASET_INVALID") from None
+                    if target and value.get("sourceModel") == target["sourceModel"]:
+                        samples.append({"caseId": value["caseId"], "sourceModel": value["sourceModel"]})
+                    else:
+                        excluded += 1
+        return {"target": target, "samples": samples[:100], "total": len(samples), "excluded": excluded,
+                "truncated": len(samples) > 100}
+
+    def capabilities(self, include_dataset=True):
         """실행 기능 제공 여부와 불가 이유만 반환하고 전체 경로는 공개하지 않는다."""
         with self.lock:
             configured = self._configuration_error()
+            if not self.training_target():
+                configured = configured or "학습 기반 모델과 분석 생성 모델의 대응 정보를 확인할 수 없습니다."
             owner = self._claim_owner()
             reason = configured or ("이전 작업 프로세스의 종료를 확인하지 못했습니다." if self.unsafe_process else None) or (
                 None if owner else "다른 학습 서버 프로세스가 작업 잠금을 보유하고 있습니다.")
             return {"trainingExecution": reason is None and not self.stopping.is_set(),
-                    "trainingExecutionReason": reason or "일반 분석의 제한된 시험 학습만 실행하며 운영 모델은 바꾸지 않습니다."}
+                    "trainingExecutionReason": reason or "일반 분석의 제한된 시험 학습만 실행하며 운영 모델은 바꾸지 않습니다.",
+                    "dataset": self.dataset_catalog() if include_dataset else {}}
 
     def _path(self, identifier):
         return self.state_dir / f"{job_id(identifier)}.json"
@@ -179,6 +229,8 @@ class TrainingJobStore:
 
     def _public(self, record):
         result = {key: record[key] for key in ("id", "status", "progress", "iterations", "createdAt", "updatedAt")}
+        if isinstance(record.get("target"), dict):
+            result["target"] = record["target"]
         code = record.get("errorCode")
         if code in ERRORS:
             result["errorCode"] = code
@@ -217,17 +269,21 @@ class TrainingJobStore:
         logger.info("학습 작업 상태 변경 status=%s code=%s", status, error or "NONE")
 
     def submit(self, body):
-        if (not isinstance(body, dict) or set(body) != {"jobId", "iterations"}
+        if (not isinstance(body, dict) or set(body) != {"jobId", "iterations", "model", "digest"}
                 or type(body.get("iterations")) is not int or not 1 <= body["iterations"] <= 20):
             raise TrainingJobError("INVALID_JOB_REQUEST", http_status=422)
         identifier = job_id(body["jobId"])
         with self.lock:
             previous = self._read(self._path(identifier))
             if previous:
-                if previous["iterations"] != body["iterations"]:
+                if (previous["iterations"] != body["iterations"] or not previous.get("target")
+                        or previous["target"]["sourceModel"] != body["model"] or previous["target"]["digest"] != body["digest"]):
                     raise TrainingJobError("JOB_CONFLICT")
                 return self._public(previous)
-            if not self.capabilities()["trainingExecution"]:
+            target = self.training_target()
+            if not target or body["model"] != target["sourceModel"] or body["digest"] != target["digest"]:
+                raise TrainingJobError("TRAINING_UNAVAILABLE")
+            if not self.capabilities(include_dataset=False)["trainingExecution"]:
                 raise TrainingJobError("TRAINING_UNAVAILABLE")
             if self.worker and self.worker.is_alive():
                 raise TrainingJobError("TRAINING_BUSY")
@@ -237,7 +293,7 @@ class TrainingJobStore:
                     raise TrainingJobError("TRAINING_BUSY")
             created = now()
             record = {"id": identifier, "status": "PENDING", "progress": 0, "iterations": body["iterations"],
-                      "createdAt": created, "updatedAt": created}
+                      "createdAt": created, "updatedAt": created, "target": self.training_target()}
             write_json_atomic(self._path(identifier), record)
             self.cancel_requested.clear()
             self.worker = threading.Thread(target=self._worker_entry, args=(identifier,), name="training-job", daemon=True)
@@ -288,18 +344,22 @@ class TrainingJobStore:
                     raise TrainingJobError("DATASET_TOO_LARGE")
                 if content_hash(source) != (checksum, receipt.get("size")):
                     raise TrainingJobError("DATASET_INVALID")
-                destination = sources / source.name
-                with source.open("rb") as original, destination.open("xb") as copied:
-                    os.fchmod(copied.fileno(), 0o600)
-                    shutil.copyfileobj(original, copied)
-                if content_hash(destination) != (checksum, receipt.get("size")):
-                    raise TrainingJobError("DATASET_INVALID")
-                values = read_jsonl(destination)
+                values = read_jsonl(source)
                 if len(values) != receipt.get("cases"):
                     raise TrainingJobError("DATASET_INVALID")
                 for value in values:
                     validate_case(value)
-                records.extend(values)
+                target = self.training_target()
+                matched = [value for value in values if target and value.get("sourceModel") == target["sourceModel"]]
+                if not matched:
+                    continue
+                destination = sources / source.name
+                # 혼합 파일도 해당 모델의 사례만 새 사본에 쓰며 수신 원본은 보존한다.
+                with destination.open("x") as copied:
+                    os.fchmod(copied.fileno(), 0o600)
+                    for value in matched:
+                        copied.write(json.dumps(value, ensure_ascii=False) + "\n")
+                records.extend(matched)
         groups = {}
         for record in records:
             requirement = record["request"]["sourceSummary"]["changeRequirement"].get("requirementId")
@@ -377,6 +437,9 @@ class TrainingJobStore:
 
     def _run(self, identifier):
         try:
+            record = self._read(self._path(identifier))
+            if not record.get("target") or record["target"] != self.training_target():
+                raise TrainingJobError("TRAINING_UNAVAILABLE")
             self._phase(identifier, "PREPARING", 10)
             directory = self.work_root / identifier
             directory.mkdir(mode=0o700, exist_ok=False)

@@ -296,9 +296,9 @@ def test_analysis_pins_all_stages_and_next_request_uses_new_model():
         if code == "GENERAL_COMPLETED":
             selection[0] = Selection(TARGET, SECOND, 1)
 
-    run(service.analyze(requirement_request(), progress=changed))
+    assert run(service.analyze(requirement_request(), progress=changed)).analysis_model == BASE
     assert [call["model"] for call in client.chat_kwargs] == [BASE, BASE]
-    run(service.analyze(requirement_request()))
+    assert run(service.analyze(requirement_request())).analysis_model == TARGET
     assert [call["model"] for call in client.chat_kwargs[2:]] == [TARGET, TARGET]
 
 

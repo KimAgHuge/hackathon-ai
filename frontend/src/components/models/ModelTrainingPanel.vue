@@ -28,9 +28,18 @@ const pending = ref(null)
 const validation = ref('')
 let disposed = false
 const jobs = computed(() => (Array.isArray(state.value?.jobs) ? state.value.jobs : []))
+const trainingTarget = computed(() => state.value?.dataset?.target)
+const trainingSamples = computed(() => (Array.isArray(state.value?.dataset?.samples) ? state.value.dataset.samples : []))
 const hasActive = computed(() => jobs.value.some((job) => activeTrainingStatuses.has(job.status)))
 const canStart = computed(
-    () => props.canTrain && state.value?.capabilities?.trainingExecution === true && !hasActive.value && !pending.value && !error.value && !loading.value
+    () =>
+        props.canTrain &&
+        state.value?.capabilities?.trainingExecution === true &&
+        Boolean(trainingTarget.value?.digest) &&
+        !hasActive.value &&
+        !pending.value &&
+        !error.value &&
+        !loading.value
 )
 const progressLabel = (value) =>
     value === null || value === undefined ? '미기록' : Number.isFinite(Number(value)) && value >= 0 && value <= 100 ? `${value}%` : '미확인'
@@ -102,7 +111,10 @@ const submit = async () => {
                 validation.value = '현재 학습 실행 상태를 다시 확인해 주세요.'
                 return
             }
-            pending.value = { action: 'start', body: { operationId: crypto.randomUUID(), iterations: value } }
+            pending.value = {
+                action: 'start',
+                body: { operationId: crypto.randomUUID(), iterations: value, model: trainingTarget.value.sourceModel, digest: trainingTarget.value.digest },
+            }
         } else if (modal.value === 'cancel' && cancelTarget.value?.id)
             pending.value = { action: 'cancel', id: cancelTarget.value.id, body: { operationId: crypto.randomUUID() } }
         else return
@@ -161,6 +173,27 @@ defineExpose({ openStart, refresh })
                 ><BaseButton v-if="canTrain" :disabled="!canStart || busy" size="small" @click="openStart">학습 시작</BaseButton>
             </div>
         </div>
+        <section class="mb-4 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
+            <h3 class="text-sm font-bold">학습 대상과 사용 자료</h3>
+            <template v-if="trainingTarget">
+                <p class="mt-3 break-all text-sm font-bold">{{ trainingTarget.sourceModel }} → {{ trainingTarget.baseModel }}</p>
+                <p class="mt-1 break-all text-xs text-slate-500 dark:text-slate-400">기반 모델 버전 · {{ trainingTarget.revision }}</p>
+                <p class="mt-3 text-xs leading-6 text-slate-500 dark:text-slate-400">
+                    같은 모델로 분석하고 승인한 자료만 사용합니다. 생성 모델이 다르거나 기록이 없는 자료는 제외합니다.
+                </p>
+                <p class="mt-3 text-sm font-semibold">사용 가능한 승인 자료 · {{ state.dataset.total ?? 0 }}건</p>
+                <ul class="mt-2 grid gap-2 text-xs sm:grid-cols-2">
+                    <li v-for="sample in trainingSamples" :key="sample.caseId" class="break-all rounded-lg bg-slate-50 p-3 dark:bg-slate-800">
+                        {{ sample.caseId }} · {{ sample.sourceModel }}
+                    </li>
+                </ul>
+                <p v-if="state.dataset.truncated" class="mt-2 text-xs text-slate-500">최근 목록 중 최대 100건만 표시합니다.</p>
+                <p v-if="state.dataset.excluded" class="mt-2 text-xs text-amber-700 dark:text-amber-300">
+                    다른 모델 또는 생성 모델 미확인 자료 {{ state.dataset.excluded }}건은 제외했습니다.
+                </p>
+            </template>
+            <p v-else class="mt-2 text-sm text-slate-500">학습 대상 모델을 확인하지 못했습니다. 서버 연결과 최신 학습 서버 설정을 확인해 주세요.</p>
+        </section>
         <p v-if="state?.capabilities?.reason" class="mb-4 rounded-lg bg-slate-100 p-3 text-sm leading-6 dark:bg-slate-800">{{ state.capabilities.reason }}</p>
         <p v-if="hasActive" class="mb-4 text-xs text-blue-700 dark:text-blue-300">
             활성 작업은 5초마다 순서대로 확인합니다. 화면이 숨겨지면 멈추며 조회 오류 뒤에는 수동 새로고침이 필요합니다.
@@ -204,6 +237,9 @@ defineExpose({ openStart, refresh })
                         >취소 요청</BaseButton
                     >
                 </div>
+                <p class="mt-3 break-all text-xs text-slate-500">
+                    학습 모델 · {{ job.target?.sourceModel || '기존 작업: 모델 미기록' }}<span v-if="job.target?.baseModel"> / {{ job.target.baseModel }}</span>
+                </p>
                 <p class="mt-3 break-all text-sm leading-6">{{ job.message || '작업의 다음 상태를 기다리고 있습니다.' }}</p>
                 <p v-if="job.errorCode" class="mt-2 break-all text-xs text-rose-600 dark:text-rose-300">오류 코드 · {{ job.errorCode }}</p>
                 <dl class="mt-4 grid gap-3 text-xs sm:grid-cols-3">
@@ -221,7 +257,7 @@ defineExpose({ openStart, refresh })
                     </div>
                 </dl>
                 <p v-if="job.status === 'SUCCEEDED'" class="mt-3 text-xs leading-6 text-blue-700 dark:text-blue-300">
-                    시험 학습·재로딩 완료이며 업무 품질 통과나 Ollama 설치·운영 배포를 뜻하지 않습니다.
+                    시험 학습·재로딩 완료이며 업무 품질 통과나 모델 설치·운영 배포를 뜻하지 않습니다.
                 </p>
             </article>
         </div>
@@ -242,8 +278,11 @@ defineExpose({ openStart, refresh })
                         학습 서버의 GPU·메모리·전원과 저장 공간을 사용하며, 다른 작업의 응답 속도에 영향을 줄 수 있습니다. 승인된 자료만 사용하며
                         학습·저장·재로딩을 수행합니다.
                     </p>
+                    <p class="break-all font-bold">학습 대상 · {{ trainingTarget?.sourceModel }} / {{ trainingTarget?.baseModel }}</p>
                     <BaseInput v-model="iterations" label="학습 반복 횟수" type="number" min="1" max="20" step="1" :disabled="busy || Boolean(pending)" />
-                    <p>생성된 LoRA 어댑터는 업무 품질 평가와 변환·Ollama 가져오기를 별도로 거쳐야 합니다. 현재 운영 모델은 자동 변경하지 않습니다.</p></template
+                    <p>
+                        생성된 LoRA 어댑터는 업무 품질 평가와 실행 환경에 맞는 변환·가져오기를 별도로 거쳐야 합니다. 현재 운영 모델은 자동 변경하지 않습니다.
+                    </p></template
                 ><template v-else
                     ><p class="break-all">취소 대상 · {{ cancelTarget?.id }}</p>
                     <p>

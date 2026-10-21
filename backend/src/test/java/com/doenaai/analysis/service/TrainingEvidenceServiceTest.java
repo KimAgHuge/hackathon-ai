@@ -34,6 +34,19 @@ class TrainingEvidenceServiceTest {
                 "https://example.com/repository.git", "main", revision)));
     }
 
+    @Test void rejectsChangingOrInventingTheSavedSourceModel() {
+        approved();
+        var submitted = new LinkedHashMap<>(sample(1));
+        submitted.put("sourceModel", "qwen3.8:27b");
+        assertThatThrownBy(() -> service.verifiedCase(jobId, userId, submitted)).isInstanceOf(Exception.class);
+        var saved = new LinkedHashMap<>(sample(1));
+        saved.put("sourceModel", "qwen3.8:27b");
+        when(results.trainingDraft(jobId, userId)).thenReturn(new TrainingCaseDraftResponse(saved, List.of()));
+        submitted.put("sourceModel", "gemma4:26b");
+        assertThatThrownBy(() -> service.verifiedCase(jobId, userId, submitted)).isInstanceOf(Exception.class);
+        verifyNoInteractions(git);
+    }
+
     @Test void addsVerifiedExcerptOnlyToCopyAndResetsReviewFlags() throws Exception {
         approved();
         var root = Files.createDirectory(directory.resolve("checkout"));

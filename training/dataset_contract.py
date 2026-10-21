@@ -18,7 +18,7 @@ from app.services.source_context import general_overview, source_context
 from app.services.database_scope import database_review_scope, database_input
 
 STAGES = {"general": RequirementGeneralAnalysisResponse, "database": DatabaseImpact}
-VALIDATION_FEATURES = ("FILE_LEVEL_EVIDENCE", "DATABASE_SCOPE_REVIEW", "DATABASE_CHANGE_SEMANTICS_V2", "DATABASE_REVIEW_PLAN_V1")
+VALIDATION_FEATURES = ("FILE_LEVEL_EVIDENCE", "DATABASE_SCOPE_REVIEW", "DATABASE_CHANGE_SEMANTICS_V2", "DATABASE_REVIEW_PLAN_V1", "SOURCE_MODEL_V1")
 IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}\Z")
 SECRET_VALUE = re.compile(
     r"-----BEGIN [A-Z ]*PRIVATE KEY-----|\bhf_[A-Za-z0-9]{20,}\b|"
@@ -218,7 +218,7 @@ def review_flags(stage, answer, request):
 def required_validation_features(record):
     """새 검증 규칙이 필요한 사례만 수신 서버의 호환성을 게시 전에 확인한다."""
     general = record["answers"]["general"]
-    features = set()
+    features = {"SOURCE_MODEL_V1"} if "sourceModel" in record else set()
     if general.get("databaseReviewPlan") is not None:
         features.add("DATABASE_REVIEW_PLAN_V1")
     if any(isinstance(item, dict) and item.get("line") is None for item in general["evidences"]):
@@ -234,6 +234,10 @@ def required_validation_features(record):
 def validate_case(record):
     """승인·비식별·스냅샷 정보와 두 단계 정답을 엄격히 확인한다."""
     keys = {"caseId", "projectGroup", "humanApproved", "sanitized", "approval", "snapshot", "request", "answers"}
+    if "sourceModel" in record:
+        keys.add("sourceModel")
+        if not isinstance(record["sourceModel"], str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/@+\-]{0,199}", record["sourceModel"]):
+            raise DatasetError("분석 생성 모델 식별자가 올바르지 않습니다.")
     if set(record) != keys or record.get("humanApproved") is not True or record.get("sanitized") is not True:
         raise DatasetError("승인·비식별 확인과 지정된 사례 필드가 모두 필요합니다.")
     for key in ("caseId", "projectGroup"):
