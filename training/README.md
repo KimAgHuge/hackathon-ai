@@ -16,6 +16,8 @@ AI 분석/추론 서버의 Python 환경과 별도로 `training/.venv`를 사용
 현재 파일·줄 근거 검사는 원본 입력을 기준으로 하므로, 실제 학습 입력의 참조 수·글자 수 제한으로
 빠진 파일을 인용한 정답도 검사에 통과할 수 있습니다. 학습 전에 변환된 단계별 메시지에도 인용 근거가
 포함돼 있는지 확인합니다. 이 범위 차이의 자동 차단은 추가 보완 대상이며 검사 통과만으로 학습을 확정하지 않습니다.
+아래 `trial_dataset.py`의 일반 단계 시험 준비에는 실제 메시지의 인용 근거를 다시 검사하는
+차단 규칙을 적용했습니다. 기존 전체 데이터 변환·전송 경로의 보완 여부와 구분합니다.
 일반 정답의 선택 항목 `databaseReviewPlan`이 있으면 운영과 같은 대상·파일 근거 검사를 적용하고,
 DB 학습 입력도 해당 범위와 직접 연결된 외래키 이웃을 사용합니다. 없는 기존 사례는 전체 범위를 사용합니다.
 범위 선택과 구조 점검은 `ai-server/app/services/database_scope.py`를 함께 사용합니다.
@@ -135,9 +137,60 @@ training/.venv/bin/python training/receiver_service.py --host 0.0.0.0 --port 801
 초안은 사람이 보완·비식별화한 뒤 `finalize_draft.py`로 확정합니다.
 원격 DB의 승인 사례 일괄 자동 추출과 `train_lora.py` 자동화는 아직 구현하지 않았습니다.
 확정 사례의 전송·수신 검증은 `transfer_cases.py`를 사용합니다.
-실제 학습은 공식 `mlx_lm.lora` 명령을 사용합니다.
+일반적인 학습 실행은 공식 `mlx_lm.lora` 명령을 사용하며, 아래 승인 자료 시험은 별도 도구를 사용합니다.
 모델, 데이터셋, 캐시, adapter, 체크포인트는 Git에서 제외합니다.
 비밀키나 고객 원문은 소스·문서·학습 데이터에 넣지 않습니다.
+
+## 단일 프로젝트의 짧은 승인 자료 시험
+
+`trial_dataset.py`는 같은 프로젝트에서도 `changeRequirement.requirementId`를 기준으로
+원 요구사항별 학습·검증·시험 배정을 지원합니다. 같은 원 요구사항의 수정 버전과
+후속 질문은 대표 사례와 같은 분할에 들어가며, 다른 분할로 중복 배정하면 거부합니다.
+원 요구사항 ID가 없거나 사례·분석 입력이 중복돼도 거부합니다. 배정 파일의 각 목록에는
+실제 수신한 `caseId`를 넣습니다.
+
+```json
+{
+  "train": ["analysis-학습용-사례-ID"],
+  "valid": ["analysis-검증용-사례-ID"],
+  "test": ["analysis-시험용-사례-ID"]
+}
+```
+
+수신 자료 원본은 변경하지 않습니다. 현재 로컬 일반 분석과 같은 테이블 개요 변환을
+적용하고 JSON 정답 전체를 보존합니다. 이번 시험 도구는 `thinking=false`를 명시하고,
+전체 대화에서 프롬프트와 정답의 토큰 경계가 같은지 확인합니다. 길이 상한을 넘으면
+근거나 정답을 자르는 대신 해당 자료를 보관합니다. DB 단계는 운영 분할 호출에 대응하는
+단계별 정답이 없어 시험 학습에서 제외합니다. 이는 두 단계 전체의 업무 학습 완료가 아닙니다.
+
+```bash
+training/.venv/bin/python training/trial_dataset.py \
+  --splits training/outputs/새시험/splits.json \
+  --output training/outputs/새시험/dataset --max-tokens 18000
+
+training/.venv/bin/python training/trial_train.py train \
+  --dataset training/outputs/새시험/dataset \
+  --adapter training/adapters/trial-새시험 --iters 10 --layers 1
+
+# 학습이 끝난 뒤 별도 프로세스에서 새 어댑터를 확인합니다.
+training/.venv/bin/python training/trial_train.py reload \
+  --dataset training/outputs/새시험/dataset \
+  --adapter training/adapters/trial-새시험
+```
+
+새 데이터셋·어댑터·보고서 경로만 허용합니다. 기존 `compatibility-only` 어댑터와
+기반 모델은 덮어쓰지 않습니다. 마지막 1개 층의 MLP 세 모듈만 학습하고 어텐션은 고정합니다.
+입력 전체로 고정 문맥을 한 번 계산한 뒤, 위치별 MLP·정규화·출력층을 정답 위치에만
+반복 적용해 같은 손실을 구합니다. 실행 전에 공식 마스킹 손실·정답 위치 투영·고정 문맥
+재사용의 손실값·gradient가 같은지 짧은 입력으로 검사합니다. 이 최적화는 확인한
+`qwen3_5`의 분리된 출력층 구조에서만 실행하며 임의 모델에 적용하지 않습니다.
+고정된 앞부분 층은 추론 모드로 처리하고 실제 LoRA 학습 대상인 마지막 층만 학습 모드로
+유지합니다. 고정된 embedding·앞부분에 미분 경로가 없다는 전제이므로 학습 범위를
+확장할 때는 다시 확인해야 합니다.
+
+학습 전후 검증 손실은 서로 다른 원 요구사항에서 측정합니다. 소량 자료의 손실 변화는
+제품 정확도나 DB 판단 개선을 증명하지 않으며, 독립 시험·사람 검토·Ollama 배포를 대체하지 않습니다.
+세 분할을 지원하는 기존 `export_dataset.py`의 프로젝트 분리 정책은 유지합니다.
 
 공식 안내: https://github.com/ml-explore/mlx-lm/blob/main/mlx_lm/LORA.md
 
