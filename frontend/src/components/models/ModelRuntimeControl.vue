@@ -10,6 +10,7 @@ const props = defineProps({
     modelName: { type: String, default: '' },
     available: Boolean,
     adapterMode: Boolean,
+    trainedMode: Boolean,
     canDeploy: Boolean,
     canRollback: Boolean,
     reload: { type: Function, required: true },
@@ -176,7 +177,7 @@ onBeforeUnmount(() => {
 <template>
     <section class="min-w-0">
         <div class="rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-900">
-            <h3 class="text-base font-extrabold">{{ adapterMode ? '준비한 학습 결과 적용' : '분석 모델로 사용' }}</h3>
+            <h3 class="text-base font-extrabold">{{ trainedMode ? '새 학습 모델 적용' : adapterMode ? '준비한 학습 결과 적용' : '분석 모델로 사용' }}</h3>
             <p class="mt-2 text-sm leading-6 text-slate-500 dark:text-slate-400">선택한 모델의 JSON 응답을 검증한 뒤 새 분석에 적용합니다.</p>
             <div class="mt-5 flex flex-wrap gap-3">
                 <BaseButton
@@ -184,9 +185,11 @@ onBeforeUnmount(() => {
                     :disabled="!canDeploy || !selected?.selectable || !loaded || Boolean(busy) || Boolean(pending)"
                     :loading="busy === 'probe'"
                     @click="verify"
-                    >{{ probeRequest ? '같은 검증 재시도' : adapterMode ? '학습 결과 응답 검증' : 'JSON 응답 검증' }}</BaseButton
+                    >{{
+                        probeRequest ? '같은 검증 재시도' : trainedMode ? '새 모델 응답 검증' : adapterMode ? '학습 결과 응답 검증' : 'JSON 응답 검증'
+                    }}</BaseButton
                 ><BaseButton :disabled="!canDeploy || !probeValid || Boolean(busy) || Boolean(pending)" @click="openConfirm('activate')">{{
-                    adapterMode ? '학습 결과 적용' : '분석 모델로 사용'
+                    trainedMode ? '새 학습 모델 적용' : adapterMode ? '학습 결과 적용' : '분석 모델로 사용'
                 }}</BaseButton>
             </div>
             <p v-if="busy === 'probe'" role="status" class="mt-3 text-sm leading-6 text-blue-700 dark:text-blue-300">
@@ -218,7 +221,7 @@ onBeforeUnmount(() => {
                     ><BaseButton size="small" variant="secondary" :disabled="Boolean(busy)" @click="apply">같은 요청 수동 재시도</BaseButton>
                 </div>
             </div>
-            <div v-if="!adapterMode" class="mt-4 flex flex-wrap items-center gap-3">
+            <div v-if="!adapterMode && !trainedMode" class="mt-4 flex flex-wrap items-center gap-3">
                 <BaseButton
                     variant="secondary"
                     :disabled="!canRollback || !loaded || !installed?.canRollback || Boolean(busy) || Boolean(pending)"
@@ -229,11 +232,19 @@ onBeforeUnmount(() => {
                 }}</span>
             </div>
             <p class="mt-4 text-xs leading-6 text-slate-500 dark:text-slate-400">
-                변경은 새 분석부터 적용합니다. 학습한 어댑터는 ‘학습 결과 적용’에서 별도로 확인하고 적용할 수 있습니다.
+                변경은 새 분석부터 적용합니다. 완료한 학습으로 새 모델을 만드는 작업은 ‘학습 결과 적용’에서 진행합니다.
             </p>
             <BaseModal
                 :model-value="Boolean(confirmMode)"
-                :title="confirmMode === 'rollback' ? '이전 모델 복구 확인' : adapterMode ? '학습 결과 적용 확인' : '설치 모델 전환 확인'"
+                :title="
+                    confirmMode === 'rollback'
+                        ? '이전 모델 복구 확인'
+                        : trainedMode
+                          ? '새 학습 모델 적용 확인'
+                          : adapterMode
+                            ? '학습 결과 적용 확인'
+                            : '설치 모델 전환 확인'
+                "
                 :busy="Boolean(busy)"
                 footer-text="명시적으로 확인한 모델 설정만 변경합니다. 진행 중인 분석은 시작할 때의 모델을 유지합니다."
                 @update:model-value="
@@ -250,7 +261,14 @@ onBeforeUnmount(() => {
                         새 분석 요청의 모델 설정을 변경합니다. 짧은 JSON 검증은 업무 정답 품질과 운영 승인을 보증하지 않습니다. 진행 중인 분석의 모델은 바꾸지
                         않습니다.
                     </p>
-                    <p v-if="adapterMode || selected?.adapterId" class="rounded-lg bg-amber-50 p-4 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+                    <p v-if="trainedMode || selected?.trainedModel" class="rounded-lg bg-amber-50 p-4 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+                        학습 결과를 합쳐 만든 새 모델입니다. 분석 서버의 기존 모델 실행 환경에서 실행하며 학습 서버는 추론에 사용하지 않습니다. 독립 생성 평가와
+                        업무 품질 평가는 아직 수행하지 않았습니다. 적용 뒤 새 분석부터 이 버전을 사용합니다.
+                    </p>
+                    <p
+                        v-else-if="adapterMode || selected?.adapterId"
+                        class="rounded-lg bg-amber-50 p-4 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200"
+                    >
                         업무 품질을 평가하지 않은 시험 학습 어댑터입니다. AI 분석 서버의 MLX 실행 환경에서 기반 모델과 함께 불러오며, 맥북의 학습 서버는 추론에
                         사용하지 않습니다. 적용 뒤 새 분석부터 이 학습 결과를 사용합니다.
                     </p>
@@ -262,7 +280,13 @@ onBeforeUnmount(() => {
                     <p v-if="error" role="alert" class="text-rose-700 dark:text-rose-300">{{ error }}</p>
                     <div class="flex flex-wrap gap-2">
                         <BaseButton :disabled="!confirmed || Boolean(pending)" :loading="Boolean(busy)" @click="apply">{{
-                            confirmMode === 'rollback' ? '확인 후 복구' : adapterMode ? '확인 후 학습 결과 적용' : '확인 후 전환'
+                            confirmMode === 'rollback'
+                                ? '확인 후 복구'
+                                : trainedMode
+                                  ? '확인 후 새 모델 적용'
+                                  : adapterMode
+                                    ? '확인 후 학습 결과 적용'
+                                    : '확인 후 전환'
                         }}</BaseButton
                         ><BaseButton v-if="pending" variant="secondary" :disabled="Boolean(busy)" @click="checkPending">기존 요청 상태 확인</BaseButton>
                     </div>

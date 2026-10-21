@@ -18,6 +18,7 @@ from shared_transfer import HASH, verify_signature, write_json_atomic
 from transfer_cases import MAX_BYTES, TransferError, checked_cases, content_hash, private_directory, receive
 from receiver_config import load_receiver_env
 from training_jobs import TrainingJobError, TrainingJobStore
+from model_build_jobs import ModelBuildError, ModelBuildStore
 
 
 ROOT = Path(__file__).resolve().parent
@@ -31,6 +32,8 @@ JOBS_PATH = "/api/training/jobs"
 JOB_PATH = re.compile(r"/api/training/jobs/([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})\Z")
 CANCEL_PATH = re.compile(r"/api/training/jobs/([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})/cancel\Z")
 DELIVERY_PATH = re.compile(r"/api/training/jobs/([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})/delivery\Z")
+MODEL_BUILD_PATH = re.compile(r"/api/training/jobs/([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})/model-build\Z")
+MODEL_BUILD_CANCEL_PATH = re.compile(r"/api/training/jobs/([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})/model-build/cancel\Z")
 logger = logging.getLogger("doenaai.training.receiver")
 
 
@@ -169,7 +172,7 @@ class ReceiverStore:
                 "files": verified, "cases": cases}
 
 
-def make_handler(store, secret, jobs=None):
+def make_handler(store, secret, jobs=None, builds=None):
     """기존 수신과 새 학습 작업 API 모두 같은 서명 인증으로 보호한다."""
     class Handler(BaseHTTPRequestHandler):
         def _send(self, status, value):
@@ -185,16 +188,18 @@ def make_handler(store, secret, jobs=None):
             return verify_signature(secret, self.command, self.path, body, self.headers)
 
         def _job_error(self, error):
-            if isinstance(error, TrainingJobError):
+            if isinstance(error, (TrainingJobError, ModelBuildError)):
                 self._send(error.http_status, {"code": error.code, "message": error.message})
             else:
                 self._send(500, {"code": "TRAINING_INTERNAL_ERROR", "message": "학습 작업을 처리하지 못했습니다. 서버 상태를 확인하세요."})
-            logger.warning("학습 작업 API 처리 실패 code=%s", error.code if isinstance(error, TrainingJobError) else "TRAINING_INTERNAL_ERROR")
+            logger.warning("학습 작업 API 처리 실패 code=%s", error.code if isinstance(error, (TrainingJobError, ModelBuildError)) else "TRAINING_INTERNAL_ERROR")
 
         def do_POST(self):
             cancel = CANCEL_PATH.fullmatch(self.path)
             delivery = DELIVERY_PATH.fullmatch(self.path)
-            job_request = self.path == JOBS_PATH or cancel is not None or delivery is not None
+            build = MODEL_BUILD_PATH.fullmatch(self.path)
+            build_cancel = MODEL_BUILD_CANCEL_PATH.fullmatch(self.path)
+            job_request = self.path == JOBS_PATH or any((cancel, delivery, build, build_cancel))
             if self.path != "/api/training/transfers" and not job_request:
                 self._send(404, {"code": "NOT_FOUND"})
                 return
@@ -220,13 +225,17 @@ def make_handler(store, secret, jobs=None):
                     self._send(422, {"code": "INVALID_JOB_REQUEST", "message": "학습 요청의 JSON 형식을 확인하세요."})
                     return
                 try:
-                    if delivery:
+                    if build or build_cancel:
+                        if builds is None:
+                            raise ModelBuildError("MODEL_BUILD_UNAVAILABLE", 503)
+                        value = builds.cancel(build_cancel.group(1), value) if build_cancel else builds.submit(build.group(1), value)
+                    elif delivery:
                         if value != {}:
                             raise TrainingJobError("INVALID_JOB_REQUEST", http_status=422)
                         value = jobs.delivery(delivery.group(1), secret)
                     else:
                         value = jobs.cancel(cancel.group(1), value) if cancel else jobs.submit(value)
-                    self._send(200 if cancel or delivery else 202, value)
+                    self._send(200 if cancel or delivery or build_cancel else 202, value)
                 except Exception as error:
                     self._job_error(error)
                 return
@@ -239,6 +248,18 @@ def make_handler(store, secret, jobs=None):
             self._send(202, value)
 
         def do_GET(self):
+            build = MODEL_BUILD_PATH.fullmatch(self.path)
+            if build:
+                if not self._authorized(b""):
+                    self._send(401, {"code": "UNAUTHORIZED"})
+                    return
+                try:
+                    if builds is None:
+                        raise ModelBuildError("MODEL_BUILD_UNAVAILABLE", 503)
+                    self._send(200, builds.get(build.group(1)))
+                except Exception as error:
+                    self._job_error(error)
+                return
             job = JOB_PATH.fullmatch(self.path)
             if self.path == JOBS_PATH or job:
                 if not self._authorized(b""):
@@ -295,9 +316,13 @@ def serve(store, secret, host, port):
     """수신 API와 주기적 재확인을 함께 실행한다."""
     jobs = TrainingJobStore(store, os.environ.get("DOENAAI_TRAINING_MODEL_DIR"),
                             models_file=os.environ.get("DOENAAI_TRAINING_MODELS_FILE"))
+    builds = None
     try:
-        server = ThreadingHTTPServer((host, port), make_handler(store, secret, jobs))
+        builds = ModelBuildStore(jobs, secret)
+        server = ThreadingHTTPServer((host, port), make_handler(store, secret, jobs, builds))
     except Exception:
+        if builds is not None:
+            builds.close()
         jobs.close()
         raise
     stopping = threading.Event()
@@ -322,6 +347,7 @@ def serve(store, secret, host, port):
         stopping.set()
         server.server_close()
         worker.join(timeout=2)
+        builds.close()
         jobs.close()
         logger.info("수신 서비스가 종료되었습니다. 저장된 수신 기록은 유지됩니다.")
 

@@ -186,8 +186,7 @@ public class ModelExecutionService {
         if (status == null || !(status.get("models") instanceof List<?> rows))
             throw new ModelExecutionClient.RemoteFailure("MODEL_SELECTION_UNAVAILABLE", false, 503);
         return rows.stream().anyMatch(row -> row instanceof Map<?, ?> item && (model.equals(item.get("name"))
-                || ("mlx".equals(item.get("provider")) && item.get("adapterId") instanceof String adapter && validUuid(adapter)
-                && model.equals(item.get("sourceModel")))));
+                || (hasTrainingSource(item) && model.equals(item.get("sourceModel")))));
     }
 
     private String selectedTrainingModel(String selectedModel) {
@@ -195,10 +194,9 @@ public class ModelExecutionService {
         if (installed == null || !(installed.get("models") instanceof List<?> rows))
             throw new ModelExecutionClient.RemoteFailure("MODEL_SELECTION_UNAVAILABLE", false, 503);
         for (var row : rows) if (row instanceof Map<?, ?> item) {
-            boolean adapter = "mlx".equals(item.get("provider")) && item.get("adapterId") instanceof String id && validUuid(id)
-                    && item.get("sourceModel") instanceof String source && validModel(source);
-            if (selectedModel.equals(item.get("name"))) return adapter ? (String) item.get("sourceModel") : selectedModel;
-            if (adapter && selectedModel.equals(item.get("sourceModel"))) return selectedModel;
+            boolean trained = hasTrainingSource(item);
+            if (selectedModel.equals(item.get("name"))) return trained ? (String) item.get("sourceModel") : selectedModel;
+            if (trained && selectedModel.equals(item.get("sourceModel"))) return selectedModel;
         }
         throw new ModelCatalogException(HttpStatus.BAD_REQUEST, "선택한 학습 모델이 분석 서버의 설치 목록에 없습니다. 모델 목록을 새로고침해 주세요.");
     }
@@ -208,8 +206,7 @@ public class ModelExecutionService {
         var status = client.inference("GET", "/api/models/installed", Map.of(), false);
         if (status == null || !(status.get("model") instanceof String model) || !validModel(model))
             throw new ModelExecutionClient.RemoteFailure("MODEL_SELECTION_UNAVAILABLE", false, 503);
-        if ("mlx".equals(status.get("provider")) && status.get("adapterId") instanceof String adapter && validUuid(adapter)
-                && status.get("sourceModel") instanceof String source && validModel(source)) return source;
+        if (hasTrainingSource(status)) return (String) status.get("sourceModel");
         return model;
     }
 
@@ -378,10 +375,24 @@ public class ModelExecutionService {
     }
 
     private static void adapterMetadata(Map<?, ?> supplied, Map<String, Object> result) {
+        if ("ollama".equals(supplied.get("provider")) && Boolean.TRUE.equals(supplied.get("trainedModel"))
+                && supplied.get("trainingJobId") instanceof String id && validUuid(id)
+                && supplied.get("sourceModel") instanceof String source && validModel(source)) {
+            result.put("provider", "ollama"); result.put("trainingJobId", id); result.put("sourceModel", source);
+            result.put("trainedModel", true); result.put("qualityEvaluated", false);
+            return;
+        }
         if (!"mlx".equals(supplied.get("provider")) || !(supplied.get("adapterId") instanceof String adapter) || !validUuid(adapter)
                 || !(supplied.get("sourceModel") instanceof String source) || !validModel(source)) return;
         result.put("provider", "mlx"); result.put("adapterId", adapter); result.put("sourceModel", source);
         result.put("qualityEvaluated", false);
+    }
+
+    private static boolean hasTrainingSource(Map<?, ?> supplied) {
+        if (!(supplied.get("sourceModel") instanceof String source) || !validModel(source)) return false;
+        return ("mlx".equals(supplied.get("provider")) && supplied.get("adapterId") instanceof String adapter && validUuid(adapter))
+                || ("ollama".equals(supplied.get("provider")) && Boolean.TRUE.equals(supplied.get("trainedModel"))
+                && supplied.get("trainingJobId") instanceof String id && validUuid(id));
     }
 
     private static boolean validUuid(String value) {

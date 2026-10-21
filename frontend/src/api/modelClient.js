@@ -39,6 +39,21 @@ export const createModelApi = (client) => ({
     async prepareModelAdapter(id) {
         return (await client.post(`/models/adapters/${encodeURIComponent(id)}/prepare`, {}, { timeout: 30000 })).data
     },
+    async getTrainedModelBuild(id) {
+        return (await client.get(`/models/trained/${encodeURIComponent(id)}/build`)).data
+    },
+    async startTrainedModelBuild(id) {
+        return (await client.post(`/models/trained/${encodeURIComponent(id)}/build`, {}, { timeout: 15000 })).data
+    },
+    async cancelTrainedModelBuild(id) {
+        return (await client.post(`/models/trained/${encodeURIComponent(id)}/build/cancel`, {}, { timeout: 15000 })).data
+    },
+    async importTrainedModel(id) {
+        return (await client.post(`/models/trained/${encodeURIComponent(id)}/import`, {}, { timeout: 20000 })).data
+    },
+    async getTrainedModelImport(id) {
+        return (await client.get(`/models/trained/${encodeURIComponent(id)}/import`)).data
+    },
     async getModelOperations() {
         return (await client.get('/models/operations')).data
     },

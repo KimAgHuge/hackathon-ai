@@ -306,7 +306,7 @@ onBeforeUnmount(() => {
                 <p class="mt-4 break-all text-sm leading-6">{{ operation.message || '안내 기록 없음' }}</p>
                 <p v-if="operation.errorCode" class="mt-2 break-all text-xs text-rose-700 dark:text-rose-300">오류 코드 · {{ operation.errorCode }}</p>
                 <div v-if="isTraining(operation) && operation.status === 'SUCCEEDED'" class="mt-4 rounded-xl bg-blue-50 p-4 dark:bg-blue-950/40">
-                    <p class="text-sm font-bold text-blue-900 dark:text-blue-100">어댑터 저장·재로딩 완료</p>
+                    <p class="text-sm font-bold text-blue-900 dark:text-blue-100">추가 학습과 결과 저장 완료</p>
                     <dl v-if="metricItems(operation).length" class="mt-4 grid gap-4 text-xs sm:grid-cols-2 lg:grid-cols-3">
                         <div v-for="item in metricItems(operation)" :key="item.label">
                             <dt class="text-slate-500 dark:text-slate-400">{{ item.label }}</dt>
@@ -314,7 +314,8 @@ onBeforeUnmount(() => {
                         </div>
                     </dl>
                     <p class="mt-4 text-xs leading-6 text-blue-800 dark:text-blue-200">
-                        시험 학습 결과이며 독립 생성 평가와 업무 품질 평가는 수행하지 않았습니다. 모델 작업에서 학습 결과를 선택해 검증·적용할 수 있습니다.
+                        시험 학습 결과이며 독립 생성 평가와 업무 품질 평가는 수행하지 않았습니다. 모델 작업에서 이 결과로 새 모델을 생성·등록한 뒤 검증·적용할
+                        수 있습니다.
                     </p>
                 </div>
                 <p v-if="!isTraining(operation)" class="mt-2 break-all text-xs text-slate-500 dark:text-slate-400">
@@ -343,7 +344,7 @@ onBeforeUnmount(() => {
                     v-if="isTraining(detail) && detail.status === 'SUCCEEDED'"
                     class="rounded-lg bg-blue-50 p-4 text-xs leading-6 text-blue-800 dark:bg-blue-950/40 dark:text-blue-200"
                 >
-                    어댑터 저장·재로딩을 완료했습니다. 시험 학습은 독립 생성 평가나 업무 품질 평가를 포함하지 않으며 운영 모델은 자동 변경되지 않습니다.
+                    추가 학습과 결과 저장·재로딩을 완료했습니다. 새 모델 생성과 등록은 모델 작업에서 진행하며 운영 모델은 자동 변경되지 않습니다.
                 </p>
                 <BaseButton variant="secondary" @click="showDetail(detail.id)">이 작업 다시 조회</BaseButton>
                 <h3 class="font-bold">상태 변화 기록</h3>

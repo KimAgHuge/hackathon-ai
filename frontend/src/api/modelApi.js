@@ -16,6 +16,11 @@ export const {
     startModelTraining,
     cancelModelTraining,
     prepareModelAdapter,
+    getTrainedModelBuild,
+    startTrainedModelBuild,
+    cancelTrainedModelBuild,
+    importTrainedModel,
+    getTrainedModelImport,
     getModelOperations,
     getModelOperation,
 } = createModelApi(httpClient)

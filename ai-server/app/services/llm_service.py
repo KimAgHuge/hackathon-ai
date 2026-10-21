@@ -234,12 +234,20 @@ class LlmService:
                     await self._runtime.validate_selection(selection)
                 except ModelRuntimeError:
                     raise ModelUnavailableError("선택 모델의 설치 파일을 확인하지 못했습니다. 관리자에게 모델 상태를 확인해 주세요.") from None
-            result = await self._analyze(request, progress)
             # 생성 모델은 모델 답변이나 현재 화면 선택값이 아닌 요청에 고정한 값으로 기록한다.
             metadata = {"analysis_model": self._model}
             if self._runtime is not None and hasattr(self._runtime, "adapters") and self._runtime.adapters.owns(self._model):
                 metadata["analysis_source_model"] = self._runtime.adapters.source_model(self._model)
                 metadata["analysis_adapter_digest"] = selection.digest
+            if self._runtime is not None and hasattr(self._runtime, "trained") and self._runtime.trained.owns(self._model):
+                from app.services.trained_model_runtime import TrainedModelError
+                try:
+                    origin = self._runtime.trained.metadata_for(self._model, selection.digest)
+                except TrainedModelError:
+                    raise ModelUnavailableError("선택한 학습 모델의 출처와 설치 파일을 확인하지 못했습니다.") from None
+                metadata["analysis_source_model"] = origin["sourceModel"]
+                metadata["analysis_trained_model_digest"] = selection.digest
+            result = await self._analyze(request, progress)
             return result.model_copy(update=metadata)
         finally:
             self._request_model.reset(token)

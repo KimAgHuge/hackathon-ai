@@ -13,6 +13,7 @@ from uuid import uuid4
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from dataset_contract import read_jsonl, DatasetError
+from gpu_lease import GpuLease
 from receiver_config import load_receiver_env
 from receiver_service import ReceiverStore
 from shared_transfer import canonical_bytes, write_json_atomic
@@ -104,6 +105,24 @@ class TrainingWorkerTests(unittest.TestCase):
         self.assertEqual(len(selected), 3)
         self.assertTrue(all(value["sourceModel"] == "qwen3.8:27b" for value in selected))
         self.assertEqual(len(list(self.receiver.inbox.glob("*.jsonl"))), 5)
+
+    def test_model_build_gpu_lease_blocks_training_and_releases_after_cancel(self):
+        competing = GpuLease(self.store.state_dir / ".gpu.lock")
+        self.assertTrue(competing.acquire())
+        try:
+            with self.assertRaises(TrainingJobError) as caught:
+                self.submit()
+            self.assertEqual(caught.exception.code, "TRAINING_BUSY")
+            self.assertEqual(self.store.list_jobs()["jobs"], [])
+        finally:
+            competing.release()
+        job = self.submit()
+        self.assertIsNotNone(self.store.gpu_lease.descriptor)
+        self.store.cancel(job["id"], {})
+        self.store._run(job["id"])
+        self.assertIsNone(self.store.gpu_lease.descriptor)
+        self.assertTrue(competing.acquire())
+        competing.release()
 
     def test_wrong_model_or_changed_base_revision_cannot_start_training(self):
         target = self.store.training_target()

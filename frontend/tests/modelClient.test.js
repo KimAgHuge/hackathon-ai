@@ -123,3 +123,34 @@ test('선택 모델을 학습 조회 조건으로 보내고 해당 완료 작업
     await api.prepareModelAdapter('job/id?x=1')
     assert.deepEqual(calls[1], { path: '/models/adapters/job%2Fid%3Fx%3D1/prepare', body: {}, options: { timeout: 30000 } })
 })
+
+test('새 모델 생성과 등록은 작업 식별자만 전송하고 두 서버의 진행 상태를 별도로 조회한다', async () => {
+    const calls = []
+    const api = createModelApi({
+        async get(path) {
+            calls.push({ method: 'GET', path })
+            return { data: { status: 'NOT_BUILT' } }
+        },
+        async post(path, body, options) {
+            calls.push({ method: 'POST', path, body, options })
+            return { data: { status: 'PENDING' } }
+        },
+    })
+    const id = 'job/id?x=1'
+    await api.getTrainedModelBuild(id)
+    await api.startTrainedModelBuild(id)
+    await api.cancelTrainedModelBuild(id)
+    await api.importTrainedModel(id)
+    await api.getTrainedModelImport(id)
+    assert.deepEqual(
+        calls.map(({ method, path }) => [method, path]),
+        [
+            ['GET', '/models/trained/job%2Fid%3Fx%3D1/build'],
+            ['POST', '/models/trained/job%2Fid%3Fx%3D1/build'],
+            ['POST', '/models/trained/job%2Fid%3Fx%3D1/build/cancel'],
+            ['POST', '/models/trained/job%2Fid%3Fx%3D1/import'],
+            ['GET', '/models/trained/job%2Fid%3Fx%3D1/import'],
+        ]
+    )
+    assert.ok(calls.filter((call) => call.method === 'POST').every((call) => Object.keys(call.body).length === 0))
+})

@@ -129,6 +129,10 @@ final class TrainingCaseDraftBuilder {
                 && facts.get("analysisAdapterDigest") instanceof String hash) {
             draft.put("sourceAdapter", Map.of("model", runtimeModel, "digest", hash));
         }
+        if (facts.get("analysisSourceModel") instanceof String && facts.get("analysisModel") instanceof String runtimeModel
+                && facts.get("analysisTrainedModelDigest") instanceof String hash) {
+            draft.put("sourceTrainedModel", Map.of("model", runtimeModel, "digest", hash));
+        }
         reviewRequired.add("humanApproved, sanitized: 정답 검토와 비식별화가 필요합니다. 전송 화면의 확인란을 선택하면 자동으로 반영됩니다.");
         return new TrainingCaseDraftResponse(draft, List.copyOf(reviewRequired), List.copyOf(autoFilled));
     }

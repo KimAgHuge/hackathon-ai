@@ -18,7 +18,7 @@ from app.services.source_context import general_overview, source_context
 from app.services.database_scope import database_review_scope, database_input
 
 STAGES = {"general": RequirementGeneralAnalysisResponse, "database": DatabaseImpact}
-VALIDATION_FEATURES = ("FILE_LEVEL_EVIDENCE", "DATABASE_SCOPE_REVIEW", "DATABASE_CHANGE_SEMANTICS_V2", "DATABASE_REVIEW_PLAN_V1", "SOURCE_MODEL_V1", "SOURCE_ADAPTER_V1")
+VALIDATION_FEATURES = ("FILE_LEVEL_EVIDENCE", "DATABASE_SCOPE_REVIEW", "DATABASE_CHANGE_SEMANTICS_V2", "DATABASE_REVIEW_PLAN_V1", "SOURCE_MODEL_V1", "SOURCE_ADAPTER_V1", "SOURCE_TRAINED_MODEL_V1")
 IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}\Z")
 SECRET_VALUE = re.compile(
     r"-----BEGIN [A-Z ]*PRIVATE KEY-----|\bhf_[A-Za-z0-9]{20,}\b|"
@@ -221,6 +221,8 @@ def required_validation_features(record):
     features = {"SOURCE_MODEL_V1"} if "sourceModel" in record else set()
     if "sourceAdapter" in record:
         features.add("SOURCE_ADAPTER_V1")
+    if "sourceTrainedModel" in record:
+        features.add("SOURCE_TRAINED_MODEL_V1")
     if general.get("databaseReviewPlan") is not None:
         features.add("DATABASE_REVIEW_PLAN_V1")
     if any(isinstance(item, dict) and item.get("line") is None for item in general["evidences"]):
@@ -247,6 +249,13 @@ def validate_case(record):
                 or not isinstance(adapter["model"], str) or not re.fullmatch(r"doenaai-mlx:web-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", adapter["model"])
                 or not isinstance(adapter["digest"], str) or not re.fullmatch(r"[0-9a-f]{64}", adapter["digest"])):
             raise DatasetError("분석에 사용한 학습 어댑터 출처를 확인하세요.")
+    if "sourceTrainedModel" in record:
+        keys.add("sourceTrainedModel")
+        trained = record["sourceTrainedModel"]
+        if ("sourceModel" not in record or not isinstance(trained, dict) or set(trained) != {"model", "digest"}
+                or not isinstance(trained["model"], str) or not re.fullmatch(r"doenaai-trained:web-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", trained["model"])
+                or not isinstance(trained["digest"], str) or not re.fullmatch(r"[0-9a-f]{64}", trained["digest"])):
+            raise DatasetError("분석에 사용한 새 학습 모델의 출처를 확인하세요.")
     if set(record) != keys or record.get("humanApproved") is not True or record.get("sanitized") is not True:
         raise DatasetError("승인·비식별 확인과 지정된 사례 필드가 모두 필요합니다.")
     for key in ("caseId", "projectGroup"):

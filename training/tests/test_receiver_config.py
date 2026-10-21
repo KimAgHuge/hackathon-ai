@@ -123,6 +123,7 @@ class ReceiverConfigTests(unittest.TestCase):
                     patch.object(receiver_service.os, "environ", dict(initial)), \
                     patch.object(receiver_service, "ReceiverStore") as store, \
                     patch.object(receiver_service, "TrainingJobStore") as jobs, \
+                    patch.object(receiver_service, "ModelBuildStore") as builds, \
                     patch.object(receiver_service, "ThreadingHTTPServer") as server, \
                     patch.object(receiver_service.threading, "Thread") as worker, \
                     patch.object(receiver_service.logging, "basicConfig"), \
@@ -137,6 +138,8 @@ class ReceiverConfigTests(unittest.TestCase):
                 worker.return_value.start.assert_called_once_with()
                 worker.return_value.join.assert_called_once_with(timeout=2)
                 jobs.return_value.close.assert_called_once_with()
+                builds.assert_called_once_with(jobs.return_value, "synthetic-transfer-key-long-enough-for-test")
+                builds.return_value.close.assert_called_once_with()
 
 
 if __name__ == "__main__":

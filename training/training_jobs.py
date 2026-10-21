@@ -17,6 +17,7 @@ from pathlib import Path
 from uuid import UUID
 
 from dataset_contract import DatasetError, digest, read_jsonl, validate_case
+from gpu_lease import GpuLease
 from shared_transfer import HASH, write_json_atomic
 from model_registry import RegistryError, resolve, QWEN_SOURCE, QWEN_BASE, QWEN_TRAINER
 from model_delivery import (PackageError, create_package, execution_summary, publish_package,
@@ -104,6 +105,7 @@ class TrainingJobStore:
         self.process = None
         self.unsafe_process = False
         self.owner = None
+        self.gpu_lease = GpuLease(self.state_dir / ".gpu.lock")
         self._claim_owner()
 
     def _claim_owner(self):
@@ -274,6 +276,36 @@ class TrainingJobStore:
             records.sort(key=lambda item: (item["createdAt"], item["id"]), reverse=True)
             return {"jobs": [self._public(value) for value in records[:100]], "limit": 100, "truncated": len(records) > 100}
 
+    def model_build_source(self, identifier):
+        """완료 학습의 원본·기반 버전을 다시 확인해 서버 내부 생성기에만 전달한다."""
+        identifier = job_id(identifier)
+        with self.lock:
+            record = self._read(self._path(identifier))
+            if record is None:
+                raise TrainingJobError("NOT_FOUND", http_status=404)
+            target = record.get("target")
+            if (record["status"] != "SUCCEEDED" or not isinstance(target, dict)
+                    or target.get("sourceModel") != QWEN_SOURCE or target.get("baseModel") != QWEN_BASE
+                    or target.get("trainer") != QWEN_TRAINER):
+                raise TrainingJobError("DELIVERY_NOT_READY")
+            binding = self._binding(target["sourceModel"])
+            if target != binding.target:
+                raise TrainingJobError("DELIVERY_NOT_READY")
+            adapter = self.root / "adapters" / ("trial-web-" + identifier)
+            reports = self.work_root / identifier / "dataset"
+            config, identity, summary = execution_summary(adapter, reports)
+            training = delivery_json(reports / "training-report.json")
+            protected_files = training.get("protectedFiles")
+            protected = protected_files.get("model") if isinstance(protected_files, dict) else None
+            current = {path.name: [path.stat().st_size, path.stat().st_mtime_ns]
+                       for path in binding.directory.iterdir() if path.is_file()}
+            if (identity != {"modelId": target["baseModel"], "revision": target.get("revision")}
+                    or not isinstance(protected, dict) or not protected or current != protected
+                    or any(path.is_symlink() for path in binding.directory.iterdir())):
+                raise TrainingJobError("DELIVERY_NOT_READY")
+            return {"target": dict(target), "model_dir": binding.directory, "adapter": adapter,
+                    "reports": reports, "summary": summary, "adapterSha256": training["adapterSha256"]}
+
     def delivery(self, identifier, secret):
         """완료 작업의 고정 산출물만 검증해 공유 폴더에 게시하며 학습은 실행하지 않는다."""
         identifier = job_id(identifier)
@@ -345,15 +377,18 @@ class TrainingJobStore:
                 record = self._read(path)
                 if record and record["status"] in ACTIVE:
                     raise TrainingJobError("TRAINING_BUSY")
+            if not self.gpu_lease.acquire():
+                raise TrainingJobError("TRAINING_BUSY")
             created = now()
             record = {"id": identifier, "status": "PENDING", "progress": 0, "iterations": body["iterations"],
                       "createdAt": created, "updatedAt": created, "target": target}
-            write_json_atomic(self._path(identifier), record)
-            self.cancel_requested.clear()
-            self.worker = threading.Thread(target=self._worker_entry, args=(identifier,), name="training-job", daemon=True)
             try:
+                write_json_atomic(self._path(identifier), record)
+                self.cancel_requested.clear()
+                self.worker = threading.Thread(target=self._worker_entry, args=(identifier,), name="training-job", daemon=True)
                 self.worker.start()
             except Exception:
+                self.gpu_lease.release()
                 self._set(record, "FAILED", 0, "TRAINING_INTERNAL_ERROR")
                 raise TrainingJobError("TRAINING_INTERNAL_ERROR", http_status=503) from None
             return self._public(record)
@@ -452,7 +487,8 @@ class TrainingJobStore:
                            HF_HUB_DISABLE_TELEMETRY="1", HF_HOME=str(self.root / ".cache/huggingface"), PYTHONUNBUFFERED="1")
         process = self.popen_factory([sys.executable, *map(str, arguments)], cwd=self.root, env=environment,
                                      stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                     shell=False, start_new_session=True, pass_fds=(self.owner,))
+                                     shell=False, start_new_session=True,
+                                     pass_fds=tuple(value for value in (self.owner, self.gpu_lease.descriptor) if value is not None))
         self.process = process
         started = time.monotonic()
         try:
@@ -552,6 +588,10 @@ class TrainingJobStore:
                 record = self._read(self._path(identifier))
                 self._set(record, "FAILED", record["progress"], code)
 
+        finally:
+            if not self.unsafe_process:
+                self.gpu_lease.release()
+
     def close(self):
         """서비스 종료 시 이 워커만 취소하고 상태와 새 산출물은 보존한다."""
         self.stopping.set()
@@ -562,3 +602,5 @@ class TrainingJobStore:
             if self.owner is not None and (not self.worker or not self.worker.is_alive()):
                 os.close(self.owner)
                 self.owner = None
+                if not self.unsafe_process:
+                    self.gpu_lease.release()

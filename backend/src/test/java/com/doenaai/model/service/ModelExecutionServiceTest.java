@@ -240,5 +240,34 @@ class ModelExecutionServiceTest {
         assertThat(result.toString()).doesNotContain("/secret/model", "qualityEvaluated=true");
     }
 
+    @Test void trainedModelSelectionUsesOriginalModelFamilyForTrainingAndDatasetQueries() {
+        String trainingId = UUID.randomUUID().toString();
+        String name = "doenaai-trained:web-" + trainingId;
+        var identity = Map.<String, Object>of("name", name, "provider", "ollama", "trainedModel", true,
+                "trainingJobId", trainingId, "sourceModel", "qwen3.8:27b");
+        when(client.inference("GET", "/api/models/installed", Map.of(), false)).thenReturn(Map.of("model", name,
+                "provider", "ollama", "trainedModel", true, "trainingJobId", trainingId, "sourceModel", "qwen3.8:27b", "models", List.of(identity)));
+        when(client.training("GET", "/api/training/capabilities?model=qwen3.8%3A27b", Map.of())).thenReturn(Map.of("trainingExecution", false));
+        when(client.training("GET", "/api/training/jobs", Map.of())).thenReturn(Map.of("jobs", List.of()));
+        assertThat(service.training(name)).containsEntry("requestedModel", "qwen3.8:27b").containsEntry("selectedModel", name);
+        assertThat(service.training()).containsEntry("requestedModel", "qwen3.8:27b");
+        when(client.training(eq("POST"), eq("/api/training/jobs"), anyMap())).thenReturn(Map.of("status", "PENDING"));
+        assertThat(service.execute("TRAINING_START", training(id, 10), actor, null)).containsEntry("status", "PENDING");
+        verify(client).training(eq("POST"), eq("/api/training/jobs"), argThat(body -> "qwen3.8:27b".equals(body.get("model"))));
+    }
+
+    @Test void installedTrainedModelMetadataPreservesJobIdentityWithoutClaimingQualityOrExposingPaths() {
+        String trainingId = UUID.randomUUID().toString();
+        String name = "doenaai-trained:web-" + trainingId;
+        var identity = Map.<String, Object>of("name", name, "provider", "ollama", "trainedModel", true,
+                "trainingJobId", trainingId, "sourceModel", "qwen3.8:27b", "qualityEvaluated", true, "path", "/private/model");
+        when(client.inference("GET", "/api/models/installed", Map.of(), false)).thenReturn(Map.of("model", name,
+                "provider", "ollama", "trainedModel", true, "trainingJobId", trainingId, "sourceModel", "qwen3.8:27b", "models", List.of(identity)));
+        var result = service.installed();
+        assertThat(result).containsEntry("provider", "ollama").containsEntry("trainedModel", true)
+                .containsEntry("trainingJobId", trainingId).containsEntry("sourceModel", "qwen3.8:27b").containsEntry("qualityEvaluated", false);
+        assertThat(result.toString()).doesNotContain("/private/model", "qualityEvaluated=true");
+    }
+
     private static ModelExecutionRequest training(UUID id, int count) { return new ModelExecutionRequest(id, "qwen3.8:27b", "a".repeat(64), null, null, count); }
 }

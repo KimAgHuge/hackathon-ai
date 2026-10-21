@@ -176,7 +176,9 @@ class ModelRuntimeService:
         self.store = store or RuntimeStore(Path(path), settings.ai_model)
         from app.services.mlx_adapter_runtime import MlxAdapterRuntime
         from app.services.hybrid_model_client import HybridModelClient
+        from app.services.trained_model_runtime import TrainedModelRuntime
         self.adapters = MlxAdapterRuntime(settings)
+        self.trained = TrainedModelRuntime(settings)
         self.client = client or HybridModelClient(OllamaAdminClient(settings), self.adapters)
 
     def selection(self):
@@ -229,6 +231,12 @@ class ModelRuntimeService:
                 or not isinstance(capabilities, list) or "completion" not in capabilities):
             raise ModelRuntimeError(409, "MODEL_NOT_EXECUTABLE", "로컬에서 문장 응답을 생성할 수 있는 설치 모델만 사용할 수 있습니다.")
         metadata = {}
+        if self.trained.owns(model):
+            from app.services.trained_model_runtime import TrainedModelError
+            try:
+                metadata = self.trained.metadata_for(model, digest)
+            except TrainedModelError as error:
+                raise ModelRuntimeError(error.status, error.code, error.message) from None
         if self.adapters.owns(model):
             source = show.get("sourceModel")
             if not isinstance(source, str) or not NAME.fullmatch(source):
@@ -259,7 +267,7 @@ class ModelRuntimeService:
         models = await self._call(asyncio.gather(*(describe(item) for item in entries[:100])))
         current = self._matching(entries, selection.model)
         selected = next((item for item in models if item["name"] == selection.model), {})
-        metadata = {key: selected[key] for key in ("provider", "sourceModel", "adapterId", "qualityEvaluated") if key in selected}
+        metadata = {key: selected[key] for key in ("provider", "sourceModel", "adapterId", "trainingJobId", "trainedModel", "qualityEvaluated") if key in selected}
         return {**metadata, "model": selection.model, "currentDigest": selection.digest or (current["digest"] if current else None),
                 "currentRevision": selection.revision, "previousModel": selection.previous_model,
                 "canRollback": bool(selection.previous_model and selection.previous_digest),
@@ -344,7 +352,7 @@ class ModelRuntimeService:
                 previous_digest = before.digest or (current["digest"] if current else None)
                 if target["name"] == before.model and target["digest"] == previous_digest:
                     raise ModelRuntimeError(409, "MODEL_ALREADY_SELECTED", "이미 선택된 모델입니다. 현재 상태를 새로 확인하세요.")
-                metadata = {key: target[key] for key in ("provider", "sourceModel", "adapterId", "qualityEvaluated") if key in target}
+                metadata = {key: target[key] for key in ("provider", "sourceModel", "adapterId", "trainingJobId", "trainedModel", "qualityEvaluated") if key in target}
                 result = {**metadata, "operationId": operation_id, "status": "APPLIED" if kind == "ACTIVATE" else "ROLLED_BACK",
                           "previousModel": before.model, "model": target["name"], "digest": target["digest"], "revision": before.revision + 1,
                           "message": "새 분석 요청에 사용할 모델을 변경했습니다. 이미 진행 중인 분석은 기존 모델을 유지합니다."}

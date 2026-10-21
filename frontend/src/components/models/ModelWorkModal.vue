@@ -6,7 +6,7 @@ import BaseModal from '@/components/base/BaseModal.vue'
 import BaseSelect from '@/components/base/BaseSelect.vue'
 import ModelRuntimeControl from '@/components/models/ModelRuntimeControl.vue'
 import ModelTrainingPanel from '@/components/models/ModelTrainingPanel.vue'
-import ModelAdapterPanel from '@/components/models/ModelAdapterPanel.vue'
+import ModelTrainedModelPanel from '@/components/models/ModelTrainedModelPanel.vue'
 import { operationErrorMessage } from '@/lib/modelOperations'
 
 const props = defineProps({ modelValue: Boolean, canDeploy: Boolean, canRollback: Boolean, canTrain: Boolean, refreshKey: { type: Number, default: 0 } })
@@ -33,14 +33,14 @@ const options = computed(() => [
     { value: '', label: '작업할 모델을 선택하세요' },
     ...choices.value.map((model) => ({
         value: model.name,
-        label: `${model.name}${model.adapterId ? ' · 학습 결과' : ''}${model.name === installed.value?.model ? ' · 현재 사용 중' : ''}${model.selectable ? '' : ' · 선택 불가'}`,
+        label: `${model.name}${model.trainedModel ? ' · 새 학습 모델' : model.adapterId ? ' · 학습 결과' : ''}${model.name === installed.value?.model ? ' · 현재 사용 중' : ''}${model.selectable ? '' : ' · 선택 불가'}`,
         disabled: !model.selectable,
     })),
 ])
 const actions = [
     { key: 'inference', label: '분석에 사용', hint: '응답 검증과 모델 변경' },
     { key: 'training', label: '선택 모델 학습', hint: '승인 자료로 시험 학습' },
-    { key: 'adapter', label: '학습 결과 적용', hint: '완료한 어댑터 적용' },
+    { key: 'adapter', label: '학습 결과 적용', hint: '새 모델 생성과 적용' },
 ]
 const load = async () => {
     const current = ++generation
@@ -163,12 +163,13 @@ onBeforeUnmount(() => {
                 @locked="trainingLocked = $event"
                 @busy="trainingBusy = $event"
             />
-            <ModelAdapterPanel
+            <ModelTrainedModelPanel
                 v-show="activeAction === 'adapter'"
                 :model-name="trainingModelName"
                 :visible="modelValue && activeAction === 'adapter'"
                 :available="loaded && !loading"
                 :can-deploy="canDeploy"
+                :can-train="canTrain"
                 :snapshot="installed"
                 :reload="load"
                 :refresh-key="refreshKey"

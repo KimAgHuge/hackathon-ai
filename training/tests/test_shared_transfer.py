@@ -88,7 +88,7 @@ class SharedTransferTests(unittest.TestCase):
         handler._authorized = lambda body: True
         handler.do_GET()
         self.assertEqual(responses[-1][0], 200)
-        self.assertEqual(responses[-1][1]["features"], ["FILE_LEVEL_EVIDENCE", "DATABASE_SCOPE_REVIEW", "DATABASE_CHANGE_SEMANTICS_V2", "DATABASE_REVIEW_PLAN_V1", "SOURCE_MODEL_V1", "SOURCE_ADAPTER_V1"])
+        self.assertEqual(responses[-1][1]["features"], ["FILE_LEVEL_EVIDENCE", "DATABASE_SCOPE_REVIEW", "DATABASE_CHANGE_SEMANTICS_V2", "DATABASE_REVIEW_PLAN_V1", "SOURCE_MODEL_V1", "SOURCE_ADAPTER_V1", "SOURCE_TRAINED_MODEL_V1"])
         self.assertFalse(responses[-1][1]["trainingExecution"])
         self.assertIn("trainingExecutionReason", responses[-1][1])
 

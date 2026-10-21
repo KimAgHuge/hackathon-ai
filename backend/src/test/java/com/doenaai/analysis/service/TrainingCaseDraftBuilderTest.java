@@ -172,6 +172,26 @@ class TrainingCaseDraftBuilderTest {
         var draft = TrainingCaseDraftBuilder.build(jobWithActivity(List.of()), result, reviewerId).caseDraft();
         assertThat(draft.get("sourceModel")).isEqualTo("qwen3.8:27b");
         assertThat(draft).doesNotContainKey("sourceAdapter");
+        assertThat(draft).doesNotContainKey("sourceTrainedModel");
+    }
+
+    @Test void trainedModelAnalysisPreservesOriginalFamilyAndExactInstalledModelDigest() {
+        String runtimeModel = "doenaai-trained:web-" + UUID.randomUUID();
+        String installedDigest = "d".repeat(64);
+        var original = legacyResult("NO_CHANGE");
+        var facts = new java.util.LinkedHashMap<>(original.facts());
+        facts.put("analysisModel", runtimeModel);
+        facts.put("analysisSourceModel", "qwen3.8:27b");
+        facts.put("analysisTrainedModelDigest", installedDigest);
+        var result = new AnalysisResultResponse(jobId, projectId, original.summary(), original.riskLevel(), original.riskScore(),
+                original.result(), facts, now, "APPROVED", null, "근거를 검토했습니다.", reviewerId, now);
+
+        var response = TrainingCaseDraftBuilder.build(jobWithActivity(List.of()), result, reviewerId);
+        assertThat(response.caseDraft()).containsEntry("sourceModel", "qwen3.8:27b")
+                .containsEntry("sourceTrainedModel", Map.of("model", runtimeModel, "digest", installedDigest))
+                .doesNotContainKey("sourceAdapter");
+        assertThat(response.reviewRequired()).noneMatch(item -> item.startsWith("sourceModel:"));
+        assertThat(result.facts().get("analysisModel")).isEqualTo(runtimeModel);
     }
 
     private AnalysisJobResponse jobWithActivity(List<AnalysisActivityEvent> events) {

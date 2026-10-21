@@ -82,6 +82,40 @@ class TrainingEvidenceServiceTest {
         verifyNoInteractions(git);
     }
 
+    @Test void trainedModelIdentityCannotBeChangedRemovedOrRelabeledAsAnAdapter() {
+        approved();
+        String runtimeModel = "doenaai-trained:web-" + UUID.randomUUID();
+        var identity = Map.of("model", runtimeModel, "digest", "d".repeat(64));
+        var saved = new LinkedHashMap<>(sample(1));
+        saved.put("sourceModel", "qwen3.8:27b");
+        saved.put("sourceTrainedModel", identity);
+        when(results.trainingDraft(jobId, userId)).thenReturn(new TrainingCaseDraftResponse(saved, List.of()));
+        assertThat(service.verifiedCase(jobId, userId, new LinkedHashMap<>(saved)))
+                .containsEntry("sourceTrainedModel", identity).containsEntry("sourceModel", "qwen3.8:27b");
+        for (var altered : List.of(Map.of("model", "doenaai-trained:web-" + UUID.randomUUID(), "digest", "d".repeat(64)),
+                Map.of("model", runtimeModel, "digest", "e".repeat(64)))) {
+            var submitted = new LinkedHashMap<>(saved); submitted.put("sourceTrainedModel", altered);
+            assertThatThrownBy(() -> service.verifiedCase(jobId, userId, submitted))
+                    .isInstanceOf(TrainingTransferClient.CaseValidationException.class);
+        }
+        var missing = new LinkedHashMap<>(saved); missing.remove("sourceTrainedModel");
+        assertThatThrownBy(() -> service.verifiedCase(jobId, userId, missing))
+                .isInstanceOf(TrainingTransferClient.CaseValidationException.class);
+        missing.put("sourceAdapter", identity);
+        assertThatThrownBy(() -> service.verifiedCase(jobId, userId, missing))
+                .isInstanceOf(TrainingTransferClient.CaseValidationException.class);
+        verifyNoInteractions(git);
+    }
+
+    @Test void ordinaryAnalysisCannotInventATrainedModelIdentity() {
+        approved();
+        var submitted = new LinkedHashMap<>(sample(1));
+        submitted.put("sourceTrainedModel", Map.of("model", "doenaai-trained:web-" + UUID.randomUUID(), "digest", "d".repeat(64)));
+        assertThatThrownBy(() -> service.verifiedCase(jobId, userId, submitted))
+                .isInstanceOf(TrainingTransferClient.CaseValidationException.class);
+        verifyNoInteractions(git);
+    }
+
     @Test void addsVerifiedExcerptOnlyToCopyAndResetsReviewFlags() throws Exception {
         approved();
         var root = Files.createDirectory(directory.resolve("checkout"));

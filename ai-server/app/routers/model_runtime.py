@@ -41,6 +41,41 @@ class AdapterImportInput(RuntimeInput):
     base_revision: str = Field(pattern=r"^[0-9a-f]{40}$")
 
 
+class TrainedModelImportInput(RuntimeInput):
+    job_id: UUID
+    version: str = Field(pattern=r"^trained-web-[0-9a-f-]{36}$")
+    manifest_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    source_model: str = Field(min_length=1, max_length=200)
+    base_model: str = Field(min_length=1, max_length=200)
+    base_revision: str = Field(pattern=r"^[0-9a-f]{40}$")
+    model: str = Field(pattern=r"^doenaai-trained:web-[0-9a-f-]{36}$")
+    artifact_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    artifact_size: StrictInt = Field(ge=24, le=64 * 1024 ** 3)
+    quantization: str = Field(pattern=r"^Q4_K_M$")
+
+
+@router.post("/trained/import")
+async def import_trained_model(body: TrainedModelImportInput, response: Response, service: ModelRuntimeService = Depends(get_model_runtime_service)):
+    """완성 모델 등록을 접수하며 실제 전환은 별도 응답 검증 뒤에만 허용한다."""
+    from app.services.trained_model_runtime import TrainedModelError
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return await service.trained.prepare(body.model_dump(mode="json", by_alias=True))
+    except TrainedModelError as error:
+        raise HTTPException(error.status, detail={"code": error.code, "message": error.message}) from None
+
+
+@router.get("/trained/imports/{job_id}")
+def trained_model_import(job_id: UUID, response: Response, service: ModelRuntimeService = Depends(get_model_runtime_service)):
+    """큰 모델 파일의 검증·등록 진행 상태를 원문과 로컬 경로 없이 조회한다."""
+    from app.services.trained_model_runtime import TrainedModelError
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return service.trained.status(job_id)
+    except TrainedModelError as error:
+        raise HTTPException(error.status, detail={"code": error.code, "message": error.message}) from None
+
+
 @router.post("/adapters/import")
 async def import_adapter(body: AdapterImportInput, response: Response, service: ModelRuntimeService = Depends(get_model_runtime_service)):
     """서명된 공유 패키지를 로컬에 준비하며 추론과 모델 전환은 실행하지 않는다."""

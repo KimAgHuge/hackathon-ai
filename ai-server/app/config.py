@@ -29,6 +29,8 @@ class Settings(BaseSettings):
     ai_mlx_model_dir: str = ""
     ai_mlx_python: str = ""
     ai_mlx_adapter_dir: str = ""
+    ai_trained_model_dir: str = ""
+    ai_trained_model_import_timeout_seconds: int = Field(default=7200, ge=60, le=21600)
     ai_model_state_file: str = ""
     ai_model_admin_timeout_seconds: float = Field(default=10, gt=0, le=30)
     ai_model_probe_timeout_seconds: float = Field(default=60, gt=0, le=120)

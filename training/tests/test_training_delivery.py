@@ -78,6 +78,28 @@ class TrainingDeliveryTests(unittest.TestCase):
             self.store.delivery(self.identifier, SECRET)
         self.assertFalse((self.fixture.shared / "model-deliveries").exists())
 
+    def test_model_build_source_requires_unchanged_base_files_from_training_report(self):
+        model = self.root / "fixed-model"
+        model.mkdir()
+        (model / "download_manifest.json").write_text(json.dumps(MODEL))
+        weights = model / "model.safetensors"
+        weights.write_bytes(b"synthetic-base-weights")
+        self.store.model_dir = model
+        self.record["target"] = self.store.training_target(QWEN_SOURCE)
+        self.save_record()
+        report_path = self.reports / "training-report.json"
+        report = json.loads(report_path.read_text())
+        report["protectedFiles"] = {"model": {path.name: [path.stat().st_size, path.stat().st_mtime_ns]
+            for path in model.iterdir() if path.is_file()}}
+        report_path.write_text(json.dumps(report))
+        source = self.store.model_build_source(self.identifier)
+        self.assertEqual(source["model_dir"], model)
+        self.assertEqual(source["adapter"], self.adapter)
+        weights.write_bytes(b"changed-after-training")
+        with self.assertRaises(TrainingJobError) as caught:
+            self.store.model_build_source(self.identifier)
+        self.assertEqual(caught.exception.code, "DELIVERY_NOT_READY")
+
     def test_modified_existing_package_is_not_replaced(self):
         self.store.delivery(self.identifier, SECRET)
         package = self.root / "outputs/model-packages" / ("web-" + self.identifier)

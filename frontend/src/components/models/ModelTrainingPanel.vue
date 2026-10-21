@@ -252,7 +252,10 @@ defineExpose({ openStart, refresh })
                 </p>
                 <p class="break-all font-bold">학습 대상 · {{ trainingTarget?.sourceModel }} / {{ trainingTarget?.baseModel }}</p>
                 <BaseInput v-model="iterations" label="학습 반복 횟수" type="number" min="1" max="20" step="1" :disabled="busy || Boolean(pending)" />
-                <p>생성된 어댑터는 ‘학습 결과 적용’에서 전달 준비와 응답 검증을 거쳐 적용할 수 있습니다. 학습만 실행하면 현재 분석 모델은 바뀌지 않습니다.</p>
+                <p>
+                    학습이 끝나면 ‘학습 결과 적용’에서 기반 모델과 합쳐 새 모델을 만들고 분석 서버에 등록합니다. 응답 검증 후 적용하며 현재 분석 모델은 자동
+                    변경되지 않습니다.
+                </p>
                 <label class="flex items-start gap-3"
                     ><input v-model="confirmed" type="checkbox" class="mt-1.5 h-4 w-4 shrink-0" :disabled="busy || Boolean(pending)" /><span
                         >실제 자원 사용과 운영 모델에 자동 적용되지 않는 범위를 확인했습니다.</span
