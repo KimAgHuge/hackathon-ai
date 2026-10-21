@@ -536,6 +536,7 @@ const plainLanguageSummary = computed(() => {
     return typeof value === 'string' && value.trim() ? value.trim() : ''
 })
 const databaseImpact = computed(() => aiResult.value.databaseImpact || null)
+const databaseReviewCoverage = computed(() => analysis.value?.result?.databaseReviewCoverage || null)
 const followUpQuestions = computed(() => asList(databaseImpact.value?.openQuestions))
 const previousClarifications = computed(() => asList(source.value.changeRequirement?.clarifications))
 
@@ -1220,6 +1221,20 @@ const evidenceEntries = (evidence) => (evidence && typeof evidence === 'object' 
                     </span>
                 </div>
                 <template v-if="databaseImpact">
+                    <div
+                        v-if="databaseReviewCoverage"
+                        class="mb-4 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-900/50 dark:text-slate-200"
+                    >
+                        <p class="font-semibold">
+                            {{ databaseReviewCoverage.mode === 'FOCUSED' ? '요구사항 관련 범위 우선 검토' : '수집한 전체 DB 범위 검토' }}
+                            · {{ asList(databaseReviewCoverage.reviewedTables).length }}/{{ databaseReviewCoverage.collectedTables }}개 테이블
+                        </p>
+                        <p class="mt-2">{{ databaseReviewCoverage.notice }}</p>
+                        <details v-if="asList(databaseReviewCoverage.omittedTables).length" class="mt-3">
+                            <summary class="cursor-pointer font-medium">상세 검토에서 제외된 테이블 보기</summary>
+                            <p class="mt-2 break-words">{{ databaseReviewCoverage.omittedTables.join(', ') }}</p>
+                        </details>
+                    </div>
                     <p class="result-text">{{ databaseImpact.explanation }}</p>
                     <div v-if="asList(databaseImpact.observedTables).length" class="database-impact-group">
                         <h3 class="subheading">확인한 기존 테이블</h3>

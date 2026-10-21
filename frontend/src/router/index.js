@@ -9,8 +9,6 @@ import ProjectRegisterView from '@/views/ProjectRegisterView.vue'
 import ChangeRequestManagementView from '@/views/ChangeRequestManagementView.vue'
 import AnalysisHistoryView from '@/views/AnalysisHistoryView.vue'
 import AiModelManagementView from '@/views/AiModelManagementView.vue'
-import DocumentManagementView from '@/views/DocumentManagementView.vue'
-import SettingsView from '@/views/SettingsView.vue'
 import AnalysisProgressView from '@/views/AnalysisProgressView.vue'
 import ArchitectureView from '@/views/ArchitectureView.vue'
 import ImpactAnalysisView from '@/views/ImpactAnalysisView.vue'
@@ -128,23 +126,11 @@ const routes = [
             },
             {
                 path: 'documents',
-                name: 'documents',
-                component: DocumentManagementView,
-                meta: {
-                    title: '문서 관리',
-                    breadcrumb: '문서 관리',
-                    permission: 'DOCUMENT_READ',
-                },
+                redirect: '/dashboard',
             },
             {
                 path: 'settings',
-                name: 'settings',
-                component: SettingsView,
-                meta: {
-                    title: '설정',
-                    breadcrumb: '설정',
-                    permission: 'SYSTEM_SETTING_READ',
-                },
+                redirect: '/dashboard',
             },
             {
                 path: 'projects/:projectId/analysis/:analysisJobId/progress',

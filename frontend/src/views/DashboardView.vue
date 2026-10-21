@@ -180,9 +180,7 @@ onMounted(fetchDashboard)
                         </div>
                     </div>
 
-                    <BaseButton class="mt-4" :to="dashboard.mode === 'live' ? '/projects' : '/settings'" block variant="secondary">
-                        {{ dashboard.mode === 'live' ? '프로젝트 보기' : '연결 설정 관리' }}
-                    </BaseButton>
+                    <BaseButton v-if="authStore.hasPermission('PROJECT_READ')" class="mt-4" to="/projects" block variant="secondary">프로젝트 보기</BaseButton>
                 </section>
             </div>
         </template>

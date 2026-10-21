@@ -4,6 +4,7 @@ const reasonLabels = {
     SOURCE_COMMIT_MISSING: '분석 작업에 Git 커밋 정보가 없습니다.',
     SAVED_COMMIT_MISSING: '저장된 소스 근거에 Git 커밋 정보가 없습니다.',
     SOURCE_COMMIT_MISMATCH: '분석 작업과 저장된 소스 근거의 Git 커밋이 다릅니다.',
+    SOURCE_COLLECTOR_OUTDATED: '소스 수집 방식이 업데이트되었습니다. 최신 Git·DB 확인으로 새 연결 근거를 수집해 주세요.',
     SOURCE_PROMPT_COVERAGE_MISSING: 'AI에 전달한 소스 범위 정보가 없습니다.',
     SOURCE_PROMPT_TRUNCATED: 'AI에 전달한 소스 정보가 입력 크기 제한으로 잘렸습니다.',
     SOURCE_SCAN_STATUS_MISSING: '소스 파일 수집 완료 여부를 확인할 수 없습니다.',

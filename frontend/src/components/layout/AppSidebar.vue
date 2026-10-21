@@ -47,18 +47,6 @@ const menus = [
         permission: 'MODEL_READ',
         icon: 'M8 8h8v8H8V8zM3 10h3M3 14h3M18 10h3M18 14h3M10 3v3M14 3v3M10 18v3M14 18v3',
     },
-    {
-        label: '문서 관리',
-        path: '/documents',
-        permission: 'DOCUMENT_READ',
-        icon: 'M6 3h9l3 3v15H6V3zM14 3v4h4M9 12h6M9 16h6',
-    },
-    {
-        label: '설정',
-        path: '/settings',
-        permission: 'SYSTEM_SETTING_READ',
-        icon: 'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM4 12H2M22 12h-2M12 4V2M12 22v-2M6.3 6.3 4.9 4.9M19.1 19.1l-1.4-1.4M17.7 6.3l1.4-1.4M4.9 19.1l1.4-1.4',
-    },
 ]
 
 const visibleMenus = computed(() => {
