@@ -1,175 +1,84 @@
-# 학습 결과로 분석용 GGUF 모델 만들기
+# 학습 결과로 새 분석 모델 생성·적용
 
-작성일: 2026-10-21
+맥 스튜디오(스튜디오)는 AI 분석/추론 서버이고, 맥북은 학습 서버다. 맥북 학습 서버에서 **기반 모델 + 완료한 학습 어댑터 → 병합 → GGUF 변환 → Q4_K_M 양자화**를 실행한다. 완성 파일은 공유 NAS 역할의 iCloud Drive에 게시하고, 스튜디오의 AI 분석/추론 서버가 검증·복사한 뒤 기존 Ollama에 별도 모델로 등록한다. 스튜디오의 AI 분석/추론 서버에는 MLX Python이나 MLX 기반 모델 설정이 필요 없다.
 
-## 실행 흐름과 장비 역할
+기존 기반 모델·승인 자료·어댑터는 보존한다. 이미 완료한 웹 학습을 선택하면 같은 자료를 다시 학습할 필요 없다. 화면에는 선택한 기반 모델과 출처가 일치하는 완료 작업만 표시하며, CLI 시험 어댑터를 웹 작업으로 자동 등록하지 않는다.
 
-완료한 웹 학습의 어댑터를 기반 모델과 합친 뒤, GGUF 변환과 `Q4_K_M` 양자화를 거쳐
-별도 분석용 모델을 만든다. 새 모델 생성은 맥북 AI 학습 서버에서 실행하고, 완성 패키지를
-공유 NAS 역할의 iCloud Drive `model-deliveries/`에 게시한다.
-Mac Studio AI 분석/추론 서버는 서명·크기·해시·출처를 검사하고 로컬에 복사한 뒤
-기존 Ollama에 새 이름으로 등록한다. 모델 학습이나 변환을 스튜디오에서 반복하지 않는다.
-이 경로에서 스튜디오의 MLX 기반 모델·MLX Python 설정은 필수가 아니다.
+## 맥북 학습 서버 변환 도구 준비
 
-```text
-완료한 웹 학습 선택
-  → 맥북: 기반 모델과 병합 → GGUF 변환 → Q4_K_M 양자화
-  → 맥북: 서명된 완성 모델 패키지를 iCloud에 게시
-  → 스튜디오: 파일 검증 → 로컬 보관 → Ollama 새 모델 등록
-  → 화면: JSON 응답 검증 → 확인 후 새 분석에 적용
-```
-
-현재는 기존에 완료한 웹 학습 1건을 재사용해 다음 단계를 준비한다. 새 모델 생성을 위해
-같은 자료를 다시 학습할 필요는 없다. 화면에는 선택한 분석 모델과 출처가 일치하는
-`SUCCEEDED` 웹 학습만 표시한다. 기존 CLI 시험 어댑터가 웹 학습 목록에 자동으로 생기는 것은 아니다.
-기존 기반 모델·학습 원본·어댑터를 덮어쓰지 않고 작업별 새 폴더와 새 Ollama 이름을 사용한다.
-
-환경 준비 완료와 실제 모델 생성 성공은 별개다. 아래 절차를 마쳤더라도 GGUF 변환,
-iCloud 동기화, 스튜디오 등록과 응답 검증 결과는 각 실행 단계에서 확인해야 한다.
-
-## 맥북의 변환 환경 준비
-
-모든 명령은 저장소 루트의 일반 터미널에서 실행한다. Git·CMake·Xcode 명령줄 도구와
-Python 3.10 이상이 필요하며, 기존 `training/.venv`는 학습용으로 보존한다.
-
-이번 환경 준비에서는 Homebrew를 먼저 업데이트해 macOS 26.6.2 호환 오류를 해결했다.
-Homebrew 7.0.10과 CMake 4.4.4가 준비됐으며 모든 설치 패키지의 일괄 `upgrade`는 실행하지 않았다.
-아래 명령은 다른 환경에서 도구가 필요한 경우의 준비 순서다.
-
-```bash
-brew update
-brew install cmake
-```
-
-`setup_model_export.py`는 명시적으로 실행했을 때 공식 고정 소스를 내려받고 별도 변환용
-Python 환경과 CPU 양자화 실행 파일을 만든다. 모델 가중치 다운로드·학습·실제 변환·iCloud 게시는
-실행하지 않으며 기존 학습 환경과 `.env`를 수정하지 않는다.
+저장소 루트의 일반 터미널에서 실행한다. Git·CMake·Xcode 명령줄 도구와 Python 3.10 이상이 필요하다. CMake가 없으면 먼저 설치한다. 기존 `training/.venv`는 학습용으로 보존한다.
 
 ```bash
 training/.venv/bin/python training/setup_model_export.py \
   --python "$PWD/training/.venv/bin/python"
 ```
 
-기본 설치 위치는 `training/.tools/model-export/`이며 그 아래에 `llama.cpp/`,
-`converter-venv/`, 준비 완료 정보 `setup.json`을 만든다.
-이미 설치 중이거나 폴더가 존재하면 같은 설치를 겹쳐 실행하지 않는다.
-완료한 설치는 다음 명령으로 버전·의존성·실행 파일 해시를 다시 확인한다.
+도구는 고정 공식 소스, 별도 변환용 가상환경, CPU 양자화 실행 파일을 `training/.tools/model-export/`에 준비한다. 모델 다운로드·학습·실제 변환·NAS 게시를 실행하거나 기존 `.env`를 수정하지 않는다. 설치 중인 폴더에 설치 명령을 겹쳐 실행하지 않는다.
+
+완료한 설치는 다음 명령으로 검사한다. 다른 위치에 설치했으면 설치·검사에 같은 `--directory <절대 경로>`를 사용한다.
 
 ```bash
 training/.venv/bin/python training/setup_model_export.py --check
 ```
 
-다른 경로에 설치했으면 두 명령에 같은 `--directory` 절대 경로를 지정한다.
-`--check`는 기존 도구를 검사하고 설정값을 출력하며 모델 생성이나 재설치를 실행하지 않는다.
-준비 중인 폴더는 검사가 실패할 수 있으므로 설치 프로세스의 완료를 먼저 확인한다.
-
-## 고정 버전과 저장 공간 조건
-
-| 항목 | 현재 지원 조건 |
+| 항목 | 조건 |
 |---|---|
-| 학습 기반 모델 | `mlx-community/Qwen3.8-27B-4bit` |
-| 기반 모델 revision | `10c35caafbb80f7dc6a7a432cdd11af10a6d4818` |
-| 학습 구현 | MLX-LM `0.32.0` |
+| 학습 모델 | [현재 지원 Qwen 기반 모델·고정 버전](MODEL_COMPATIBILITY.md) |
 | 변환 도구 | `llama.cpp` revision `620d2225cc436ab0b001e3200e590e3b286ef9ab` |
-| 변환용 Python | `3.10` 이상, 기존 학습 환경과 별도 가상환경 |
-| 변환용 의존성 | torch `2.11.0`, transformers `4.57.6`, numpy `2.2.6` 이상·`2.3` 미만 |
-| 변환 실행 파일 | `convert_hf_to_gguf.py`, `build/bin/llama-quantize` |
-| 맥북 작업 폴더 여유 | `training/outputs/model-builds`가 있는 볼륨에 **180GiB 이상** |
+| 변환 의존성 | torch `2.11.0`, transformers `4.57.6`, numpy `2.2.6` 이상·`2.3` 미만 |
+| 실행 파일 | `convert_hf_to_gguf.py`, `build/bin/llama-quantize` |
+| 작업 볼륨 | `training/outputs/model-builds`가 있는 볼륨에 **180 GiB 이상** 여유 |
 
-변환 도구의 추적 파일이 고정 버전과 다르거나 양자화 실행 파일의 해시가 설정과 다르면
-새 모델 생성을 막는다. 학습·모델 생성은 GPU 잠금을 공유하므로 동시에 실행하지 않는다.
-현재 확인한 Qwen 구조와 학습 기록에 맞춘 경로이며 다른 모델에 그대로 적용하지 않는다.
-
-## 세 설정값 적용과 학습 서버 재시작
-
-설치 또는 `--check`가 출력한 다음 값을 맥북의 `training/.env`에 반영한다.
-출력값을 그대로 사용하고 해시를 임의로 채우지 않는다.
+설치 또는 `--check`가 출력한 다음 값을 맥북 학습 서버의 `training/.env`에 반영한다. 실행 파일 해시는 해당 장비의 출력값을 사용한다.
 
 | 환경변수 | 값 |
 |---|---|
-| `DOENAAI_TRAINING_LLAMA_CPP_DIR` | 준비한 고정 버전 `llama.cpp` 폴더의 절대 경로 |
-| `DOENAAI_TRAINING_CONVERTER_PYTHON` | `converter-venv/bin/python`의 절대 경로 |
-| `DOENAAI_TRAINING_QUANTIZER_SHA256` | 실제 `llama-quantize` 실행 파일의 SHA-256 |
+| `DOENAAI_TRAINING_LLAMA_CPP_DIR` | 고정 버전 `llama.cpp` 폴더의 절대 경로 |
+| `DOENAAI_TRAINING_CONVERTER_PYTHON` | 변환 환경 `converter-venv/bin/python`의 절대 경로 |
+| `DOENAAI_TRAINING_QUANTIZER_SHA256` | 준비한 `llama-quantize`의 SHA-256 |
 
-기존 `DOENAAI_TRAINING_MODEL_DIR` 또는 모델 등록 파일, iCloud 공유 폴더와 전송 키는 유지한다.
-기존 셸 환경변수가 `.env`보다 우선하므로 이전 값이 남아 있다면 함께 확인한다.
-설정 파일·비밀키는 Git에 넣지 않는다. 설정 반영은 학습 서버를 재시작해야 끝난다.
-활성 학습·모델 생성이 없는지 먼저 확인하고, 기존 서버 터미널에서 `Ctrl+C`로 종료한 뒤 다시 실행한다.
+기존 학습 모델·공유 폴더·전송 키 설정은 유지한다. 환경변수가 `.env`보다 우선하므로 이전 값도 확인한다. 활성 학습과 모델 생성이 없는지 확인한 뒤 맥북 학습 서버를 재시작하고, 화면의 **준비 상태 새로고침**으로 도구·저장 공간·작업 잠금을 확인한다. 서버 시작만으로 모델 생성이 실행되지는 않는다.
 
-```bash
-training/.venv/bin/python training/receiver_service.py --host 0.0.0.0 --port 8011
-```
-
-서버 시작은 새 모델 생성을 자동 실행하지 않는다. 화면의 **준비 상태 새로고침**에서
-고정 도구·저장 공간·작업 잠금 검사 결과를 확인한 뒤 다음 단계로 진행한다.
+도구 소스·실행 파일 해시·기반 모델·학습 어댑터·보고서가 기록과 다르면 생성을 막는다. 학습과 생성은 공통 잠금을 사용해 동시에 실행하지 않는다. 실패·취소·서버 재시작 때 해당 시도의 변환 임시 폴더를 정리하며, 원본과 완료된 전달 패키지는 보존한다.
 
 ## 화면에서 생성·등록·적용
 
-AI 모델 관리의 해당 모델 작업 화면에서 완료한 학습 결과를 선택한다.
+AI 모델 관리의 **모델 작업 → 모델 선택 → 학습 결과 적용**에서 완료한 학습을 고른다.
 
-1. **새 학습 모델 생성**의 실행 범위와 자원 사용을 확인하고 요청한다.
-   상태는 `PENDING → FUSING → CONVERTING → QUANTIZING → PUBLISHING`을 거쳐 완료된다.
-   이 요청에는 완성 패키지의 iCloud 게시까지 포함된다. 환경 준비 명령과 구분한다.
-2. 생성이 `SUCCEEDED`가 되면 **분석 서버에 새 모델 등록**을 요청한다.
-   파일 동기화가 덜 끝났으면 `WAITING`으로 표시하며, 동기화 후 같은 작업에서 등록을 다시 요청한다.
-3. 등록이 `READY`이면 설치 목록의 모델·파일 식별값을 대조하고 **JSON 응답 검증**을 실행한다.
-4. 유효한 검증 결과와 적용 범위를 확인한 뒤 새 분석에 적용한다.
-   새 모델 생성과 등록만으로 운영 모델은 전환되지 않는다.
+1. **새 학습 모델 생성**을 요청한다. `PENDING → FUSING → CONVERTING → QUANTIZING → PUBLISHING → SUCCEEDED` 순서로 진행하며, NAS 게시까지 포함한다. API 응답은 접수이며 진행 상태에서 완료를 확인한다.
+2. **분석 서버에 새 모델 등록**을 요청해 스튜디오의 AI 분석/추론 서버에 등록한다. NAS 파일이 아직 내려오지 않았으면 `WAITING`으로 표시한다. 두 장비의 업로드·다운로드 상태를 확인하고 동기화 후 같은 결과에서 등록을 다시 요청한다.
+3. 등록 상태가 `READY`이면 **새 모델 응답 검증**으로 JSON 형식을 확인한다.
+4. 결과와 적용 범위를 확인하고 **새 학습 모델 적용**을 요청한다. 생성·등록만으로 사용 모델이 바뀌지는 않는다. 진행 중인 분석은 시작 당시 모델을 유지하고 새 분석부터 선택한 모델을 사용한다.
 
-프론트는 백엔드 API를 호출하며, 백엔드는 권한과 원래 학습 서버·기반 모델·작업 이력을
-확인한 뒤 서명된 학습 서버 요청 또는 내부 인증된 분석 서버 요청을 보낸다.
-화면에서 경로·명령·비밀키를 전달하지 않는다.
+실패·취소 후 생성 재시도는 화면에서 명시적으로 요청한다. 완료한 같은 결과의 생성·등록은 파일과 출처를 확인해 재사용하며, 같은 이름의 다른 내용은 덮어쓰지 않는다. 이전 모델은 보존하므로 모델 작업에서 응답 검증·선택 절차를 거쳐 다시 사용할 수 있다.
 
-| 백엔드 API | 동작 | 권한 |
-|---|---|---|
-| `GET /api/models/trained/{jobId}/build` | 생성 준비·진행 상태 확인 | `MODEL_READ` |
-| `POST /api/models/trained/{jobId}/build` | 새 모델 생성과 iCloud 게시 요청 | `MODEL_TRAIN` |
-| `POST /api/models/trained/{jobId}/build/cancel` | 생성 작업 취소 요청 | `MODEL_TRAIN` |
-| `POST /api/models/trained/{jobId}/import` | 분석 서버 검증·Ollama 등록 요청 | `MODEL_DEPLOY` |
-| `GET /api/models/trained/{jobId}/import` | 등록 상태 확인 | `MODEL_READ` |
+| 백엔드 API | 권한 |
+|---|---|
+| `GET /api/models/trained/{jobId}/build` | `MODEL_READ` |
+| `POST /api/models/trained/{jobId}/build` | `MODEL_TRAIN` |
+| `POST /api/models/trained/{jobId}/build/cancel` | `MODEL_TRAIN` |
+| `POST /api/models/trained/{jobId}/import` | `MODEL_DEPLOY` |
+| `GET /api/models/trained/{jobId}/import` | `MODEL_READ` |
 
-생성·취소·등록 요청 본문은 빈 객체 `{}`이며 작업 식별자에서 원본 정보를 찾는다.
-새 Ollama 이름은 `doenaai-trained:web-<jobId>`, 공유 패키지 버전은 `trained-web-<jobId>`다.
-같은 이름의 다른 파일이 있으면 기존 내용을 덮어쓰지 않고 충돌로 처리한다.
+생성·취소·등록 본문은 빈 객체 `{}`다. 백엔드가 권한·원래 맥북 학습 서버·기반 모델·작업 이력을 확인하고 서명된 맥북 학습 서버 요청 또는 내부 인증된 스튜디오의 AI 분석/추론 서버 요청을 보낸다. 브라우저는 경로·명령·비밀키를 전달하지 않는다.
 
-## 스튜디오의 등록 조건과 남은 확인
+## NAS 패키지와 스튜디오의 AI 분석/추론 서버 조건
 
-스튜디오에는 기존 Ollama와 원래 분석 모델 `qwen3.8:27b`, 동기화된 iCloud 공유 폴더,
-맥북과 같은 전송 키가 필요하다. `DOENAAI_AI_TRAINED_MODEL_DIR`를 지정하면 완성 모델을
-그 로컬 폴더에 보관하며, 빈 값이면 `ai-server/.runtime/trained-models`를 사용한다.
-기본 가져오기 제한시간은 `DOENAAI_AI_TRAINED_MODEL_IMPORT_TIMEOUT_SECONDS=7200`이다.
-분석 서버는 로컬 보관 사본과 Ollama 가중치에 필요한 디스크 공간도 검사한다.
+공유 폴더의 `model-deliveries/trained-web-<jobId>/`에는 다음 네 파일을 게시한다.
 
-등록 시 기반 분석 모델의 대화 형식과 실행 구조를 확인하고 같은 형식을 새 모델에 사용한다.
-등록·JSON 시험의 성공은 업무 정확도나 한국어 품질 개선을 증명하지 않는다.
-독립 평가·사람 검토와 운영 적용 판단은 별도로 진행한다.
-기존 분석은 시작 당시 모델을 유지하며 새 선택은 새 분석부터 적용한다.
+| 파일 | 내용 |
+|---|---|
+| `model.gguf` | 병합·Q4_K_M 양자화를 마친 완성 모델 |
+| `evaluation-summary.json` | 허용한 실행 측정값과 품질 미평가 표시 |
+| `manifest.json` | 기반 모델·고정 버전·변환 도구·파일 크기·SHA-256 |
+| `READY.json` | 명세 해시와 HMAC 서명 |
 
-학습 산출물·대형 변환 중간 파일·공유 패키지·로컬 상태·설정은 Git에 올리지 않는다.
-전달 무결성과 기존 시험 어댑터 패키지의 차이는 [모델 전달 안내](MODEL_DELIVERY.md),
-화면 사용과 권한은 [AI 모델 관리 사용 안내](../docs/18_AI_모델_관리_사용_안내.md)를 참고한다.
+사례 원문·학습 대화·전체 보고서·비밀키·로컬 경로는 보내지 않는다. 서명은 완성 모델 전용 구분값 `doenaai-model-gguf-delivery-v1`을 사용한다. 구형 `model_delivery.py`의 시험 어댑터 패키지는 GGUF 완성 모델과 다르며 이 등록 경로의 입력이 아니다.
 
-## 2026-10-21 맥북 준비 결과
+NAS는 전달 공간이며 모델을 직접 실행하는 폴더가 아니다. 로컬 게시 성공도 iCloud 업로드·원격 다운로드 완료를 뜻하지 않는다. 동기화 순서가 일정하지 않으므로 완료 표시뿐 아니라 모든 파일의 실제 로컬 존재·크기·해시·서명·출처를 확인한다. 누락·동기화 대기 상태에서는 현재 모델을 유지한다. 공유 파일의 명령이나 스크립트를 실행하지 않는다.
 
-`f87d15b` 기준으로 Homebrew 7.0.10·CMake 4.4.4와 고정 변환 도구를 준비했다.
-기본 경로 `training/.tools/model-export/`에 설치했고 `setup_model_export.py --check`가
-고정 소스·실행 파일 해시·변환용 의존성 검사를 통과했다. 검사로 확인한 세 값을 로컬
-`training/.env`에 반영했으며 기존 키·학습 모델 경로·공유 폴더 설정과 파일 권한을 보존했다.
+스튜디오의 AI 분석/추론 서버에는 기존 Ollama·원래 기반 분석 모델·동기화된 공유 폴더·같은 전송 키가 필요하다. 새 모델은 `doenaai-trained:web-<jobId>` 이름으로 등록하며, 기반 분석 모델의 대화 형식·실행 구조를 확인해 사용한다.
 
-이 장비에서 빌드한 `llama-quantize`의 SHA-256은 다음과 같다. 다른 장비에서 다시
-빌드할 때는 이 값을 복사하지 않고 해당 장비의 설치·검사 출력값을 사용한다.
+`DOENAAI_AI_TRAINED_MODEL_DIR`가 비어 있으면 `ai-server/.runtime/trained-models`에 보관한다. 가져오기 제한시간의 기본값은 `DOENAAI_AI_TRAINED_MODEL_IMPORT_TIMEOUT_SECONDS=7200`이다. 로컬 보관 사본과 엔진 가중치에 필요한 여유 공간도 검사한다. 등록 상태와 출처를 보존하며 실제 엔진 해시는 전달 명세·GGUF 파일 해시와 구분한다.
 
-```text
-a3d3184ed0d2a06529023ed2ab8b517492f5e3d40a7e24730c934fa8da3e24a2
-```
-
-활성 학습이 없는 것을 확인한 뒤 20:06경 IntelliJ 터미널의 수신 서버를 정상 종료·재시작했다.
-완료한 웹 학습의 모델 생성 상태를 로컬 서명 요청으로 조회해 HTTP 200,
-`status=NOT_BUILT`, `available=true`, `reasonCode=READY`를 확인했다.
-학습 이력은 1건·진행 중 0건이고 현재 모델의 선택 가능 자료는 3건·이전 자료 제외는 3건이다.
-설치 후 작업 볼륨 여유는 약 210.85 GiB로 180 GiB 기준을 충족했다.
-
-학습 Python과 패키지 54개, 기반 모델 46개 파일의 상태, 수신 원본 6개·수신 기록 6개·
-기존 어댑터 8개 파일의 해시와 상태가 설치 전후 모두 같았다.
-이 확인은 환경과 API의 준비 완료이며 실제 모델 병합·GGUF 생성·iCloud 게시·
-스튜디오 등록·운영 모델 전환은 아직 실행하지 않았다.
+학습·생성·등록·JSON 검증 성공은 업무 정확도나 한국어 품질 개선을 증명하지 않는다. [동일 조건의 독립 평가](DATA_WORKFLOW.md)와 사람 검토를 거쳐 적용을 판단한다. 화면 권한과 전체 사용 흐름은 [모델 관리 안내](../docs/18_AI_모델_관리_사용_안내.md)를 참고한다. 모델·중간 파일·패키지·로컬 상태·설정은 Git에 올리지 않는다.
