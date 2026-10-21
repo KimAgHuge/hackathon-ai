@@ -46,3 +46,8 @@ doenaai:
     stale-timeout-seconds: ${DOENAAI_ANALYSIS_STALE_TIMEOUT_SECONDS:4500}
   git:
     connection-timeout-seconds: ${DOENAAI_GIT_CONNECTION_TIMEOUT_SECONDS:10}
+  training-receiver:
+    base-url: ${DOENAAI_TRAINING_RECEIVER_URL:}
+    transfer-key: ${DOENAAI_TRAINING_TRANSFER_KEY:}
+  model-management:
+    instance-id: ${DOENAAI_MODEL_MANAGER_ID:}

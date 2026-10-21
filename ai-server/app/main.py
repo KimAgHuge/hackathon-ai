@@ -10,7 +10,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
-from app.routers import analysis, health, training_transfer
+from app.routers import analysis, health, model_runtime, training_transfer
 from app.config import get_settings
 from app.services.training_transfer_service import TrainingTransferService
 
@@ -52,6 +52,7 @@ def create_app() -> FastAPI:
     application = FastAPI(title="doenaai AI 분석/추론 서버", version="0.1.0", lifespan=lifespan)
     application.include_router(health.router)
     application.include_router(analysis.router)
+    application.include_router(model_runtime.router)
     application.include_router(training_transfer.router)
 
     @application.exception_handler(RequestValidationError)

@@ -4,6 +4,7 @@ import json
 import logging
 import re
 import time
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
 
@@ -13,6 +14,7 @@ from pydantic import ValidationError
 
 from app.config import Settings
 from app.services.stage_checkpoints import StageCheckpoints
+from app.services.model_runtime import ModelRuntimeError, normalized_digest
 from app.services.source_context import general_overview, source_context, supported_target_tables, explicit_requirement_text
 from app.services.database_scope import database_review_scope, metadata_checks, review_groups, database_input, database_source_context
 from app.services.response_repairs import repair_contract, apply_repair, restrict_observed_tables
@@ -139,8 +141,10 @@ class LlmService:
     """Ollama 호출과 응답 검증을 담당하며 원본 DB에는 접속하지 않는다."""
 
     def __init__(self, settings: Settings, client: Optional[AsyncClient] = None,
-                 checkpoints: Optional[StageCheckpoints] = None):
+                 checkpoints: Optional[StageCheckpoints] = None, runtime=None):
         self._settings = settings
+        self._runtime = runtime
+        self._request_model = ContextVar("analysis_model", default=None)
         self._checkpoints = checkpoints
         if client is None and checkpoints is None and settings.ai_checkpoints_enabled:
             self._checkpoints = StageCheckpoints(
@@ -152,8 +156,24 @@ class LlmService:
             timeout=settings.ai_request_timeout_seconds,
         )
 
+    @property
+    def _model(self):
+        """진행 중 분석의 선택값은 다른 요청이 전환해도 바뀌지 않는다."""
+        pinned = self._request_model.get()
+        if pinned is not None:
+            return pinned
+        try:
+            return self._runtime.selection().model if self._runtime is not None else self._settings.ai_model
+        except ModelRuntimeError:
+            raise ModelUnavailableError("모델 선택 기록을 확인하지 못했습니다. 관리자에게 저장 상태를 확인해 주세요.") from None
+
     async def health(self) -> ModelHealthResponse:
-        """설정된 Ollama 모델의 설치 여부를 확인해 상태·모델명을 반환한다."""
+        """실제 선택된 Ollama 모델의 설치 여부를 확인해 상태·모델명을 반환한다."""
+        try:
+            selection = self._runtime.selection() if self._runtime is not None else None
+        except ModelRuntimeError:
+            raise ModelUnavailableError("모델 선택 기록을 확인하지 못했습니다. 관리자에게 저장 상태를 확인해 주세요.") from None
+        configured_model = selection.model if selection is not None else self._settings.ai_model
         try:
             response = await self._client.list()
         except httpx.TimeoutException as exc:
@@ -163,7 +183,6 @@ class LlmService:
         except ResponseError as exc:
             raise ModelUnavailableError("Ollama returned a model service error.") from exc
 
-        configured_model = self._settings.ai_model
         model_names = self._extract_model_names(response)
         available = any(
             name == configured_model
@@ -176,6 +195,17 @@ class LlmService:
                 f"Configured model '{configured_model}' is not installed."
             )
 
+        if selection is not None and selection.digest is not None:
+            models = response.get("models", []) if isinstance(response, dict) else getattr(response, "models", [])
+            match = next((item for item in models if (item.get("model", item.get("name")) if isinstance(item, dict)
+                          else getattr(item, "model", None)) == configured_model), None)
+            digest = match.get("digest") if isinstance(match, dict) else getattr(match, "digest", None)
+            try:
+                if normalized_digest(digest) != selection.digest:
+                    raise ModelRuntimeError(409, "MODEL_DIGEST_CHANGED", "선택 모델의 파일이 바뀌었습니다.")
+            except ModelRuntimeError:
+                raise ModelUnavailableError("선택 모델의 설치 파일이 기록과 다릅니다. 모델을 다시 확인해 주세요.") from None
+
         return ModelHealthResponse(
             status="UP",
             model=configured_model,
@@ -183,6 +213,27 @@ class LlmService:
         )
 
     async def analyze(
+        self,
+        request: ProjectAnalysisRequest,
+        progress: ProgressCallback | None = None,
+    ) -> ProjectAnalysisResponse:
+        """분석 시작 때 모델을 고정하고 모든 단계가 끝난 뒤 요청의 선택값을 해제한다."""
+        try:
+            selection = self._runtime.selection() if self._runtime is not None else None
+        except ModelRuntimeError:
+            raise ModelUnavailableError("모델 선택 기록을 확인하지 못했습니다. 관리자에게 저장 상태를 확인해 주세요.") from None
+        token = self._request_model.set(selection.model if selection is not None else self._settings.ai_model)
+        try:
+            if self._runtime is not None:
+                try:
+                    await self._runtime.validate_selection(selection)
+                except ModelRuntimeError:
+                    raise ModelUnavailableError("선택 모델의 설치 파일을 확인하지 못했습니다. 관리자에게 모델 상태를 확인해 주세요.") from None
+            return await self._analyze(request, progress)
+        finally:
+            self._request_model.reset(token)
+
+    async def _analyze(
         self,
         request: ProjectAnalysisRequest,
         progress: ProgressCallback | None = None,
@@ -573,9 +624,9 @@ class LlmService:
                 models = listing.get("models", []) if isinstance(listing, dict) else getattr(listing, "models", [])
                 digest = next((item.get("digest") if isinstance(item, dict) else getattr(item, "digest", None)
                                for item in models if (item.get("model", item.get("name")) if isinstance(item, dict)
-                                                      else getattr(item, "model", None)) == self._settings.ai_model), None)
+                                                      else getattr(item, "model", None)) == self._model), None)
                 if isinstance(digest, str) and digest:
-                    checkpoint_key = self._checkpoints.key({"scope": checkpoint_scope, "model": self._settings.ai_model,
+                    checkpoint_key = self._checkpoints.key({"scope": checkpoint_scope, "model": self._model,
                                                            "digest": digest, "messages": messages,
                                                            "schema": base_schema,
                                                            "options": {"temperature": 0}})
@@ -583,7 +634,7 @@ class LlmService:
                     if saved is not None:
                         result = response_type.model_validate(saved)
                         validate_result(result)
-                        logger.info("model_stage_reused model=%s response_type=%s", self._settings.ai_model, response_type.__name__)
+                        logger.info("model_stage_reused model=%s response_type=%s", self._model, response_type.__name__)
                         if progress and checkpoint_event:
                             await progress(*checkpoint_event)
                         return result
@@ -601,14 +652,14 @@ class LlmService:
             logger.info(
                 "model_attempt_started model=%s response_type=%s attempt=%s input_chars=%s "
                 "thinking=%s max_output_tokens=%s observed_table_count=%s",
-                self._settings.ai_model, response_type.__name__, attempt, input_chars,
+                self._model, response_type.__name__, attempt, input_chars,
                 generation.get("think", "model_default"),
                 generation["options"].get("num_predict", "model_default"),
                 len(allowed_tables) if allowed_tables is not None else "not_scoped",
             )
             try:
                 response = await self._client.chat(
-                    model=self._settings.ai_model,
+                    model=self._model,
                     messages=messages,
                     stream=False,
                     format=generation_schema,
@@ -618,7 +669,7 @@ class LlmService:
             except httpx.TimeoutException as exc:
                 logger.warning(
                     "model_attempt_timeout model=%s response_type=%s attempt=%s duration_ms=%s input_chars=%s",
-                    self._settings.ai_model, response_type.__name__, attempt,
+                    self._model, response_type.__name__, attempt,
                     round((time.monotonic() - started) * 1000), input_chars,
                 )
                 raise ModelTimeoutError("Ollama inference timed out.") from exc
@@ -633,7 +684,7 @@ class LlmService:
             if done_reason == "length":
                 logger.warning(
                     "model_output_limit model=%s response_type=%s attempt=%s duration_ms=%s max_output_tokens=%s",
-                    self._settings.ai_model, response_type.__name__, attempt,
+                    self._model, response_type.__name__, attempt,
                     round((time.monotonic() - started) * 1000), generation["options"].get("num_predict", "model_default"),
                 )
                 raise ModelOutputLimitError("모델 응답이 출력 한도에 도달했습니다. 잘린 응답은 분석 결과로 사용하지 않습니다.")
@@ -648,7 +699,7 @@ class LlmService:
             logger.info(
                 "model_attempt_completed model=%s response_type=%s attempt=%s duration_ms=%s "
                 "input_chars=%s output_chars=%s prompt_tokens=%s output_tokens=%s thinking_chars=%s",
-                self._settings.ai_model, response_type.__name__, attempt,
+                self._model, response_type.__name__, attempt,
                 round((time.monotonic() - started) * 1000),
                 input_chars, len(content),
                 prompt_tokens, output_tokens, len(thinking) if isinstance(thinking, str) else 0,
@@ -670,7 +721,7 @@ class LlmService:
                 validation_error = exc
                 logger.warning(
                     "invalid_model_response model=%s response_type=%s attempt=%s code=%s",
-                    self._settings.ai_model,
+                    self._model,
                     response_type.__name__,
                     attempt,
                     self._safe_validation_code(exc),

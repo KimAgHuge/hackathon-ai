@@ -27,7 +27,7 @@ const makeNode = (type, text = '') => ({
     },
 })
 
-const mountModal = async () => {
+const mountModal = async (footerText) => {
     const body = makeNode('body')
     body.style.overflow = 'auto'
     globalThis.document = { body }
@@ -57,8 +57,10 @@ const mountModal = async () => {
     const busy = ref(false)
     const app = renderer.createApp({
         setup: () => () =>
-            h(BaseModal, { modelValue: open.value, title: '검토 상세', busy: busy.value, 'onUpdate:modelValue': (value) => (open.value = value) }, () =>
-                h('textarea', { value: '편집 중인 초안' })
+            h(
+                BaseModal,
+                { modelValue: open.value, title: '검토 상세', busy: busy.value, footerText, 'onUpdate:modelValue': (value) => (open.value = value) },
+                () => h('textarea', { value: '편집 중인 초안' })
             ),
     })
     app.mount(makeNode('root'))
@@ -74,6 +76,23 @@ const mountModal = async () => {
     }
     return { open, busy, body, dialog, settle, cleanup }
 }
+
+test('모델 관리 안내를 바꿔도 기존 분석 모달의 기본 안내는 유지된다', async () => {
+    const original = await mountModal()
+    try {
+        const footer = original.dialog.children.find((node) => node.type === 'footer')
+        assert.equal(footer.children.find((node) => node.type === 'p').text, '이 창을 닫아도 저장된 분석과 검토 결과는 유지됩니다.')
+    } finally {
+        original.cleanup()
+    }
+    const custom = await mountModal('등록 정보만 저장하며 실제 모델을 전환하지 않습니다.')
+    try {
+        const footer = custom.dialog.children.find((node) => node.type === 'footer')
+        assert.equal(footer.children.find((node) => node.type === 'p').text, '등록 정보만 저장하며 실제 모델을 전환하지 않습니다.')
+    } finally {
+        custom.cleanup()
+    }
+})
 
 test('모달을 열면 배경 스크롤을 잠그고 닫으면 복원한다', async () => {
     const modal = await mountModal()

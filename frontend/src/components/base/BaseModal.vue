@@ -5,6 +5,7 @@ const props = defineProps({
     modelValue: { type: Boolean, default: false },
     title: { type: String, required: true },
     busy: { type: Boolean, default: false },
+    footerText: { type: String, default: '이 창을 닫아도 저장된 분석과 검토 결과는 유지됩니다.' },
 })
 const emit = defineEmits(['update:modelValue'])
 const dialog = ref(null)
@@ -59,7 +60,7 @@ onBeforeUnmount(() => {
                 <slot />
             </div>
             <footer class="base-modal-footer">
-                <p>{{ busy ? '요청을 처리하고 있습니다. 완료될 때까지 기다려 주세요.' : '이 창을 닫아도 저장된 분석과 검토 결과는 유지됩니다.' }}</p>
+                <p>{{ busy ? '요청을 처리하고 있습니다. 완료될 때까지 기다려 주세요.' : footerText }}</p>
             </footer>
         </dialog>
     </Teleport>

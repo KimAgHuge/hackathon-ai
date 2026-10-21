@@ -1,0 +1,138 @@
+package com.doenaai.model.service;
+
+import com.doenaai.model.dto.ModelExecutionRequest;
+import com.doenaai.model.repository.ModelOperationRepository;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.dao.DataAccessResourceFailureException;
+
+import java.util.*;
+
+import static org.assertj.core.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
+
+class ModelExecutionServiceTest {
+    private final ModelOperationRepository repository = mock(ModelOperationRepository.class);
+    private final ModelExecutionClient client = mock(ModelExecutionClient.class);
+    private final ModelExecutionService service = new ModelExecutionService(repository, client);
+    private final UUID actor = UUID.randomUUID();
+    private final UUID id = UUID.randomUUID();
+    private final String digest = "a".repeat(64);
+    private final Map<UUID, Map<String, Object>> records = new HashMap<>();
+
+    @BeforeEach void setup() {
+        when(client.targetKey(false)).thenReturn("inference-target");
+        when(client.targetKey(true)).thenReturn("training-target");
+        when(repository.create(any(), anyString(), any(), anyString(), anyString(), anyMap())).thenAnswer(call -> {
+            UUID key = call.getArgument(0);
+            if (records.containsKey(key)) return false;
+            var row = new LinkedHashMap<String, Object>();
+            row.put("id", key.toString()); row.put("action", call.getArgument(1)); row.put("actorId", call.getArgument(2).toString());
+            row.put("serverRole", call.getArgument(3)); row.put("targetKey", call.getArgument(4)); row.put("request", call.getArgument(5));
+            row.put("status", "PENDING"); row.put("result", Map.of()); records.put(key, row); return true;
+        });
+        when(repository.find(any())).thenAnswer(call -> Optional.ofNullable(records.get(call.getArgument(0))));
+        when(repository.record(any(), anyString(), nullable(String.class), anyMap())).thenAnswer(call -> {
+            var row = new LinkedHashMap<>(records.get(call.getArgument(0)));
+            row.put("status", call.getArgument(1)); row.put("errorCode", call.getArgument(2)); row.put("result", call.getArgument(3));
+            records.put(call.getArgument(0), row); return row;
+        });
+    }
+
+    @Test void databaseFailurePreventsAnyRemoteExecution() {
+        doThrow(new DataAccessResourceFailureException("synthetic")).when(repository)
+                .create(any(), anyString(), any(), anyString(), anyString(), anyMap());
+        assertThatThrownBy(() -> service.execute("TRAINING_START", training(id, 10), actor, null)).isInstanceOf(DataAccessResourceFailureException.class);
+        verify(client, never()).training(any(), any(), any());
+        verify(client, never()).inference(any(), any(), any(), anyBoolean());
+    }
+
+    @Test void interruptedResponseRemainsUnknownAndDoesNotAutomaticallyRepeatStart() {
+        when(client.training(eq("POST"), eq("/api/training/jobs"), anyMap()))
+                .thenThrow(new ModelExecutionClient.RemoteFailure("REMOTE_UNREACHABLE", true, 503));
+        assertThat(service.execute("TRAINING_START", training(id, 10), actor, null)).containsEntry("status", "UNKNOWN");
+        when(client.training(eq("GET"), anyString(), anyMap())).thenThrow(new ModelExecutionClient.RemoteFailure("REMOTE_UNREACHABLE", true, 503));
+        assertThat(service.operation(id)).containsEntry("status", "UNKNOWN");
+        verify(client, times(1)).training(eq("POST"), anyString(), anyMap());
+    }
+
+    @Test void explicitSameIdRetryCanRecoverAnInterruptedDispatchWithoutCreatingAnotherJob() {
+        when(client.training(eq("POST"), eq("/api/training/jobs"), anyMap()))
+                .thenThrow(new ModelExecutionClient.RemoteFailure("REMOTE_UNREACHABLE", true, 503));
+        service.execute("TRAINING_START", training(id, 10), actor, null);
+        when(client.training(eq("GET"), anyString(), anyMap())).thenThrow(new ModelExecutionClient.RemoteFailure("NOT_FOUND", false, 404));
+        doReturn(Map.of("status", "PENDING")).when(client).training(eq("POST"), eq("/api/training/jobs"), anyMap());
+        assertThat(service.execute("TRAINING_START", training(id, 10), actor, null)).containsEntry("status", "PENDING");
+        verify(client, times(2)).training(eq("POST"), eq("/api/training/jobs"), argThat(body -> id.toString().equals(body.get("jobId"))));
+        assertThat(records).hasSize(1);
+    }
+
+    @Test void successfulProbeTokenNeverEntersPersistentAuditFields() {
+        String token = "temporary_probe_token_123456789";
+        when(client.inference(eq("POST"), eq("/api/models/probe"), anyMap(), eq(true)))
+                .thenReturn(Map.of("status", "PASSED", "model", "example:1b", "digest", digest, "probeToken", token,
+                        "expiresAt", "2026-10-21T09:00:00Z", "currentRevision", 0));
+        var result = service.execute("MODEL_PROBE", new ModelExecutionRequest(id, "example:1b", digest, null, null, null), actor, null);
+        assertThat(result).containsEntry("probeToken", token).containsEntry("status", "PASSED");
+        assertThat(records.get(id).toString()).doesNotContain(token);
+        assertThat(((Map<?, ?>) records.get(id).get("request")).containsKey("probeToken")).isFalse();
+    }
+
+    @Test void numericJsonRoundTripDoesNotBreakIdempotentSwitchRequest() {
+        var original = new LinkedHashMap<String, Object>();
+        original.put("id", id.toString()); original.put("action", "MODEL_ACTIVATE"); original.put("actorId", actor.toString());
+        original.put("targetKey", "inference-target"); original.put("status", "APPLIED"); original.put("result", Map.of("model", "example:1b"));
+        String hash;
+        try { hash = HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest("temporary_probe_123456".getBytes(java.nio.charset.StandardCharsets.UTF_8))); }
+        catch (Exception failure) { throw new AssertionError(failure); }
+        original.put("request", Map.of("model", "example:1b", "digest", digest, "expectedRevision", 0, "probeTokenHash", hash)); records.put(id, original);
+        assertThat(service.execute("MODEL_ACTIVATE", new ModelExecutionRequest(id, "example:1b", digest, "temporary_probe_123456", 0L, null), actor, null))
+                .containsEntry("status", "APPLIED");
+        verify(client, never()).inference(any(), any(), any(), anyBoolean());
+    }
+
+    @Test void sameIdDifferentIterationsOrActorIsRejectedBeforeSecondExecution() {
+        when(client.training(eq("POST"), anyString(), anyMap())).thenReturn(Map.of("status", "PENDING"));
+        service.execute("TRAINING_START", training(id, 10), actor, null);
+        assertThatThrownBy(() -> service.execute("TRAINING_START", training(id, 11), actor, null)).isInstanceOf(ModelCatalogException.class);
+        assertThatThrownBy(() -> service.execute("TRAINING_START", training(id, 10), UUID.randomUUID(), null)).isInstanceOf(ModelCatalogException.class);
+        verify(client, times(1)).training(eq("POST"), anyString(), anyMap());
+    }
+
+    @Test void uncertainModelSwitchReconcilesByOperationIdWithoutAnotherPost() {
+        when(client.inference(eq("POST"), eq("/api/models/activate"), anyMap(), eq(false)))
+                .thenThrow(new ModelExecutionClient.RemoteFailure("REMOTE_UNREACHABLE", true, 503));
+        var request = new ModelExecutionRequest(id, "example:1b", digest, "temporary_probe_123456", 0L, null);
+        service.execute("MODEL_ACTIVATE", request, actor, null);
+        when(client.inference(eq("GET"), eq("/api/models/operations/" + id), anyMap(), eq(false)))
+                .thenReturn(Map.of("status", "APPLIED", "model", "example:1b", "previousModel", "example:old", "revision", 1));
+        assertThat(service.operation(id)).containsEntry("status", "APPLIED").containsEntry("model", "example:1b");
+        verify(client, times(1)).inference(eq("POST"), anyString(), anyMap(), anyBoolean());
+    }
+
+    @Test void historyOnAnotherBackendNeverQueriesItsLocalServerForForeignWork() {
+        var row = new LinkedHashMap<String, Object>();
+        row.put("id", id.toString()); row.put("action", "MODEL_ACTIVATE"); row.put("status", "UNKNOWN");
+        row.put("targetKey", "another-backend"); row.put("result", Map.of()); records.put(id, row);
+        service.operation(id);
+        verify(client, never()).inference(any(), any(), any(), anyBoolean());
+    }
+
+    @Test void malformedInputIsRejectedBeforeDatabaseOrRemoteRequests() {
+        assertThatThrownBy(() -> service.execute("TRAINING_START", training(id, 0), actor, null)).isInstanceOf(ModelCatalogException.class);
+        assertThatThrownBy(() -> service.execute("MODEL_PROBE", new ModelExecutionRequest(id, "https://secret@example", digest, null, null, null), actor, null))
+                .isInstanceOf(ModelCatalogException.class);
+        verify(repository, never()).create(any(), any(), any(), any(), any(), any());
+        verify(client, never()).training(any(), any(), any());
+    }
+
+    @Test void unconfiguredServerProducesARecordedFailureWithoutLeakingRemoteContent() {
+        when(client.training(eq("POST"), anyString(), anyMap())).thenThrow(new ModelExecutionClient.RemoteFailure("UNCONFIGURED", false, 503));
+        var result = service.execute("TRAINING_START", training(id, 10), actor, null);
+        assertThat(result).containsEntry("status", "FAILED").containsEntry("errorCode", "UNCONFIGURED");
+        assertThat(result).doesNotContainKeys("targetKey", "request", "result");
+    }
+
+    private static ModelExecutionRequest training(UUID id, int count) { return new ModelExecutionRequest(id, null, null, null, null, count); }
+}

@@ -229,6 +229,43 @@ port forwarding은 설정하지 않는다.
 
 ## API
 
+### 설치 모델 시험과 선택 전환
+
+모델 관리 API는 모두 기존 `X-Internal-Api-Key` 인증을 사용한다. 사용자 권한과 명시적 확인은
+서비스 서버에서 검사하며, 실제 설치 모델의 선택은 AI 분석/추론 서버에 적용된다. 이 화면을 연
+컴퓨터에 설치된 모델이라는 뜻은 아니다. 요청에서 서버 주소나 파일 경로는 받지 않는다.
+
+- `GET /api/models/installed`: 설치 모델의 이름·파일 식별값·크기·실행 기능과 현재 선택 버전을 조회한다.
+  임베딩 전용 모델, 실행 기능 미확인 모델, 원격 실행 모델은 선택할 수 없다. 조회만으로 추론하지 않는다.
+- `POST /api/models/probe`: `model`, `digest`로 지정한 설치 모델에 고정된 짧은 한국어 JSON 질문을 보낸다.
+  `PASSED` 응답은 모델·파일 식별값·현재 선택 버전에 묶인 만료 증거 `probeToken`을 포함한다.
+  짧은 응답 검사는 업무 정확도, 학습 품질이나 운영 승인을 보증하지 않는다.
+- `POST /api/models/activate`: `operationId`, `model`, `digest`, `probeToken`, `expectedRevision`을 받는다.
+  시험 증거·파일 식별값·현재 버전을 다시 확인하고 새 분석 요청의 모델 선택값만 변경한다.
+- `POST /api/models/rollback`: `operationId`, `expectedRevision`을 받아 동일 파일이 설치된 직전 모델로만 복구한다.
+  복구 성공 뒤 슬롯은 비우며 임의 모델이나 임의 과거 버전을 지정할 수 없다.
+- `GET /api/models/operations/{operationId}`: 응답 유실이나 재시작 뒤에도 동일 처리 식별자의 영속 결과를 조회한다.
+  성공은 `APPLIED` 또는 `ROLLED_BACK`, 기록된 실패는 `FAILED`다. 없는 결과는 `404`이며 성공을 뜻하지 않는다.
+
+선택값·시험 증거·처리 결과는 `.runtime/model-selection.sqlite3`에 함께 저장한다.
+`DOENAAI_AI_MODEL_STATE_FILE`로 저장 위치를 바꿀 수 있으며 로컬 상태 폴더는 Git에서 제외한다.
+기존 기본 모델 환경변수나 `.env`는 바꾸지 않는다. 저장소를 읽지 못하면 기본값으로 조용히 되돌리지 않고 요청을 차단한다.
+다른 전환은 단일 잠금과 `expectedRevision` 비교로 충돌을 막는다. 같은 `operationId`와 같은 본문의 재요청은
+이미 저장한 결과만 반환하고, 다른 본문은 거절한다. 연결 오류 뒤 새 식별자로 자동 재전환하지 말고 기존 결과부터 확인한다.
+
+분석은 시작할 때 모델을 고정하므로 일반 분석·DB 분할·최종 정리 전체가 같은 선택값을 사용한다.
+전환은 새 분석 요청부터 적용되며 진행 중 분석을 중단하거나 Ollama의 기존 모델을 삭제하지 않는다.
+선택된 파일이 외부에서 교체되면 새 분석을 차단한다. 학습 어댑터의 iCloud 전달·병합·변환·Ollama 등록,
+자동 품질 평가와 운영 승인 기능을 대신하지 않는다. 기존 메타데이터 등록의 배포 준비 차단도 해제하지 않는다.
+
+관리 호출 제한시간은 기본 10초, 짧은 시험 추론은 60초, 시험 증거는 300초 동안 유효하다.
+각각 `DOENAAI_AI_MODEL_ADMIN_TIMEOUT_SECONDS`, `DOENAAI_AI_MODEL_PROBE_TIMEOUT_SECONDS`,
+`DOENAAI_AI_MODEL_PROBE_TTL_SECONDS`로 제한 범위 안에서 설정한다. 서비스 서버의 대기 시간은 시험 제한보다 길어야 한다.
+모든 새 자동 검사는 가짜 Ollama 응답으로 수행하며 실제 모델 시험이나 선택 전환은 사용자의 별도 확인 뒤 실행한다.
+
+연동 규격은 [Ollama 설치 목록](https://docs.ollama.com/api/tags)과
+[구조화 대화 응답](https://docs.ollama.com/api/chat)을 따른다.
+
 인증 없이 FastAPI 프로세스 상태만 확인한다. 모델 추론은 수행하지 않는다.
 
 ```bash
