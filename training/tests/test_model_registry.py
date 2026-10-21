@@ -8,6 +8,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from model_registry import QWEN_BASE, QWEN_SOURCE, QWEN_TRAINER, RegistryError, resolve
+from dataset_contract import digest
+from training_profiles import GENERIC_TRAINER, QWEN_PROFILE
 
 
 class ModelRegistryTests(unittest.TestCase):
@@ -33,6 +35,9 @@ class ModelRegistryTests(unittest.TestCase):
         binding = resolve(QWEN_SOURCE, self.model)
         self.assertEqual(binding.directory, self.model)
         self.assertEqual(binding.target["baseModel"], QWEN_BASE)
+        self.assertEqual(binding.profile, QWEN_PROFILE)
+        self.assertEqual(binding.target["digest"], digest({"sourceModel": QWEN_SOURCE, "baseModel": QWEN_BASE,
+            "revision": "a" * 40, "trainer": QWEN_TRAINER, "directory": str(self.model)}))
         for model in ("gemma4:26b", "qwen3.8:32b", "qwen", "../private", ""):
             with self.subTest(model=model), self.assertRaises(RegistryError):
                 resolve(model, self.model)
@@ -79,3 +84,39 @@ class ModelRegistryTests(unittest.TestCase):
         self.registry.symlink_to(self.model / "download_manifest.json")
         with self.assertRaises(RegistryError):
             resolve(QWEN_SOURCE, self.model, self.registry)
+
+    def test_generic_profile_pins_model_structure_and_resume_parent(self):
+        profile = {**QWEN_PROFILE, "modelType": "exaone4", "loraKeys": ["self_attn.q_proj", "self_attn.v_proj"]}
+        (self.model / "config.json").write_text(json.dumps({"model_type": "exaone4"}))
+        entry = {**self.entry(), "trainer": GENERIC_TRAINER, "profile": profile}
+        self.configure({"exaone4:latest": entry})
+        binding = resolve("exaone4:latest", None, self.registry)
+        self.assertEqual(binding.profile, profile)
+        self.assertIsNone(binding.resume_job_id)
+        previous = binding.target["digest"]
+        parent = "11111111-1111-4111-8111-111111111111"
+        self.configure({"exaone4:latest": {**entry, "resumeJobId": parent}})
+        resumed = resolve("exaone4:latest", None, self.registry)
+        self.assertEqual(resumed.resume_job_id, parent)
+        self.assertNotEqual(previous, resumed.target["digest"])
+        self.configure({"exaone4:latest": {**entry, "profile": {**profile, "loraRank": 8}}})
+        self.assertNotEqual(previous, resolve("exaone4:latest", None, self.registry).target["digest"])
+
+    def test_generic_profile_cannot_guess_structure_or_accept_invalid_resume(self):
+        (self.model / "config.json").write_text(json.dumps({"model_type": "qwen3_5"}))
+        for change in ({}, {"profile": {**QWEN_PROFILE, "modelType": "llama"}},
+                       {"profile": {**QWEN_PROFILE, "loraRank": float("nan")}},
+                       {"profile": QWEN_PROFILE, "resumeJobId": "../private"},
+                       {"profile": QWEN_PROFILE, "resumeJobId": None}):
+            self.configure({QWEN_SOURCE: {**self.entry(), "trainer": GENERIC_TRAINER, **change}})
+            with self.subTest(change=change), self.assertRaises(RegistryError):
+                resolve(QWEN_SOURCE, None, self.registry)
+
+    def test_legacy_qwen_profile_cannot_claim_settings_the_fixed_worker_does_not_use(self):
+        (self.model / "config.json").write_text(json.dumps({"model_type": "qwen3_5"}))
+        self.configure({QWEN_SOURCE: {**self.entry(), "profile": QWEN_PROFILE}})
+        self.assertEqual(resolve(QWEN_SOURCE, None, self.registry).profile, QWEN_PROFILE)
+        for change in ({"loraLayers": 2}, {"loraRank": 8}, {"maxSequenceLength": 4096}):
+            self.configure({QWEN_SOURCE: {**self.entry(), "profile": {**QWEN_PROFILE, **change}}})
+            with self.subTest(change=change), self.assertRaises(RegistryError):
+                resolve(QWEN_SOURCE, None, self.registry)

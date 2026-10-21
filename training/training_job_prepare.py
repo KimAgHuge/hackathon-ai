@@ -35,8 +35,10 @@ def automatic_splits(records, tokenizer, max_tokens=18000):
             "test": [representatives[identity] for identity in ordered[2:]]}
 
 
-def prepare(input_dir, output, model):
+def prepare(input_dir, output, model, max_tokens=18000):
     """기존 시험 준비 규칙을 그대로 쓰며 새 폴더만 만들고 원본은 보존한다."""
+    if type(max_tokens) is not int or not 32 <= max_tokens <= 32768:
+        raise DatasetError("입력 길이 상한은 32~32768토큰이어야 합니다.", code="DATASET_INVALID")
     from transformers import AutoTokenizer
 
     records = []
@@ -45,8 +47,8 @@ def prepare(input_dir, output, model):
             raise DatasetError("자료 사본을 확인할 수 없습니다.", code="DATASET_INVALID")
         records.extend(read_jsonl(source))
     tokenizer = AutoTokenizer.from_pretrained(str(model), local_files_only=True, trust_remote_code=False)
-    plan = automatic_splits(records, tokenizer)
-    samples, manifest = prepare_trial(records, plan, tokenizer, 18000)
+    plan = automatic_splits(records, tokenizer, max_tokens)
+    samples, manifest = prepare_trial(records, plan, tokenizer, max_tokens)
     if not samples["train"] or not samples["valid"]:
         raise DatasetError("짧은 학습·검증 자료가 필요합니다.", code="DATASET_TOO_SMALL")
     manifest["model"] = json.loads((model / "download_manifest.json").read_text())
@@ -66,10 +68,11 @@ def main():
     parser.add_argument("--input-dir", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--model", type=Path, required=True)
+    parser.add_argument("--max-tokens", type=int, default=18000)
     args = parser.parse_args()
     os.environ["HF_HUB_OFFLINE"] = "1"
     try:
-        prepare(args.input_dir, args.output, args.model)
+        prepare(args.input_dir, args.output, args.model, args.max_tokens)
     except Exception as error:
         code = error.code if isinstance(error, DatasetError) and error.code in {"DATASET_TOO_SMALL", "DATASET_INVALID"} else "PREPARATION_FAILED"
         write_json_atomic(args.output.parent / "preparation-result.json", {"code": code})

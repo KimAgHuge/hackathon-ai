@@ -27,12 +27,16 @@ def file_hash(path):
     return checksum.hexdigest()
 
 
-def protected_files(model):
+def protected_files(model, parent_adapter=None):
     """원본 가중치의 크기·수정 시각과 기존 어댑터의 해시를 보존한다."""
-    return {"model": {p.name: [p.stat().st_size, p.stat().st_mtime_ns]
+    result = {"model": {p.name: [p.stat().st_size, p.stat().st_mtime_ns]
                       for p in model.iterdir() if p.is_file()},
             "existingAdapter": {str(p.relative_to(ROOT / "adapters")): file_hash(p)
                                 for p in (ROOT / "adapters/compatibility-only").rglob("*") if p.is_file()}}
+    if parent_adapter is not None:
+        result["parentAdapter"] = {name: file_hash(parent_adapter / name)
+                                   for name in ("adapters.safetensors", "adapter_config.json")}
+    return result
 
 
 def main():
@@ -44,11 +48,25 @@ def main():
     parser.add_argument("--model", type=Path, default=ROOT / "models/Qwen3.8-27B-4bit")
     parser.add_argument("--iters", type=int, default=10)
     parser.add_argument("--layers", type=int, default=1)
+    parser.add_argument("--resume-adapter", type=Path)
     args = parser.parse_args()
     if not 1 <= args.iters <= 20 or args.layers != 1:
         raise DatasetError("이 메모리 절감 시험은 1~20회 업데이트와 마지막 1개 층만 허용합니다.")
     if args.adapter.resolve().parent != (ROOT / "adapters").resolve() or not args.adapter.name.startswith("trial-"):
         raise DatasetError("새 어댑터는 training/adapters/trial-로 시작하는 별도 폴더에 저장하세요.")
+    lora = {"rank": 4, "scale": 8.0, "dropout": 0.0,
+            "keys": ["mlp.gate_proj", "mlp.up_proj", "mlp.down_proj"]}
+    if args.resume_adapter is not None:
+        parent = args.resume_adapter
+        if (args.phase != "train" or parent.is_symlink() or parent.parent.is_symlink()
+                or parent.resolve().parent != (ROOT / "adapters").resolve()
+                or not parent.name.startswith("trial-web-") or parent.resolve() == args.adapter.resolve()
+                or any((parent / name).is_symlink() or not (parent / name).is_file()
+                       for name in ("adapters.safetensors", "adapter_config.json"))):
+            raise DatasetError("이전 작업의 어댑터를 별도 경로에서 읽어야 합니다.")
+        config = json.loads((parent / "adapter_config.json").read_text())
+        if config.get("fine_tune_type") != "lora" or config.get("num_layers") != 1 or config.get("lora_parameters") != lora:
+            raise DatasetError("이전 어댑터가 현재 Qwen 시험 학습 설정과 다릅니다.")
     manifest = json.loads((args.dataset / "manifest.json").read_text())
     if prompt_contract()[1] != manifest["contractSha256"]:
         raise DatasetError("자료 생성 후 프롬프트·입력 계약이 변경됐습니다.")
@@ -68,13 +86,14 @@ def main():
     report_path = args.dataset / ("training-report.json" if args.phase == "train" else "reload-report.json")
     if report_path.exists():
         raise DatasetError("기존 시험 보고서는 덮어쓰지 않습니다.")
-    before_files = protected_files(args.model)
+    before_files = protected_files(args.model, args.resume_adapter)
     print(json.dumps({"phase": "loading", "action": args.phase}), flush=True)
     if args.phase == "train":
         args.adapter.mkdir(mode=0o700, exist_ok=False)
     elif not (args.adapter / "adapters.safetensors").is_file():
         raise DatasetError("재로딩할 새 어댑터가 없습니다.")
-    model, tokenizer = load(str(args.model), adapter_path=str(args.adapter) if args.phase == "reload" else None)
+    adapter_path = args.adapter if args.phase == "reload" else args.resume_adapter
+    model, tokenizer = load(str(args.model), adapter_path=str(adapter_path) if adapter_path is not None else None)
     print(json.dumps({"phase": "loaded", "seconds": time.perf_counter() - started}), flush=True)
     if model.model_type != "qwen3_5" or model.language_model.args.tie_word_embeddings:
         raise DatasetError("정답 위치만 계산하는 시험 손실은 확인한 qwen3_5 구조에서만 지원합니다.")
@@ -146,9 +165,11 @@ def main():
 
     model.freeze()
     # 긴 입력의 어텐션 역전파 메모리를 피하고 마지막 층의 위치별 MLP만 학습한다.
-    lora = {"rank": 4, "scale": 8.0, "dropout": 0.0,
-            "keys": ["mlp.gate_proj", "mlp.up_proj", "mlp.down_proj"]}
-    linear_to_lora_layers(model, args.layers, lora)
+    if args.resume_adapter is None:
+        linear_to_lora_layers(model, args.layers, lora)
+    else:
+        # 부모 가중치를 읽은 뒤 어댑터를 다시 붙이지 않고 기존 LoRA 텐서만 갱신한다.
+        model.unfreeze(keys=["lora_a", "lora_b"])
     trainable = dict(tree_flatten(model.trainable_parameters()))
     if not trainable or any(not key.endswith(("lora_a", "lora_b")) or ".mlp." not in key for key in trainable):
         raise DatasetError("학습 대상이 어댑터 파라미터로 제한되지 않았습니다.")
@@ -235,7 +256,7 @@ def main():
     model.eval()
     logits = model(probe)[:, -1, :256].astype(mx.float32)
     mx.eval(logits)
-    if protected_files(args.model) != before_files:
+    if protected_files(args.model, args.resume_adapter) != before_files:
         raise DatasetError("원본 모델 또는 기존 어댑터의 보존 검사에 실패했습니다.")
     result = {"status": "complete", "purpose": "approved_case_smoke_test_do_not_deploy",
               "datasetManifestSha256": file_hash(args.dataset / "manifest.json"), "contractSha256": manifest["contractSha256"],
@@ -250,6 +271,9 @@ def main():
               "protectedFilesUnchanged": True, "protectedFiles": before_files,
               "probeLogits": logits.tolist(), "seconds": time.perf_counter() - started,
               "peakGpuGiB": mx.get_peak_memory() / 2**30}
+    if args.resume_adapter is not None:
+        result.update(parentAdapterSha256=before_files["parentAdapter"]["adapters.safetensors"],
+                      parentConfigSha256=before_files["parentAdapter"]["adapter_config.json"])
     report_path.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n")
     print(json.dumps({key: result[key] for key in ("status", "iterations", "adapterMaxDelta", "adapterTensors", "seconds", "peakGpuGiB")}), flush=True)
 

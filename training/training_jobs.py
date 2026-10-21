@@ -12,6 +12,7 @@ import subprocess
 import sys
 import threading
 import time
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID
@@ -20,11 +21,14 @@ from dataset_contract import DatasetError, digest, read_jsonl, validate_case
 from gpu_lease import GpuLease
 from shared_transfer import HASH, write_json_atomic
 from model_registry import RegistryError, resolve, QWEN_SOURCE, QWEN_BASE, QWEN_TRAINER
+from training_profiles import GENERIC_TRAINER
+from model_export_profiles import export_capability
 from model_delivery import (PackageError, create_package, execution_summary, publish_package,
-                            verify_package, read_json as delivery_json)
+                            verify_package, read_json as delivery_json, checksum as adapter_checksum)
 from transfer_cases import TransferError, content_hash, private_directory
 
 ROOT = Path(__file__).resolve().parent
+DERIVED_MODEL = re.compile(r"doenaai-(?:trained|mlx):web-([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})\Z")
 ACTIVE = {"PENDING", "PREPARING", "TRAINING", "VERIFYING"}
 TERMINAL = {"SUCCEEDED", "FAILED", "CANCELLED"}
 MESSAGES = {
@@ -132,9 +136,8 @@ class TrainingJobStore:
             binding = self._binding(source_model)
         except (RegistryError, OSError, ValueError, TypeError):
             return "선택한 분석 모델에 대응하는 로컬 MLX 모델 등록과 다운로드 명세를 확인해 주세요."
-        if (binding.target["trainer"] != QWEN_TRAINER or binding.target["baseModel"] != QWEN_BASE
-                or binding.target["sourceModel"] != QWEN_SOURCE):
-            return "등록된 모델의 학습기가 아직 지원되지 않습니다. 현재 검증된 Qwen MLP 시험 학습기만 실행할 수 있습니다."
+        if not self._supported_target(binding.target):
+            return "등록한 모델의 학습기가 지원되지 않습니다. 공통 MLX LoRA 학습기와 모델별 프로필을 확인하세요."
         model = binding.directory
         if not model.is_absolute() or model.is_symlink() or not model.is_dir():
             return "학습 모델 경로는 심볼릭 링크가 아닌 로컬 폴더의 절대 경로여야 합니다."
@@ -146,27 +149,124 @@ class TrainingJobStore:
             config = json.loads((model / "config.json").read_text())
             manifest = json.loads((model / "download_manifest.json").read_text())
             text = config.get("text_config", config)
-            if (config.get("model_type") != "qwen3_5" or text.get("tie_word_embeddings") is not False
+            profile = binding.profile
+            if config.get("model_type") != profile["modelType"]:
+                return "등록한 학습 프로필과 실제 MLX 모델 구조가 다릅니다."
+            if (binding.target["trainer"] == QWEN_TRAINER and text.get("tie_word_embeddings") is not False
                     or not isinstance(manifest.get("revision"), str) or not re.fullmatch(r"[0-9a-f]{40}", manifest["revision"])):
-                return "현재 시험 학습은 확인한 qwen3_5 모델과 고정된 다운로드 버전만 지원합니다."
+                return "학습기의 모델 구조와 고정된 다운로드 버전을 확인하세요."
+            layers = text.get("num_hidden_layers", text.get("num_layers"))
+            if type(layers) is int and profile["loraLayers"] > layers:
+                return "학습할 층 수가 기반 모델의 전체 층 수를 넘습니다."
             weights = list(model.glob("*.safetensors"))
             if not weights or any(path.is_symlink() or not path.is_file() for path in weights):
                 return "학습에 사용할 로컬 가중치 파일을 확인할 수 없습니다."
             if sys.platform != "darwin" or any(importlib.util.find_spec(name) is None for name in ("mlx", "mlx_lm", "transformers")):
                 return "맥북 학습 서버의 MLX·MLX-LM·Transformers 환경을 준비하세요."
-        except (OSError, ValueError, TypeError, AttributeError, ImportError):
+        except (OSError, ValueError, TypeError, AttributeError, ImportError, KeyError):
             return "학습 모델 설정과 실행 환경을 확인하지 못했습니다."
         return None
 
-    def _binding(self, source_model=None):
-        """전역 선택값을 바꾸지 않고 요청별 로컬 모델 대응을 읽는다."""
-        return resolve(source_model if source_model is not None else QWEN_SOURCE, self.model_dir, self.models_file)
+    @staticmethod
+    def _supported_target(target):
+        """기존 Qwen 시험기와 등록한 공통 학습기만 실행한다."""
+        return isinstance(target, dict) and (target.get("trainer") == GENERIC_TRAINER or (
+            target.get("trainer") == QWEN_TRAINER and target.get("baseModel") == QWEN_BASE
+            and target.get("sourceModel") == QWEN_SOURCE))
+
+    @staticmethod
+    def _selected(target):
+        """실제 선택한 파생 모델과 학습 자료의 원래 생성 모델을 구분한다."""
+        return target.get("selectedModel", target.get("sourceModel"))
+
+    @staticmethod
+    def _base_preserved(training, directory):
+        """부모 학습 당시와 같은 기반 파일 상태인지 변환과 이어 학습에서 함께 확인한다."""
+        protected_files = training.get("protectedFiles")
+        protected = protected_files.get("model") if isinstance(protected_files, dict) else None
+        current = {path.name: [path.stat().st_size, path.stat().st_mtime_ns]
+                   for path in directory.iterdir() if path.is_file()}
+        return (isinstance(protected, dict) and bool(protected) and current == protected
+                and not any(path.is_symlink() for path in directory.iterdir()))
+
+    def _parent_source(self, identifier):
+        """완료된 부모 작업의 설정과 가중치를 검증하고 원본 경로만 반환한다."""
+        record = self._read(self._path(identifier))
+        if record is None or record["status"] != "SUCCEEDED" or not self._supported_target(record.get("target")):
+            raise RegistryError("이어 학습할 완료 작업을 확인하지 못했습니다.")
+        adapter = self.root / "adapters" / ("trial-web-" + identifier)
+        reports = self.work_root / identifier / "dataset"
+        if adapter.is_symlink() or adapter.parent.is_symlink() or reports.is_symlink() or reports.parent.is_symlink():
+            raise RegistryError("이전 학습 산출물의 경로를 확인하세요.")
+        config, identity, _ = execution_summary(adapter, reports)
+        target = record["target"]
+        if identity != {"modelId": target["baseModel"], "revision": target["revision"]}:
+            raise RegistryError("이전 어댑터와 기반 모델의 버전이 다릅니다.")
+        return record, adapter, config, adapter_checksum(adapter / "adapters.safetensors")[0], adapter_checksum(adapter / "adapter_config.json")[0]
+
+    def _binding(self, source_model=None, _visited=()):
+        """원본 모델은 등록 설정으로, 파생 모델은 검증된 부모 어댑터로 연결한다."""
+        selected = source_model if source_model is not None else QWEN_SOURCE
+        if selected in _visited or len(_visited) >= 16:
+            raise RegistryError("학습 모델의 부모 연결이 순환하거나 너무 깁니다.")
+        visited = (*_visited, selected)
+        derived = DERIVED_MODEL.fullmatch(selected) if isinstance(selected, str) else None
+        if derived:
+            parent_id = derived.group(1)
+            parent, adapter, config, weights_hash, config_hash = self._parent_source(parent_id)
+            binding = self._binding(self._selected(parent["target"]), visited)
+            if binding.target != parent["target"]:
+                raise RegistryError("이전 학습 이후 기반 모델 대응이나 부모 어댑터가 변경됐습니다.")
+        else:
+            binding = resolve(selected, self.model_dir, self.models_file)
+            parent_id = binding.resume_job_id
+            if not parent_id:
+                return binding
+            parent, adapter, config, weights_hash, config_hash = self._parent_source(parent_id)
+            parent_binding = self._binding(self._selected(parent["target"]), visited)
+            if parent_binding.target != parent["target"] or any(
+                    binding.target[key] != parent["target"].get(key) for key in ("baseModel", "revision", "trainer")):
+                raise RegistryError("등록한 이어 학습 대상과 이전 작업의 기반 모델이 다릅니다.")
+        profile = binding.profile
+        expected_lora = {"rank": profile["loraRank"], "scale": profile["loraScale"],
+                         "dropout": profile["loraDropout"], "keys": profile["loraKeys"]}
+        if config.get("num_layers") != profile["loraLayers"] or config.get("lora_parameters") != expected_lora:
+            raise RegistryError("이전 어댑터와 학습 프로필의 대상 모듈 또는 크기가 다릅니다.")
+        training = delivery_json(self.work_root / parent_id / "dataset/training-report.json")
+        if (not self._base_preserved(training, binding.directory)
+                or (parent["target"]["trainer"] == GENERIC_TRAINER and training.get("profileSha256") != digest(profile))):
+            raise RegistryError("부모 학습 이후 기반 파일이나 학습 프로필이 변경됐습니다.")
+        target = {key: parent["target"][key] for key in ("sourceModel", "baseModel", "revision", "trainer")}
+        target.update(selectedModel=selected, resumeJobId=parent_id, parentAdapterSha256=weights_hash,
+                      parentConfigSha256=config_hash)
+        target["digest"] = digest({**target, "directory": str(binding.directory), "profile": profile})
+        return replace(binding, target=target, resume_job_id=parent_id)
+
+    def _resume_adapter(self, binding):
+        """부모 어댑터는 작업별 새 폴더에 결과를 쓸 때만 읽기 전용으로 전달한다."""
+        if not binding.resume_job_id:
+            return None
+        _, path, _, weights_hash, config_hash = self._parent_source(binding.resume_job_id)
+        if (weights_hash != binding.target.get("parentAdapterSha256")
+                or config_hash != binding.target.get("parentConfigSha256")):
+            raise RegistryError("접수한 뒤 부모 어댑터가 변경됐습니다.")
+        return path
+
+    @staticmethod
+    def _public_profile(binding):
+        """브라우저에는 학습 조건과 출처 식별자만 제공한다."""
+        profile = binding.profile
+        result = {key: profile[key] for key in ("modelType", "loraLayers", "loraRank", "maxSequenceLength", "batchSize")}
+        result.update(trainer=binding.target["trainer"], continuation=binding.resume_job_id is not None)
+        if binding.resume_job_id:
+            result["parentJobId"] = binding.resume_job_id
+        return result
 
     def training_target(self, source_model=None):
         """등록한 기반 모델과 고정 버전을 반환하고 확인 실패 때는 대체 모델을 쓰지 않는다."""
         try:
             return self._binding(source_model).target
-        except (RegistryError, OSError, ValueError, TypeError, AttributeError):
+        except (RegistryError, OSError, ValueError, TypeError, AttributeError, KeyError):
             return None
 
     def dataset_catalog(self, source_model=None):
@@ -216,12 +316,20 @@ class TrainingJobStore:
                 None if owner else "다른 학습 서버 프로세스가 작업 잠금을 보유하고 있습니다.")
             target = self.training_target(source_model)
             reason_code = "MODEL_NOT_REGISTERED" if target is None else (
-                "TRAINER_UNSUPPORTED" if target["trainer"] != QWEN_TRAINER or target["baseModel"] != QWEN_BASE or target["sourceModel"] != QWEN_SOURCE
+                "TRAINER_UNSUPPORTED" if not self._supported_target(target)
                 else "TRAINING_UNAVAILABLE" if reason else "READY")
+            try:
+                binding = self._binding(source_model)
+                profile = self._public_profile(binding)
+                model_export = export_capability(binding.profile, base_model=target["baseModel"], revision=target["revision"])
+            except (RegistryError, OSError, ValueError, TypeError, KeyError, AttributeError):
+                profile = None
+                model_export = {"supported": False, "reasonCode": "MODEL_NOT_REGISTERED", "message": "학습 모델 등록을 먼저 확인하세요."}
             return {"trainingExecution": reason is None and not self.stopping.is_set(),
                     "trainingExecutionReason": reason or "일반 분석의 제한된 시험 학습만 실행하며 운영 모델은 바꾸지 않습니다.",
                     "dataset": self.dataset_catalog(source_model) if include_dataset else {},
-                    "requestedModel": source_model or QWEN_SOURCE, "trainingReasonCode": reason_code}
+                    "requestedModel": source_model or QWEN_SOURCE, "trainingReasonCode": reason_code,
+                    "trainingProfile": profile, "modelExport": model_export}
 
     def _path(self, identifier):
         return self.state_dir / f"{job_id(identifier)}.json"
@@ -284,27 +392,27 @@ class TrainingJobStore:
             if record is None:
                 raise TrainingJobError("NOT_FOUND", http_status=404)
             target = record.get("target")
-            if (record["status"] != "SUCCEEDED" or not isinstance(target, dict)
-                    or target.get("sourceModel") != QWEN_SOURCE or target.get("baseModel") != QWEN_BASE
-                    or target.get("trainer") != QWEN_TRAINER):
+            if record["status"] != "SUCCEEDED" or not self._supported_target(target):
                 raise TrainingJobError("DELIVERY_NOT_READY")
-            binding = self._binding(target["sourceModel"])
+            binding = self._binding(self._selected(target))
             if target != binding.target:
                 raise TrainingJobError("DELIVERY_NOT_READY")
             adapter = self.root / "adapters" / ("trial-web-" + identifier)
             reports = self.work_root / identifier / "dataset"
             config, identity, summary = execution_summary(adapter, reports)
             training = delivery_json(reports / "training-report.json")
-            protected_files = training.get("protectedFiles")
-            protected = protected_files.get("model") if isinstance(protected_files, dict) else None
-            current = {path.name: [path.stat().st_size, path.stat().st_mtime_ns]
-                       for path in binding.directory.iterdir() if path.is_file()}
             if (identity != {"modelId": target["baseModel"], "revision": target.get("revision")}
-                    or not isinstance(protected, dict) or not protected or current != protected
-                    or any(path.is_symlink() for path in binding.directory.iterdir())):
+                    or not self._base_preserved(training, binding.directory)):
+                raise TrainingJobError("DELIVERY_NOT_READY")
+            if target.get("trainer") == GENERIC_TRAINER and training.get("profileSha256") != digest(binding.profile):
+                raise TrainingJobError("DELIVERY_NOT_READY")
+            parent = self._resume_adapter(binding)
+            if parent is not None and any(training.get(key) != target.get(key)
+                                          for key in ("parentAdapterSha256", "parentConfigSha256")):
                 raise TrainingJobError("DELIVERY_NOT_READY")
             return {"target": dict(target), "model_dir": binding.directory, "adapter": adapter,
-                    "reports": reports, "summary": summary, "adapterSha256": training["adapterSha256"]}
+                    "reports": reports, "summary": summary, "adapterSha256": training["adapterSha256"],
+                    "profile": binding.profile, "parentAdapter": parent}
 
     def delivery(self, identifier, secret):
         """완료 작업의 고정 산출물만 검증해 공유 폴더에 게시하며 학습은 실행하지 않는다."""
@@ -314,10 +422,10 @@ class TrainingJobStore:
             if record is None:
                 raise TrainingJobError("NOT_FOUND", http_status=404)
             target = record.get("target")
-            if (record["status"] != "SUCCEEDED" or not isinstance(target, dict)
-                    or target.get("sourceModel") != QWEN_SOURCE or target.get("baseModel") != QWEN_BASE
-                    or target.get("trainer") != QWEN_TRAINER):
+            if record["status"] != "SUCCEEDED" or not self._supported_target(target):
                 raise TrainingJobError("DELIVERY_NOT_READY")
+            if target["trainer"] == GENERIC_TRAINER or target.get("resumeJobId"):
+                self.model_build_source(identifier)
             version = "web-" + identifier
             adapter = self.root / "adapters" / ("trial-web-" + identifier)
             reports = self.work_root / identifier / "dataset"
@@ -363,11 +471,11 @@ class TrainingJobStore:
             previous = self._read(self._path(identifier))
             if previous:
                 if (previous["iterations"] != body["iterations"] or not previous.get("target")
-                        or previous["target"]["sourceModel"] != body["model"] or previous["target"]["digest"] != body["digest"]):
+                        or self._selected(previous["target"]) != body["model"] or previous["target"]["digest"] != body["digest"]):
                     raise TrainingJobError("JOB_CONFLICT")
                 return self._public(previous)
             target = self.training_target(body["model"])
-            if not target or body["model"] != target["sourceModel"] or body["digest"] != target["digest"]:
+            if not target or body["model"] != self._selected(target) or body["digest"] != target["digest"]:
                 raise TrainingJobError("TRAINING_UNAVAILABLE")
             if not self.capabilities(include_dataset=False, source_model=body["model"])["trainingExecution"]:
                 raise TrainingJobError("TRAINING_UNAVAILABLE")
@@ -528,7 +636,7 @@ class TrainingJobStore:
     def _run(self, identifier):
         try:
             record = self._read(self._path(identifier))
-            source_model = record.get("target", {}).get("sourceModel")
+            source_model = self._selected(record.get("target", {}))
             if not source_model:
                 raise TrainingJobError("TRAINING_UNAVAILABLE")
             binding = self._binding(source_model)
@@ -536,6 +644,8 @@ class TrainingJobStore:
                 raise TrainingJobError("TRAINING_UNAVAILABLE")
             model_dir = binding.directory
             pinned_target = record["target"]
+            profile = binding.profile
+            parent_adapter = self._resume_adapter(binding)
 
             def run_stage(arguments, code, result_path=None):
                 # 등록 파일이 실행 중 바뀌어도 다른 기반 모델로 다음 단계를 실행하지 않는다.
@@ -549,22 +659,38 @@ class TrainingJobStore:
             sources = self._snapshot(directory, source_model)
             dataset = directory / "dataset"
             adapter = self.root / "adapters" / f"trial-web-{identifier}"
+            profile_file = directory / "training-profile.json"
+            write_json_atomic(profile_file, profile)
             run_stage([self.root / "training_job_prepare.py", "--input-dir", sources, "--output", dataset,
-                           "--model", model_dir], "PREPARATION_FAILED", directory / "preparation-result.json")
+                           "--model", model_dir, "--max-tokens", profile["maxSequenceLength"]],
+                      "PREPARATION_FAILED", directory / "preparation-result.json")
             manifest = json.loads((dataset / "manifest.json").read_text())
             counts = manifest.get("stageSampleCounts", {})
             if any(type(counts.get(split)) is not int or counts[split] < 1 for split in ("train", "valid")):
                 raise TrainingJobError("DATASET_TOO_SMALL")
             self._phase(identifier, "TRAINING", 30)
             record = self._read(self._path(identifier))
-            run_stage([self.root / "trial_train.py", "train", "--dataset", dataset, "--adapter", adapter,
-                           "--model", model_dir, "--iters", record["iterations"], "--layers", "1"], "TRAINING_FAILED")
+            generic = pinned_target["trainer"] == GENERIC_TRAINER
+            script = self.root / ("mlx_lora_train.py" if generic else "trial_train.py")
+            common = ["--dataset", dataset, "--adapter", adapter, "--model", model_dir]
+            if generic:
+                common.extend(["--profile-file", profile_file])
+            train_args = [script, "train", *common, "--iters", record["iterations"]]
+            if not generic:
+                train_args.extend(["--layers", "1"])
+            if parent_adapter is not None:
+                train_args.extend(["--resume-adapter", parent_adapter])
+            run_stage(train_args, "TRAINING_FAILED")
             self._phase(identifier, "VERIFYING", 85)
-            run_stage([self.root / "trial_train.py", "reload", "--dataset", dataset, "--adapter", adapter,
-                           "--model", model_dir], "VERIFICATION_FAILED")
+            run_stage([script, "reload", *common], "VERIFICATION_FAILED")
             report = json.loads((dataset / "training-report.json").read_text())
             reload = json.loads((dataset / "reload-report.json").read_text())
             if report.get("status") != "complete" or reload.get("status") != "complete" or report.get("protectedFilesUnchanged") is not True:
+                raise TrainingJobError("VERIFICATION_FAILED")
+            if generic and report.get("profileSha256") != digest(profile):
+                raise TrainingJobError("VERIFICATION_FAILED")
+            if parent_adapter is not None and any(report.get(key) != pinned_target.get(key)
+                                                  for key in ("parentAdapterSha256", "parentConfigSha256")):
                 raise TrainingJobError("VERIFICATION_FAILED")
             metrics = {"trainingSamples": counts["train"], "validationSamples": counts["valid"], "testSamples": counts["test"],
                        "finalTrainingLoss": report["steps"][-1]["loss"], "validationLossBefore": report["validationLossBefore"]["valid"],
