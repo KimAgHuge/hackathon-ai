@@ -13,9 +13,12 @@ from uuid import UUID
 
 from model_delivery import (PackageError, canonical, check_secret, directory, model_identity,
                             read_json, sync_directory, write_file)
-from model_registry import QWEN_BASE, QWEN_SOURCE
+from model_registry import MODEL_NAME, QWEN_BASE, QWEN_SOURCE
+from model_export_profiles import GENERIC_EXPORTER, export_capability
+from training_profiles import ProfileError, validate_profile
 
 DOMAIN = b"doenaai-model-gguf-delivery-v1\n"
+DOMAIN_V2 = b"doenaai-model-gguf-delivery-v2\n"
 PAYLOAD_FILES = ("model.gguf", "evaluation-summary.json")
 PACKAGE_FILES = (*PAYLOAD_FILES, "manifest.json", "READY.json")
 MAX_ARTIFACT_BYTES = 64 * 1024**3
@@ -25,6 +28,23 @@ MLX_LM_VERSION = "0.32.0"
 BASE_MODEL_REVISION = "10c35caafbb80f7dc6a7a432cdd11af10a6d4818"
 METADATA = {"jobId", "version", "manifestSha256", "sourceModel", "baseModel", "baseRevision",
             "model", "artifactSha256", "artifactSize", "quantization"}
+GENERIC_METADATA = METADATA | {"formatVersion", "modelType", "architecture", "profile"}
+
+
+def generic_provenance(value):
+    """새 형식은 원래 분석 모델과 MLX 식별자·변환 구조·전체 학습 설정을 함께 확인한다."""
+    try:
+        profile = validate_profile(value.get("profile"))
+        supported = export_capability(profile, base_model=value.get("baseModel"), revision=value.get("baseRevision"))
+        model_identity({"modelId": value.get("baseModel"), "revision": value.get("baseRevision")})
+        if (not supported["supported"] or profile.get("exporter") != GENERIC_EXPORTER
+                or type(value.get("formatVersion")) is not int or value["formatVersion"] != 2
+                or not isinstance(value.get("sourceModel"), str) or not MODEL_NAME.fullmatch(value["sourceModel"])
+                or value.get("modelType") != profile["modelType"] or value.get("architecture") != profile["exportArchitecture"]):
+            raise ValueError()
+        return profile
+    except (ValueError, TypeError, KeyError, ProfileError):
+        raise PackageError("모델 패키지의 기반 식별자와 모델별 변환 프로필이 일치하지 않습니다.") from None
 
 
 def checksum(path, limit=MAX_ARTIFACT_BYTES, *, check=None):
@@ -74,11 +94,14 @@ def identity(identifier):
 
 def validate_metadata(value):
     """원격 요청에는 파일 경로와 명령을 받지 않고 고정 식별 정보만 받는다."""
-    if not isinstance(value, dict) or set(value) != METADATA:
+    if not isinstance(value, dict) or set(value) not in (METADATA, GENERIC_METADATA):
         raise PackageError("모델 패키지 식별 정보의 형식을 확인하세요.")
+    generic = set(value) == GENERIC_METADATA
+    if generic:
+        generic_provenance(value)
     version, model = identity(value.get("jobId"))
     if (value.get("version") != version or value.get("model") != model
-            or value.get("sourceModel") != QWEN_SOURCE or value.get("baseModel") != QWEN_BASE
+            or (not generic and (value.get("sourceModel") != QWEN_SOURCE or value.get("baseModel") != QWEN_BASE))
             or not isinstance(value.get("baseRevision"), str) or not re.fullmatch(r"[0-9a-f]{40}", value["baseRevision"])
             or value.get("quantization") != "Q4_K_M"
             or any(not isinstance(value.get(key), str) or not HASH.fullmatch(value[key])
@@ -93,26 +116,34 @@ def verify_package(package_dir, secret, *, check=None):
     check_secret(secret)
     package = directory(package_dir)
     manifest, ready = read_json(package / "manifest.json"), read_json(package / "READY.json")
+    generic = type(manifest.get("formatVersion")) is int and manifest["formatVersion"] == 2
+    format_version, domain = (2, DOMAIN_V2) if generic else (1, DOMAIN)
     version, model = identity(manifest.get("jobId"))
     manifest_hash = checksum(package / "manifest.json", 1024**2, check=check)[0]
-    signature = hmac.new(secret.encode(), DOMAIN + canonical(manifest), hashlib.sha256).hexdigest()
+    signature = hmac.new(secret.encode(), domain + canonical(manifest), hashlib.sha256).hexdigest()
     if (set(ready) != {"formatVersion", "version", "manifestSha256", "signature"}
-            or type(ready.get("formatVersion")) is not int or ready["formatVersion"] != 1
+            or type(ready.get("formatVersion")) is not int or ready["formatVersion"] != format_version
             or ready.get("version") != version or ready.get("manifestSha256") != manifest_hash
             or not isinstance(ready.get("signature"), str) or not hmac.compare_digest(ready["signature"], signature)):
         raise PackageError("모델 패키지 완료 표시의 서명과 해시가 일치하지 않습니다.")
     expected_fields = {"formatVersion", "version", "jobId", "packageType", "sourceModel", "model", "runtimeModel",
                        "quantization", "files", "productionApproved", "qualityEvaluation", "ollamaCompatible", "toolchain", "createdAt"}
-    if (set(manifest) != expected_fields or type(manifest.get("formatVersion")) is not int or manifest["formatVersion"] != 1
+    if generic:
+        expected_fields |= {"modelType", "architecture", "profile"}
+    if (set(manifest) != expected_fields or type(manifest.get("formatVersion")) is not int or manifest["formatVersion"] != format_version
             or manifest.get("packageType") != "MODEL_GGUF" or manifest.get("version") != version
-            or manifest.get("runtimeModel") != model or manifest.get("sourceModel") != QWEN_SOURCE
+            or manifest.get("runtimeModel") != model or (not generic and manifest.get("sourceModel") != QWEN_SOURCE)
             or manifest.get("quantization") != "Q4_K_M" or manifest.get("productionApproved") is not False
             or manifest.get("qualityEvaluation") != "NOT_EVALUATED" or manifest.get("ollamaCompatible") is not True
             or manifest.get("toolchain") != {"mlxLmVersion": MLX_LM_VERSION, "llamaCppRevision": LLAMA_CPP_REVISION}):
         raise PackageError("지원하는 새 모델 패키지 형식이 아닙니다.")
     base = model_identity(manifest.get("model"))
-    if base["modelId"] != QWEN_BASE:
+    if not generic and base["modelId"] != QWEN_BASE:
         raise PackageError("모델 패키지의 기반 모델이 지원 대상과 다릅니다.")
+    provenance = {}
+    if generic:
+        provenance = {"formatVersion": 2, "modelType": manifest["modelType"], "architecture": manifest["architecture"], "profile": manifest["profile"]}
+        generic_provenance({**provenance, "sourceModel": manifest["sourceModel"], "baseModel": base["modelId"], "baseRevision": base["revision"]})
     entries = manifest.get("files")
     if not isinstance(entries, list) or len(entries) != 2:
         raise PackageError("모델 패키지 파일 명세가 올바르지 않습니다.")
@@ -132,18 +163,41 @@ def verify_package(package_dir, secret, *, check=None):
     with (package / "model.gguf").open("rb") as stream:
         if stream.read(4) != b"GGUF":
             raise PackageError("새 모델 파일이 GGUF 형식이 아닙니다.")
+    if generic:
+        from model_export_worker import gguf_identity, ExportError
+        try:
+            actual_identity = gguf_identity(package / "model.gguf")
+            if (actual_identity.get("general.architecture") != manifest["architecture"]
+                    or actual_identity.get("general.file_type") != 15
+                    or actual_identity.get("general.type", "model") != "model"):
+                raise ExportError("모델 구조가 패키지 명세와 다릅니다.")
+        except (ExportError, OSError):
+            raise PackageError("새 모델의 실제 GGUF 구조와 서명된 변환 명세가 다릅니다.") from None
     summary = read_json(package / "evaluation-summary.json")
     if summary.get("qualityEvaluation") != "NOT_EVALUATED" or summary.get("productionApproved") is not False:
         raise PackageError("모델 품질 평가 안내가 올바르지 않습니다.")
     return validate_metadata({"jobId": manifest["jobId"], "version": version, "model": model,
         "manifestSha256": manifest_hash, "sourceModel": manifest["sourceModel"], "baseModel": base["modelId"],
-        "baseRevision": base["revision"], "artifactSha256": artifact["sha256"], "artifactSize": artifact["size"], "quantization": "Q4_K_M"})
+        "baseRevision": base["revision"], "artifactSha256": artifact["sha256"], "artifactSize": artifact["size"], "quantization": "Q4_K_M", **provenance})
 
 
-def create_package(artifact, summary, output, identifier, base, secret, *, check=None):
+def create_package(artifact, summary, output, identifier, base, secret, *, check=None, source_model=None, profile=None):
     """검증을 마친 생성 모델만 새 로컬 패키지로 보관한다."""
     check_secret(secret)
     version, model = identity(identifier)
+    base = model_identity(base)
+    format_version, domain, provenance = 1, DOMAIN, {}
+    if profile is not None:
+        try:
+            profile = validate_profile(profile)
+        except ProfileError:
+            raise PackageError("새 모델 패키지에 사용할 학습 프로필을 확인하세요.") from None
+        provenance = {"formatVersion": 2, "modelType": profile.get("modelType"),
+                      "architecture": profile.get("exportArchitecture"), "profile": profile}
+        generic_provenance({**provenance, "sourceModel": source_model, "baseModel": base["modelId"], "baseRevision": base["revision"]})
+        format_version, domain = 2, DOMAIN_V2
+    elif source_model not in (None, QWEN_SOURCE):
+        raise PackageError("기존 형식은 검증한 Qwen 분석 모델에만 사용할 수 있습니다.")
     output = Path(output)
     if output.exists() or output.is_symlink():
         raise PackageError("새 모델 패키지 출력 경로가 이미 있습니다.")
@@ -156,14 +210,14 @@ def create_package(artifact, summary, output, identifier, base, secret, *, check
         for name in PAYLOAD_FILES:
             value, size = checksum(temporary / name, check=check)
             entries.append({"path": name, "sha256": value, "size": size})
-        manifest = {"formatVersion": 1, "version": version, "jobId": identifier, "packageType": "MODEL_GGUF",
-            "sourceModel": QWEN_SOURCE, "model": model_identity(base), "runtimeModel": model, "quantization": "Q4_K_M",
+        manifest = {"formatVersion": format_version, "version": version, "jobId": identifier, "packageType": "MODEL_GGUF",
+            "sourceModel": source_model if profile is not None else QWEN_SOURCE, "model": base, "runtimeModel": model, "quantization": "Q4_K_M",
             "files": entries, "productionApproved": False, "qualityEvaluation": "NOT_EVALUATED", "ollamaCompatible": True,
-            "toolchain": {"mlxLmVersion": MLX_LM_VERSION, "llamaCppRevision": LLAMA_CPP_REVISION}, "createdAt": datetime.now(timezone.utc).isoformat()}
+            "toolchain": {"mlxLmVersion": MLX_LM_VERSION, "llamaCppRevision": LLAMA_CPP_REVISION}, "createdAt": datetime.now(timezone.utc).isoformat(), **provenance}
         write_file(temporary / "manifest.json", canonical(manifest))
-        write_file(temporary / "READY.json", canonical({"formatVersion": 1, "version": version,
+        write_file(temporary / "READY.json", canonical({"formatVersion": format_version, "version": version,
             "manifestSha256": checksum(temporary / "manifest.json")[0],
-            "signature": hmac.new(secret.encode(), DOMAIN + canonical(manifest), hashlib.sha256).hexdigest()}))
+            "signature": hmac.new(secret.encode(), domain + canonical(manifest), hashlib.sha256).hexdigest()}))
         verify_package(temporary, secret, check=check)
         sync_directory(temporary)
         temporary.rename(output)

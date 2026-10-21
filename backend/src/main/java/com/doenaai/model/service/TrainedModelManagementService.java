@@ -6,6 +6,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
 import java.util.LinkedHashMap;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -17,6 +19,9 @@ public class TrainedModelManagementService {
     private static final Set<String> BUILD_STATES = Set.of("NOT_BUILT", "PENDING", "FUSING", "CONVERTING", "QUANTIZING", "PUBLISHING", "SUCCEEDED", "FAILED", "CANCELLED", "UNAVAILABLE");
     private static final Set<String> IMPORT_STATES = Set.of("NOT_STARTED", "IMPORTING", "READY", "WAITING", "UNAVAILABLE");
     private static final Set<String> METADATA = Set.of("jobId", "version", "manifestSha256", "sourceModel", "baseModel", "baseRevision", "model", "artifactSha256", "artifactSize", "quantization");
+    private static final Set<String> PROFILE_REQUIRED = Set.of("modelType", "loraLayers", "loraRank", "loraScale", "loraDropout", "loraKeys", "maxSequenceLength", "batchSize", "learningRate", "gradientCheckpointing");
+    private static final Set<String> PROFILE_OPTIONAL = Set.of("exporter", "exportArchitecture");
+    private static final Map<String, String> EXPORT_ARCHITECTURES = Map.of("llama", "llama", "mistral", "llama", "qwen2", "qwen2", "qwen3", "qwen3", "exaone4", "exaone4");
     private final ModelOperationRepository repository;
     private final ModelExecutionClient client;
 
@@ -75,7 +80,10 @@ public class TrainedModelManagementService {
         if ("SUCCEEDED".equals(status)) {
             var metadata = metadata(supplied.get("result"), id, origin);
             if (metadata == null) return unavailable(id, origin, "MODEL_BUILD_METADATA_INVALID");
-            result.put("result", metadata);
+            // 전체 프로필은 서명된 내부 등록 요청에만 쓰고 브라우저에는 식별 정보만 전달한다.
+            var visible = new LinkedHashMap<>(metadata);
+            visible.remove("profile");
+            result.put("result", visible);
         }
         return result;
     }
@@ -103,9 +111,52 @@ public class TrainedModelManagementService {
         if (origin.get("result") instanceof Map<?, ?> saved && saved.get("target") instanceof Map<?, ?> target
                 && (!model.equals(target.get("baseModel")) || !revision.equals(target.get("revision")))) return null;
         var result = new LinkedHashMap<String, Object>();
+        if (data.containsKey("formatVersion")) {
+            var expected = new HashSet<>(METADATA);
+            expected.addAll(Set.of("formatVersion", "modelType", "architecture", "profile"));
+            if (!data.keySet().equals(expected) || !integer(data.get("formatVersion"), 2, 2)
+                    || !(data.get("modelType") instanceof String type) || !identifier(type)
+                    || !(data.get("architecture") instanceof String architecture) || !identifier(architecture)
+                    || !architecture.equals(EXPORT_ARCHITECTURES.get(type)) || !validProfile(data.get("profile"), type, architecture)) return null;
+            result.put("formatVersion", 2);
+            result.put("modelType", type);
+            result.put("architecture", architecture);
+            var profile = new LinkedHashMap<String, Object>();
+            ((Map<?, ?>) data.get("profile")).forEach((key, item) -> profile.put((String) key, item));
+            profile.put("loraKeys", List.copyOf((List<?>) profile.get("loraKeys")));
+            result.put("profile", profile);
+        } else if (!data.keySet().equals(METADATA)) return null;
         METADATA.forEach(key -> result.put(key, data.get(key)));
         return result;
     }
+
+    /** 서버가 반환한 프로필도 허용한 숫자·모듈·변환 식별자만 내부 요청에 사용한다. */
+    private static boolean validProfile(Object supplied, String modelType, String architecture) {
+        if (!(supplied instanceof Map<?, ?> profile) || !profile.keySet().containsAll(PROFILE_REQUIRED)
+                || profile.keySet().stream().anyMatch(key -> !PROFILE_REQUIRED.contains(key) && !PROFILE_OPTIONAL.contains(key))
+                || !modelType.equals(profile.get("modelType")) || !architecture.equals(profile.get("exportArchitecture"))
+                || !"mlx-lm-hf-gguf-v1".equals(profile.get("exporter"))
+                || !integer(profile.get("loraLayers"), 1, 128) || !integer(profile.get("loraRank"), 1, 128)
+                || !integer(profile.get("maxSequenceLength"), 32, 32768) || !integer(profile.get("batchSize"), 1, 4)
+                || !decimal(profile.get("loraScale"), 0, 256, false) || !decimal(profile.get("loraDropout"), 0, 0.5, true)
+                || !decimal(profile.get("learningRate"), 1e-7, 1e-2, true) || !(profile.get("gradientCheckpointing") instanceof Boolean)
+                || !(profile.get("loraKeys") instanceof List<?> keys) || keys.isEmpty() || keys.size() > 64
+                || new HashSet<>(keys).size() != keys.size()) return false;
+        return keys.stream().allMatch(key -> key instanceof String text && text.length() <= 200
+                && text.matches("[A-Za-z0-9_]+(?:\\.[A-Za-z0-9_]+)*"));
+    }
+
+    private static boolean integer(Object value, long minimum, long maximum) {
+        return (value instanceof Integer || value instanceof Long || value instanceof Short || value instanceof Byte)
+                && ((Number) value).longValue() >= minimum && ((Number) value).longValue() <= maximum;
+    }
+
+    private static boolean decimal(Object value, double minimum, double maximum, boolean includeMinimum) {
+        return value instanceof Number number && Double.isFinite(number.doubleValue()) && number.doubleValue() <= maximum
+                && (includeMinimum ? number.doubleValue() >= minimum : number.doubleValue() > minimum);
+    }
+
+    private static boolean identifier(String value) { return value.matches("[a-z][a-z0-9_\\-]{0,79}"); }
 
     private static void safeFields(Map<String, Object> supplied, Map<String, Object> target) {
         if (supplied.get("progress") instanceof Number number && number.doubleValue() >= 0 && number.doubleValue() <= 100) target.put("progress", number.intValue());
@@ -118,6 +169,8 @@ public class TrainedModelManagementService {
         var value = new LinkedHashMap<String, Object>();
         value.put("jobId", id.toString()); value.put("trainingJobId", id.toString());
         value.put("model", runtimeModel(id)); value.put("sourceModel", source(origin)); value.put("provider", "ollama");
+        if (origin.get("result") instanceof Map<?, ?> saved && saved.get("target") instanceof Map<?, ?> target
+                && target.get("selectedModel") instanceof String selected && validModel(selected)) value.put("selectedModel", selected);
         value.put("trainedModel", true); value.put("qualityEvaluated", false); value.put("status", status);
         value.put("message", switch (status) {
             case "NOT_BUILT" -> "완료한 학습을 기반 모델과 합쳐 새 분석용 모델을 만들 수 있습니다. 학습 서버에서 변환 도구와 저장 공간을 확인합니다.";
@@ -139,13 +192,14 @@ public class TrainedModelManagementService {
     }
     private static Map<String, Object> unavailable(UUID id, Map<String, Object> origin, String code) { var value = base(id, origin, "UNAVAILABLE"); value.put("errorCode", code); return value; }
     private static Map<String, Object> failure(UUID id, Map<String, Object> origin, ModelExecutionClient.RemoteFailure failure) {
-        boolean preparation = Set.of("MODEL_BUILD_UNAVAILABLE", "MODEL_BUILD_DISK_SPACE", "MODEL_BUILD_BUSY").contains(failure.code);
+        boolean preparation = Set.of("MODEL_BUILD_UNAVAILABLE", "MODEL_BUILD_DISK_SPACE", "MODEL_BUILD_BUSY", "MODEL_BUILD_UNSUPPORTED_PROFILE").contains(failure.code);
         var value = base(id, origin, !preparation && failure.uncertain ? "UNKNOWN" : "UNAVAILABLE");
         value.put("errorCode", failure.code);
         if (preparation) { value.put("available", false); value.put("message", readinessMessage(failure.code)); }
         return value;
     }
     private static String readinessMessage(String code) {
+        if ("MODEL_BUILD_UNSUPPORTED_PROFILE".equals(code)) return "이 모델의 학습 결과를 분석용 완성 모델로 변환하는 경로는 아직 지원하지 않습니다. 어댑터 학습 완료와 구분해 확인하세요.";
         if ("MODEL_BUILD_DISK_SPACE".equals(code)) return "학습 서버의 모델 작업 폴더에 180 GiB 이상의 여유 공간이 필요합니다. 공간을 확보한 뒤 상태를 다시 확인하세요.";
         if ("MODEL_BUILD_BUSY".equals(code)) return "학습 서버에서 학습이나 새 모델 생성이 진행 중입니다. 완료하거나 취소한 뒤 다시 확인하세요.";
         return "학습 서버의 MLX 실행 환경과 고정 버전 변환 도구 경로·양자화 실행 파일 해시를 설정한 뒤 상태를 다시 확인하세요. 분석 서버의 MLX 설정은 필요하지 않습니다.";

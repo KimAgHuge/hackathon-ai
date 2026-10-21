@@ -22,6 +22,90 @@ TOKENIZER_FILES = ("tokenizer.json", "tokenizer_config.json", "special_tokens_ma
                    "chat_template.jinja", "generation_config.json")
 
 
+def dense_model_shapes(config, profile):
+    """HF와 MLX의 이름과 저장 차원이 같은 밀집 텍스트 구조만 명세로 만든다."""
+    from model_export_profiles import GENERIC_EXPORTER, HF_ARCHITECTURES, export_capability
+    if (not export_capability(profile)["supported"] or profile.get("exporter") != GENERIC_EXPORTER
+            or config.get("model_type") != profile["modelType"]
+            or config.get("architectures") != [HF_ARCHITECTURES[profile["modelType"]]]
+            or any(key in config for key in ("vision_config", "text_config", "num_local_experts", "num_experts"))
+            or config.get("rope_traditional", False) is not False):
+        raise ExportError("공통 변환기가 확인한 밀집 텍스트 모델 구조와 프로필이 일치하지 않습니다.")
+    def positive(key, fallback=None):
+        value = config.get(key, fallback)
+        if type(value) is not int or not 1 <= value <= 2**24:
+            raise ExportError("기반 모델의 필수 차원을 확인하세요.")
+        return value
+    h, intermediate, vocab = (positive(key) for key in ("hidden_size", "intermediate_size", "vocab_size"))
+    layers, heads = positive("num_hidden_layers"), positive("num_attention_heads")
+    kv = positive("num_key_value_heads", heads)
+    head = positive("head_dim", h // heads)
+    if layers > 256 or heads % kv or h % heads or profile["loraLayers"] > layers:
+        raise ExportError("기반 모델의 계층 수와 어텐션 차원을 확인하세요.")
+    model_type = profile["modelType"]
+    if model_type == "qwen2" and head != h // heads:
+        raise ExportError("고정 Qwen2 로더가 지원하는 head 차원과 다릅니다.")
+    for key in ("tie_word_embeddings", "attention_bias", "mlp_bias"):
+        if key in config and type(config[key]) is not bool:
+            raise ExportError("모델의 가중치 공유와 편향 설정은 참 또는 거짓이어야 합니다.")
+    tied = config.get("tie_word_embeddings", False)
+    # 서로 다른 기본값으로 빠진 출력 가중치를 추측하지 않도록 공유 여부를 명시하게 한다.
+    if "tie_word_embeddings" not in config:
+        raise ExportError("공통 변환에는 출력 가중치 공유 여부를 명시해야 합니다.")
+    shapes = {"model.embed_tokens.weight": (vocab, h), "model.norm.weight": (h,)}
+    names = {"model.embed_tokens.weight": "token_embd.weight", "model.norm.weight": "output_norm.weight"}
+    if not tied:
+        shapes["lm_head.weight"], names["lm_head.weight"] = (vocab, h), "output.weight"
+    for index in range(layers):
+        prefix, block = f"model.layers.{index}.", f"blk.{index}."
+        items = {"self_attn.q_proj": ((heads * head, h), "attn_q"),
+                 "self_attn.k_proj": ((kv * head, h), "attn_k"),
+                 "self_attn.v_proj": ((kv * head, h), "attn_v"),
+                 "self_attn.o_proj": ((h, heads * head), "attn_output"),
+                 "mlp.gate_proj": ((intermediate, h), "ffn_gate"),
+                 "mlp.up_proj": ((intermediate, h), "ffn_up"),
+                 "mlp.down_proj": ((h, intermediate), "ffn_down")}
+        if model_type == "exaone4":
+            norms = {"post_attention_layernorm": "post_attention_norm", "post_feedforward_layernorm": "post_ffw_norm"}
+        else:
+            norms = {"input_layernorm": "attn_norm", "post_attention_layernorm": "ffn_norm"}
+        items.update({key: ((h,), value) for key, value in norms.items()})
+        if model_type in ("qwen3", "exaone4"):
+            items.update({"self_attn.q_norm": ((head,), "attn_q_norm"), "self_attn.k_norm": ((head,), "attn_k_norm")})
+        for key, (shape, target) in items.items():
+            shapes[prefix + key + ".weight"] = shape
+            names[prefix + key + ".weight"] = block + target + ".weight"
+            bias = ((model_type == "qwen2" and key in ("self_attn.q_proj", "self_attn.k_proj", "self_attn.v_proj"))
+                    or (model_type in ("llama", "mistral") and key.startswith("self_attn.") and config.get("attention_bias", False))
+                    or (model_type in ("llama", "mistral") and key.startswith("mlp.") and config.get("mlp_bias", False)))
+            if bias:
+                shapes[prefix + key + ".bias"] = (shape[0],)
+                names[prefix + key + ".bias"] = block + target + ".bias"
+    gguf = {names[name]: tuple(reversed(shape)) for name, shape in shapes.items()}
+    # 일부 공식 변환기는 설정에서 회전 위치 보정 텐서를 추가한다. 그 외 텐서는 허용하지 않는다.
+    return shapes, gguf, {"rope_freqs.weight": (head // 2,)}
+
+
+def verify_fused_dense(model, config, profile):
+    """공식 병합 결과에 양자화 잔여물·어댑터·누락 텐서가 없는지 헤더로 대조한다."""
+    shapes, _, _ = dense_model_shapes(config, profile)
+    fused_config = read_json(Path(model) / "config.json")
+    if any(key in fused_config for key in ("quantization", "quantization_config")):
+        raise ExportError("병합 가중치에 양자화 설정이 남아 있습니다.")
+    excluded = {"quantization", "quantization_config", "_name_or_path"}
+    if ({key: value for key, value in fused_config.items() if key not in excluded}
+            != {key: value for key, value in config.items() if key not in excluded}):
+        raise ExportError("병합 중 기반 모델의 구조나 토큰 설정이 변경됐습니다.")
+    fused_shapes, _, _ = dense_model_shapes(fused_config, profile)
+    tensors = model_tensors(model)
+    if fused_shapes != shapes or set(tensors) != set(shapes):
+        raise ExportError("병합한 전체 가중치의 텐서 명세가 기반 모델과 다릅니다.")
+    if any(tuple(tensors[key]["shape"]) != shape or tensors[key]["dtype"] not in ("F16", "BF16", "F32")
+           for key, shape in shapes.items()):
+        raise ExportError("병합 가중치가 HF와 같은 실수 차원으로 저장되지 않았습니다.")
+    return len(shapes)
+
+
 def read_json(path, limit=16 * 1024**2):
     """작은 JSON의 중복 필드와 유효하지 않은 숫자를 거부한다."""
     path = Path(path)

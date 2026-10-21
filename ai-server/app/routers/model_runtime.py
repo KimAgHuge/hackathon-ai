@@ -52,6 +52,10 @@ class TrainedModelImportInput(RuntimeInput):
     artifact_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     artifact_size: StrictInt = Field(ge=24, le=64 * 1024 ** 3)
     quantization: str = Field(pattern=r"^Q4_K_M$")
+    format_version: StrictInt | None = Field(default=None, ge=2, le=2)
+    model_type: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_-]{0,79}$")
+    architecture: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_-]{0,79}$")
+    profile: dict[str, object] | None = None
 
 
 @router.post("/trained/import")
@@ -60,7 +64,7 @@ async def import_trained_model(body: TrainedModelImportInput, response: Response
     from app.services.trained_model_runtime import TrainedModelError
     response.headers["Cache-Control"] = "no-store"
     try:
-        return await service.trained.prepare(body.model_dump(mode="json", by_alias=True))
+        return await service.trained.prepare(body.model_dump(mode="json", by_alias=True, exclude_none=True))
     except TrainedModelError as error:
         raise HTTPException(error.status, detail={"code": error.code, "message": error.message}) from None
 

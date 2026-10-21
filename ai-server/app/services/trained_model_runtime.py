@@ -24,6 +24,8 @@ if str(TRAINING_ROOT) not in sys.path:
 
 from model_delivery import PackageError, canonical, directory, read_json  # noqa: E402
 from model_registry import QWEN_BASE, QWEN_SOURCE  # noqa: E402
+from model_export_profiles import ARCHITECTURES  # noqa: E402
+from trained_model_delivery import validate_metadata  # noqa: E402
 
 MODEL = re.compile(r"doenaai-trained:web-([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})\Z")
 HASH = re.compile(r"[0-9a-f]{64}\Z")
@@ -43,18 +45,7 @@ class TrainedModelError(Exception):
 def metadata_input(value):
     """완료 학습과 고정된 모델 이름만 등록 대상으로 받는다."""
     try:
-        if not isinstance(value, dict) or set(value) != METADATA:
-            raise ValueError()
-        identifier = str(UUID(value["jobId"]))
-        if (identifier != value["jobId"] or value["version"] != "trained-web-" + identifier
-                or value["model"] != "doenaai-trained:web-" + identifier
-                or value["sourceModel"] != QWEN_SOURCE or value["baseModel"] != QWEN_BASE
-                or not isinstance(value["baseRevision"], str) or not re.fullmatch(r"[0-9a-f]{40}", value["baseRevision"])
-                or any(not isinstance(value[key], str) or not HASH.fullmatch(value[key]) for key in ("manifestSha256", "artifactSha256"))
-                or type(value["artifactSize"]) is not int or not 24 <= value["artifactSize"] <= MAX_WEIGHTS
-                or value["quantization"] != "Q4_K_M"):
-            raise ValueError()
-        return dict(value)
+        return validate_metadata(value)
     except (ValueError, TypeError, KeyError, AttributeError):
         raise TrainedModelError(422, "TRAINED_MODEL_REQUEST_INVALID", "학습 작업과 완성 모델의 식별값·파일 크기를 확인하세요.") from None
 
@@ -87,20 +78,23 @@ class OllamaModelImporter:
         return value["models"]
 
     @staticmethod
-    def _compatible(show):
-        return (isinstance(show, dict) and isinstance(show.get("capabilities"), list) and "completion" in show["capabilities"]
+    def _compatible(show, architecture="qwen35"):
+        return (architecture in set(ARCHITECTURES.values()) | {"qwen35"}
+                and isinstance(show, dict) and isinstance(show.get("capabilities"), list) and "completion" in show["capabilities"]
                 and not show.get("remote_host") and not show.get("remote_model")
-                and isinstance(show.get("model_info"), dict) and show["model_info"].get("general.architecture") == "qwen35")
+                and isinstance(show.get("model_info"), dict) and show["model_info"].get("general.architecture") == architecture)
 
     def register(self, metadata, weights, deadline, *, check=None):
         """같은 이름의 외부 모델은 덮어쓰지 않고, 확인된 재시도만 이어간다."""
+        metadata = metadata_input(metadata)
+        architecture = metadata.get("architecture", "qwen35")
         with httpx.Client(base_url=self.base, timeout=httpx.Timeout(600, connect=10), follow_redirects=False) as client:
             if check:
                 check()
             models = self.models(client)
             existing = next((row for row in models if row.get("name") == metadata["model"]), None)
             source = self._json(client, "POST", "/api/show", {"model": metadata["sourceModel"]})
-            if not self._compatible(source):
+            if not self._compatible(source, architecture):
                 raise TrainedModelError(409, "TRAINED_MODEL_SOURCE_UNAVAILABLE", "학습 자료의 기반 분석 모델이 로컬에 설치돼 있어야 합니다.")
             template = source.get("template")
             if not isinstance(template, str) or not template.strip() or len(template) > 256 * 1024:
@@ -121,7 +115,7 @@ class OllamaModelImporter:
                 expected_blob = "sha256-" + metadata["artifactSha256"]
                 same_weights = len(from_lines) == 1 and from_lines[0].removeprefix("FROM ").strip('"').split("/")[-1] == expected_blob
                 same_format = installed.get("template") == template and all(installed.get(key) == source.get(key) for key in ("parser", "renderer"))
-                if same_weights and same_format and HASH.fullmatch(actual) and self._compatible(installed):
+                if same_weights and same_format and HASH.fullmatch(actual) and self._compatible(installed, architecture):
                     # 응답 유실 뒤 같은 가중치와 대화 형식의 등록만 멱등 재시도로 인정한다.
                     return actual
                 raise TrainedModelError(409, "TRAINED_MODEL_NAME_CONFLICT", "같은 이름의 다른 설치 모델이 있습니다. 기존 모델은 덮어쓰지 않았습니다.")
@@ -163,7 +157,7 @@ class OllamaModelImporter:
             installed = next((row for row in self.models(client) if row.get("name") == metadata["model"]), {})
             digest = str(installed.get("digest", "")).removeprefix("sha256:")
             show = self._json(client, "POST", "/api/show", {"model": metadata["model"]})
-            if (not HASH.fullmatch(digest) or not self._compatible(show)
+            if (not HASH.fullmatch(digest) or not self._compatible(show, architecture)
                     or not isinstance(show.get("details"), dict) or show["details"].get("quantization_level") != metadata["quantization"]):
                 raise ValueError()
             return digest

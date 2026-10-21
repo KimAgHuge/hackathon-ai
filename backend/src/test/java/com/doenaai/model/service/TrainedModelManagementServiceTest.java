@@ -87,7 +87,8 @@ class TrainedModelManagementServiceTest {
     }
 
     @Test void rejectedBrowserFieldsDoNotReachEitherRemoteServer() {
-        for (var body : List.of(Map.<String, Object>of("path", "/private/model"), Map.<String, Object>of("model", source))) {
+        for (var body : List.of(Map.<String, Object>of("path", "/private/model"), Map.<String, Object>of("model", source),
+                Map.<String, Object>of("profile", genericProfile()))) {
             assertThatThrownBy(() -> service.build(id, "POST", body)).isInstanceOf(ModelCatalogException.class);
             assertThatThrownBy(() -> service.cancel(id, body)).isInstanceOf(ModelCatalogException.class);
             assertThatThrownBy(() -> service.register(id, body)).isInstanceOf(ModelCatalogException.class);
@@ -165,11 +166,64 @@ class TrainedModelManagementServiceTest {
         var waiting = service.build(id, "GET", Map.of());
         assertThat(waiting).containsEntry("available", false).containsEntry("status", "NOT_BUILT");
         assertThat(waiting.get("message").toString()).contains("학습 서버", "180 GiB");
-        for (var code : List.of("MODEL_BUILD_UNAVAILABLE", "MODEL_BUILD_DISK_SPACE", "MODEL_BUILD_BUSY")) {
+        for (var code : List.of("MODEL_BUILD_UNAVAILABLE", "MODEL_BUILD_DISK_SPACE", "MODEL_BUILD_BUSY", "MODEL_BUILD_UNSUPPORTED_PROFILE")) {
             doThrow(new ModelExecutionClient.RemoteFailure(code, true, 503)).when(client).training("POST", buildPath(), Map.of());
             assertThat(service.build(id, "POST", Map.of())).containsEntry("status", "UNAVAILABLE")
                     .containsEntry("available", false).containsEntry("errorCode", code);
         }
+    }
+
+    @Test void formatTwoPreservesTheSignedProfileOnlyInTheInternalImportRequest() {
+        when(client.training("GET", buildPath(), Map.of())).thenReturn(Map.of("jobId", id.toString(), "status", "SUCCEEDED", "result", genericMetadata()));
+        var response = service.build(id, "GET", Map.of());
+        assertThat(((Map<?, ?>) response.get("result")).get("formatVersion")).isEqualTo(2);
+        assertThat(((Map<?, ?>) response.get("result")).containsKey("profile")).isFalse();
+        assertThat(service.register(id, Map.of())).containsEntry("status", "READY");
+        verify(client).inference(eq("POST"), eq("/api/models/trained/import"), argThat(body -> body.equals(genericMetadata())), eq(false));
+    }
+
+    @Test void invalidGenericProfilesCannotReachTheInferenceServer() {
+        var invalid = new java.util.ArrayList<Map<String, Object>>();
+        for (var changed : Map.<String, Object>ofEntries(
+                Map.entry("modelType", "qwen3"), Map.entry("loraLayers", 0), Map.entry("loraRank", 2.5),
+                Map.entry("loraScale", Double.NaN), Map.entry("loraDropout", 1), Map.entry("maxSequenceLength", 32769),
+                Map.entry("batchSize", 5), Map.entry("learningRate", 0.1), Map.entry("gradientCheckpointing", "true"),
+                Map.entry("loraKeys", List.of("mlp.up_proj", "mlp.up_proj")), Map.entry("exporter", "../../command"),
+                Map.entry("exportArchitecture", "qwen3"), Map.entry("path", "/private/model")).entrySet()) {
+            var profile = new LinkedHashMap<>(genericProfile()); profile.put(changed.getKey(), changed.getValue()); invalid.add(profile);
+        }
+        for (var profile : invalid) {
+            var supplied = new LinkedHashMap<>(genericMetadata()); supplied.put("profile", profile);
+            when(client.training("GET", buildPath(), Map.of())).thenReturn(Map.of("jobId", id.toString(), "status", "SUCCEEDED", "result", supplied));
+            assertThat(service.register(id, Map.of())).containsEntry("status", "UNAVAILABLE").containsEntry("errorCode", "MODEL_BUILD_METADATA_INVALID");
+        }
+        verify(client, never()).inference(anyString(), anyString(), anyMap(), anyBoolean());
+    }
+
+    @Test void malformedFormatTwoIdentityAndUnexpectedFieldsAreRejected() {
+        for (var change : Map.<String, Object>of("formatVersion", 2.0, "architecture", "qwen3", "modelType", "unsupported",
+                "command", "ignored-command").entrySet()) {
+            var supplied = new LinkedHashMap<>(genericMetadata()); supplied.put(change.getKey(), change.getValue());
+            when(client.training("GET", buildPath(), Map.of())).thenReturn(Map.of("jobId", id.toString(), "status", "SUCCEEDED", "result", supplied));
+            assertThat(service.register(id, Map.of())).containsEntry("errorCode", "MODEL_BUILD_METADATA_INVALID");
+        }
+        var supplied = new LinkedHashMap<>(genericMetadata()); supplied.remove("profile");
+        when(client.training("GET", buildPath(), Map.of())).thenReturn(Map.of("jobId", id.toString(), "status", "SUCCEEDED", "result", supplied));
+        assertThat(service.register(id, Map.of())).containsEntry("errorCode", "MODEL_BUILD_METADATA_INVALID");
+        verify(client, never()).inference(anyString(), anyString(), anyMap(), anyBoolean());
+    }
+
+    private Map<String, Object> genericProfile() {
+        return Map.ofEntries(Map.entry("modelType", "llama"), Map.entry("loraLayers", 4), Map.entry("loraRank", 8),
+                Map.entry("loraScale", 16.0), Map.entry("loraDropout", 0.0), Map.entry("loraKeys", List.of("self_attn.q_proj", "self_attn.v_proj")),
+                Map.entry("maxSequenceLength", 2048), Map.entry("batchSize", 1), Map.entry("learningRate", 1e-5),
+                Map.entry("gradientCheckpointing", true), Map.entry("exporter", "mlx-lm-hf-gguf-v1"), Map.entry("exportArchitecture", "llama"));
+    }
+
+    private Map<String, Object> genericMetadata() {
+        var value = new LinkedHashMap<>(metadata());
+        value.put("formatVersion", 2); value.put("modelType", "llama"); value.put("architecture", "llama"); value.put("profile", genericProfile());
+        return value;
     }
 
     private Map<String, Object> origin() {

@@ -15,12 +15,15 @@ import time
 from pathlib import Path
 
 from gpu_lease import GpuLease
-from model_delivery import PackageError, read_json
+from model_delivery import PackageError, model_identity, read_json
+from model_export_profiles import GENERIC_EXPORTER, export_capability
+from model_registry import MODEL_NAME, QWEN_SOURCE
 from shared_transfer import write_json_atomic
 from trained_model_delivery import (BASE_MODEL_REVISION, LLAMA_CPP_REVISION, MLX_LM_VERSION, checksum, create_package,
                                     identity, publish_package, validate_metadata, verify_package)
 from training_jobs import TrainingJobError, job_id, now
 from transfer_cases import private_directory
+from training_profiles import QWEN_PROFILE, validate_profile
 
 ACTIVE = {"PENDING", "FUSING", "CONVERTING", "QUANTIZING", "PUBLISHING"}
 TERMINAL = {"SUCCEEDED", "FAILED", "CANCELLED"}
@@ -41,6 +44,7 @@ ERRORS = {
     "MODEL_BUILD_DISK_SPACE": "새 모델 생성에는 작업 폴더에 180 GiB 이상의 여유 공간이 필요합니다.",
     "MODEL_BUILD_BUSY": "학습 또는 다른 모델 생성 작업이 진행 중입니다. 완료하거나 취소한 뒤 다시 시도하세요.",
     "MODEL_BUILD_SOURCE_INVALID": "학습 완료 상태와 어댑터·보고서·기반 모델 버전의 일치를 확인하세요.",
+    "MODEL_BUILD_UNSUPPORTED_PROFILE": "이 모델의 학습 결과에는 지원하는 GGUF 변환 프로필이 없습니다. 학습 결과는 보존했습니다.",
     "MODEL_BUILD_FAILED": "새 모델 병합·변환·양자화를 완료하지 못했습니다. 고정된 변환 도구와 모델 호환성을 확인하세요.",
     "MODEL_BUILD_PUBLISH_FAILED": "새 모델 패키지의 서명 검사 또는 공유 폴더 게시를 완료하지 못했습니다.",
     "MODEL_BUILD_TIMEOUT": "새 모델 생성 제한 시간을 초과해 실행 프로세스를 중단했습니다.",
@@ -140,14 +144,52 @@ class ModelBuildStore:
     def _source(self, identifier):
         try:
             source = self.jobs.model_build_source(identifier)
-            if source.get("target", {}).get("revision") != BASE_MODEL_REVISION:
+            source["profile"] = validate_profile(source.get("profile", QWEN_PROFILE))
+            target = source.get("target", {})
+            model_identity({"modelId": target.get("baseModel"), "revision": target.get("revision")})
+            if not isinstance(target.get("sourceModel"), str) or not MODEL_NAME.fullmatch(target["sourceModel"]):
                 raise ModelBuildError("MODEL_BUILD_SOURCE_INVALID")
+            if (source["profile"].get("exporter") == "qwen-gguf-v1"
+                    and (target["sourceModel"] != QWEN_SOURCE or not export_capability(source["profile"],
+                         base_model=target.get("baseModel"), revision=target.get("revision"))["supported"])):
+                raise ModelBuildError("MODEL_BUILD_SOURCE_INVALID")
+            self._lineage(source)
             return source
+        except ModelBuildError:
+            raise
         except TrainingJobError as error:
             raise ModelBuildError("NOT_FOUND" if error.code == "NOT_FOUND" else "MODEL_BUILD_SOURCE_INVALID",
                                   404 if error.code == "NOT_FOUND" else 409) from None
         except (PackageError, OSError, ValueError, TypeError):
             raise ModelBuildError("MODEL_BUILD_SOURCE_INVALID") from None
+
+    @staticmethod
+    def _export_reason(source):
+        target = source["target"]
+        result = export_capability(source["profile"], base_model=target.get("baseModel"), revision=target.get("revision"))
+        return None if result["supported"] else "MODEL_BUILD_UNSUPPORTED_PROFILE"
+
+    @staticmethod
+    def _lineage(source):
+        """파일 경로 없이 선택한 모델과 이어 학습한 부모 작업의 식별자만 보관한다."""
+        target = source["target"]
+        selected = target.get("selectedModel", target["sourceModel"])
+        if not isinstance(selected, str) or not MODEL_NAME.fullmatch(selected):
+            raise ModelBuildError("MODEL_BUILD_SOURCE_INVALID")
+        result = {"selectedModel": selected}
+        if target.get("resumeJobId") is not None:
+            if "selectedModel" not in target:
+                raise ModelBuildError("MODEL_BUILD_SOURCE_INVALID")
+            try:
+                result["parentJobId"] = job_id(target["resumeJobId"])
+            except TrainingJobError:
+                raise ModelBuildError("MODEL_BUILD_SOURCE_INVALID") from None
+            for key in ("parentAdapterSha256", "parentConfigSha256"):
+                value = target.get(key)
+                if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
+                    raise ModelBuildError("MODEL_BUILD_SOURCE_INVALID")
+                result[key] = value
+        return result
 
     def _configuration(self):
         """학습 서버의 로컬 고정 도구만 검사하며 다운로드나 모델 실행은 하지 않는다."""
@@ -202,8 +244,10 @@ class ModelBuildStore:
             record = self._read(path)
             if record and record["status"] == "SUCCEEDED":
                 return self._public(record)
-            self._source(identifier)
-            _, reason = self._configuration()
+            source = self._source(identifier)
+            reason = self._export_reason(source)
+            if reason is None:
+                _, reason = self._configuration()
             if not self._claim_owner() or self.unsafe_process or self.stopping.is_set():
                 reason = "MODEL_BUILD_BUSY"
             if reason is None:
@@ -228,6 +272,8 @@ class ModelBuildStore:
             if previous and previous["attempt"] >= 1000:
                 raise ModelBuildError("MODEL_BUILD_STATE_UNAVAILABLE", 503)
             source = self._source(identifier)
+            if self._export_reason(source):
+                raise ModelBuildError("MODEL_BUILD_UNSUPPORTED_PROFILE")
             configuration, reason = self._configuration()
             if reason:
                 raise ModelBuildError(reason, 503)
@@ -239,7 +285,7 @@ class ModelBuildStore:
             created = now()
             record = {"jobId": identifier, "status": "PENDING", "progress": 0, "createdAt": created, "updatedAt": created,
                       "attempt": (previous or {}).get("attempt", 0) + 1, "target": source["target"],
-                      "adapterSha256": source["adapterSha256"]}
+                      "adapterSha256": source["adapterSha256"], "profile": source["profile"]}
             try:
                 write_json_atomic(path, record)
                 self.cancel_requested.clear()
@@ -298,6 +344,11 @@ class ModelBuildStore:
                      "--adapter", str(source["adapter"]), "--output", str(directory / "export"),
                      "--llama-cpp", str(configuration["repository"]), "--converter-python", str(configuration["python"]),
                      "--quantizer-sha256", configuration["quantizerSha256"], "--progress", str(progress)]
+        if source["profile"].get("exporter") == GENERIC_EXPORTER:
+            binding = directory / "export-binding.json"
+            write_json_atomic(binding, {"baseModel": source["target"]["baseModel"],
+                "baseRevision": source["target"]["revision"], "profile": source["profile"]})
+            arguments += ["--binding-file", str(binding)]
         environment = {key: value for key, value in self.environment.items() if key in {"PATH", "HOME", "TMPDIR", "LANG", "LC_ALL"}}
         environment.update(HF_HUB_OFFLINE="1", TRANSFORMERS_OFFLINE="1", HF_DATASETS_OFFLINE="1", HF_HUB_DISABLE_TELEMETRY="1",
                            DOENAAI_MODEL_BUILD_LOCK_FDS=f"{self.owner},{self.gpu_lease.descriptor}")
@@ -332,16 +383,23 @@ class ModelBuildStore:
 
     def _same_source(self, record):
         source = self._source(record["jobId"])
-        if source["target"] != record["target"] or source["adapterSha256"] != record["adapterSha256"]:
+        if (source["target"] != record["target"] or source["adapterSha256"] != record["adapterSha256"]
+                or source["profile"] != record.get("profile", QWEN_PROFILE) or self._export_reason(source)):
             raise ModelBuildError("MODEL_BUILD_SOURCE_INVALID")
         return source
 
     def _existing_package(self, package, source, identifier):
         metadata = verify_package(package, self.secret, check=self._check_cancel)
         summary = read_json(package / "evaluation-summary.json")
+        lineage = self._lineage(source)
         if (metadata["jobId"] != identifier or metadata["baseModel"] != source["target"]["baseModel"]
                 or metadata["baseRevision"] != source["target"]["revision"]
-                or summary.get("sourceAdapterSha256") != source["adapterSha256"]):
+                or metadata["sourceModel"] != source["target"]["sourceModel"]
+                or metadata.get("profile", QWEN_PROFILE) != source["profile"]
+                or summary.get("sourceAdapterSha256") != source["adapterSha256"]
+                or ("selectedModel" in summary and summary["selectedModel"] != lineage["selectedModel"])
+                or (source["target"].get("resumeJobId") is not None
+                    and any(summary.get(key) != value for key, value in lineage.items()))):
             raise ModelBuildError("MODEL_BUILD_SOURCE_INVALID")
         return metadata
 
@@ -388,14 +446,19 @@ class ModelBuildStore:
                 report = read_json(directory / "export/export_report.json")
                 artifact = directory / "export/model.gguf"
                 actual, size = checksum(artifact, check=self._check_cancel)
-                if (report != {"status": "complete", "artifactSha256": actual, "artifactSize": size,
-                               "quantization": "Q4_K_M", "architecture": "qwen35",
-                               "toolchain": {"mlxLmVersion": MLX_LM_VERSION, "llamaCppRevision": LLAMA_CPP_REVISION}}):
+                expected = {"status": "complete", "artifactSha256": actual, "artifactSize": size,
+                            "quantization": "Q4_K_M", "architecture": source["profile"]["exportArchitecture"],
+                            "toolchain": {"mlxLmVersion": MLX_LM_VERSION, "llamaCppRevision": LLAMA_CPP_REVISION}}
+                generic = source["profile"].get("exporter") == GENERIC_EXPORTER
+                if generic:
+                    expected.update(exporter=GENERIC_EXPORTER, modelType=source["profile"]["modelType"], profile=source["profile"])
+                if report != expected:
                     raise ModelBuildError("MODEL_BUILD_FAILED")
-                summary = {**source["summary"], "sourceAdapterSha256": source["adapterSha256"],
+                summary = {**source["summary"], **self._lineage(source), "sourceAdapterSha256": source["adapterSha256"],
                            "notice": "학습 결과를 반영한 새 모델입니다. 답변 품질 평가와 운영 적용 승인은 별도로 진행해야 합니다."}
                 result = create_package(artifact, summary, package, identifier,
-                    {"modelId": source["target"]["baseModel"], "revision": source["target"]["revision"]}, self.secret, check=self._check_cancel)
+                    {"modelId": source["target"]["baseModel"], "revision": source["target"]["revision"]}, self.secret,
+                    check=self._check_cancel, **({"source_model": source["target"]["sourceModel"], "profile": source["profile"]} if generic else {}))
             self._check_cancel()
             phase = "PUBLISHING"
             self._phase(identifier, "PUBLISHING", 95)
