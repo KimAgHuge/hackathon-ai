@@ -103,8 +103,9 @@ Mac Studio/Ollama 배포에는 모델별 변환·호환성 검증이 추가로 �
 평가된 모델도 SSH 직접 전송 대신 공유 NAS 역할의 iCloud Drive에 게시하고,
 AI 분석/추론 서버가 가져와 검증한 뒤 적용하는 방향을 채택했습니다.
 [모델 배포 방침](MODEL_DELIVERY.md)에 중단 시 재시도, 배포 승인, 기존 모델 유지와
-되돌리기 기준을 정리했습니다. 아래 `model_delivery.py`로 시험 어댑터의 패키지 준비·게시·수동 검증은
-실행할 수 있으며, 자동 가져오기·Ollama 등록·운영 전환은 아직 구현하지 않았습니다.
+되돌리기 기준을 정리했습니다. 아래 `model_delivery.py`로 시험 어댑터의 패키지를 준비·게시·검증합니다.
+완성 GGUF 모델의 가져오기·Ollama 등록·운영 전환은 화면에서 단계마다 명시적으로 요청합니다.
+자세한 조건은 [완성 모델 생성 안내](MODEL_EXPORT.md)를 따릅니다.
 
 `export_dataset.py`는 승인된 로컬 사례를 검사해 JSONL로 변환합니다.
 승인 화면의 자동 전달을 사용할 경우 AI 학습 서버에서 `receiver_service.py`를 실행하면
@@ -147,8 +148,8 @@ training/.venv/bin/python training/receiver_service.py --host 0.0.0.0 --port 801
 
 ## 웹 요청으로 제한된 시험 학습 실행
 
-수신 서버의 `training/.env`에 `DOENAAI_TRAINING_MODEL_DIR`을 설정하면 검증된 로컬
-`qwen3_5` MLX 모델과 학습 환경을 확인한 뒤 작업 API를 엽니다. 빈 설정이나 호환되지 않는
+수신 서버의 `training/.env`에 기존 Qwen용 `DOENAAI_TRAINING_MODEL_DIR` 또는 모델별
+`DOENAAI_TRAINING_MODELS_FILE`을 설정하면 로컬 MLX 모델·학습 프로필·환경을 확인한 뒤 작업 API를 엽니다. 빈 설정이나 호환되지 않는
 환경에서는 기존 자료 수신은 계속하고 `trainingExecution=false`와 한국어 이유를 반환합니다.
 Mac Studio의 추론 모델 경로가 아니라 **맥북 학습 서버의 로컬 모델 절대 경로**입니다.
 설정 반영에는 수신 서비스 재시작이 필요하며 이 문서의 변경만으로 실행 중 서버가 바뀌지는 않습니다.
@@ -159,7 +160,7 @@ Mac Studio의 추론 모델 경로가 아니라 **맥북 학습 서버의 로컬
 | 요청 | 결과 |
 |---|---|
 | `GET /api/training/capabilities` | 기존 검증 기능과 `trainingExecution`, `trainingExecutionReason` |
-| `POST /api/training/jobs` | `{jobId: UUID, iterations: 1부터 20까지의 정수}`만 받고 202로 접수 |
+| `POST /api/training/jobs` | `jobId`, `iterations` 1~20, 선택한 `model`, 조회한 대상의 `digest`를 받고 202로 접수 |
 | `GET /api/training/jobs` | 최근 100개 작업과 `limit`, `truncated` |
 | `GET /api/training/jobs/{UUID}` | 상태·진행률·시각·고정 안내·허용한 측정값만 반환 |
 | `POST /api/training/jobs/{UUID}/cancel` | 빈 객체 `{}`로 취소 요청, 실제 종료는 상태 조회로 확인 |
@@ -173,11 +174,14 @@ Mac Studio의 추론 모델 경로가 아니라 **맥북 학습 서버의 로컬
 만듭니다. 사용자 경로·명령·셸을 받지 않습니다. 최대 100개 파일·32 MiB를 준비하며, 원본은
 변경하지 않습니다. `training_job_prepare.py`가 `trial_dataset.py`의 규칙으로 원 요구사항을
 세 분할에 묶습니다. 길이를 확인해 서로 다른 짧은 두 그룹을 학습·검증에 두고 나머지는
-시험 분할로 보관합니다. 총 세 그룹과 18,000토큰 이내의 유효한 학습·검증 자료가 필요합니다.
+시험 분할로 보관합니다. 총 세 그룹과 프로필의 길이 상한 이내인 유효한 학습·검증 자료가 필요합니다.
+기존 Qwen 고정 시험의 상한은 18,000토큰입니다.
 긴 시험 자료는 근거나 정답을 자르지 않고 제외합니다. DB 단계 정답은 학습하지 않습니다.
 
-이후 고정된 `trial_train.py train`과 별도 `reload` 명령을 순서대로 실행합니다. 마지막 층
-MLP만 제한적으로 학습하며 모델을 다운로드하지 않습니다. 각 단계는 1시간 후 중단하고
+공통 `mlx-lora-v1` 프로필은 `mlx_lora_train.py train`과 별도 `reload` 명령을 실행합니다.
+기존 Qwen의 `qwen-mlp-trial-v1`은 `trial_train.py`로 마지막 층 MLP만 제한적으로 학습합니다.
+완료한 파생 모델을 선택하면 검증한 부모 어댑터를 읽고 새 작업 경로에 이어 학습합니다.
+모델은 자동 다운로드하지 않습니다. 각 단계는 1시간 후 중단하고
 취소 시 이 작업이 만든 프로세스 묶음만 종료합니다. 새 산출물은
 `training/outputs/web-jobs/{UUID}/`와 `training/adapters/trial-web-{UUID}/`에 보존합니다.
 
@@ -306,4 +310,6 @@ chat template과 prompt masking을 이용한 마지막 4개 층·rank 4의 QLoRA
 
 웹의 현재 사용 모델에 대응하는 로컬 MLX 기반 모델과 학습기 조회는
 [모델 호환성 설정](MODEL_COMPATIBILITY.md)을 따른다. 미등록 모델은 Qwen으로 대체하지 않는다.
-현재 실행 학습기는 기존 Qwen MLP 시험 범위이며 다른 구조의 학습은 아직 지원하지 않는다.
+공통 `mlx-lora-v1` 학습기와 모델별 프로필을 지원하며, 기존 Qwen MLP 시험기도 유지한다.
+작은 임의 Llama·EXAONE4의 4비트 CPU 학습·이어 학습·재로딩을 검증했다.
+실제 대형 모델은 가중치·토크나이저·대상 모듈·메모리와 업무 품질을 별도로 확인해야 한다.

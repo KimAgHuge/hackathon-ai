@@ -78,7 +78,39 @@ training/.venv/bin/python training/setup_model_export.py --check
 
 변환 도구의 추적 파일이 고정 버전과 다르거나 양자화 실행 파일의 해시가 설정과 다르면
 새 모델 생성을 막는다. 학습·모델 생성은 GPU 잠금을 공유하므로 동시에 실행하지 않는다.
-현재 확인한 Qwen 구조와 학습 기록에 맞춘 경로이며 다른 모델에 그대로 적용하지 않는다.
+위 기반 모델과 버전은 기존 Qwen 전용 변환 경로의 조건이다. 공통 변환의 별도 조건은 아래를 따른다.
+
+## 공통 학습 모델의 변환
+
+`mlx-lora-v1`로 학습할 때 `profile.exporter=mlx-lm-hf-gguf-v1`과
+`profile.exportArchitecture`를 명시하면 검토한 구조에 한해 완성 모델 생성을 허용한다.
+학습 가능 여부와 변환 가능 여부는 별개이며, 화면에 두 상태를 구분해 표시한다.
+
+| MLX `modelType` | GGUF `exportArchitecture` |
+| --- | --- |
+| `llama`, `mistral` | `llama` |
+| `qwen2` | `qwen2` |
+| `qwen3` | `qwen3` |
+| `exaone4` | `exaone4` |
+
+LoRA 대상은 검토한 선형 모듈 `self_attn.q_proj`, `k_proj`, `v_proj`, `o_proj`와
+`mlp.gate_proj`, `up_proj`, `down_proj`로 제한한다. 각 짧은 이름에도 앞의 모듈 경로를 붙여 지정한다.
+다른 구조나 대상이면 `MODEL_BUILD_UNSUPPORTED_PROFILE`로 생성을 차단하고 학습 결과는 보존한다.
+이전 EXAONE 구조나 혼합 전문가 모델을 이 표의 구조로 임의 지정하면 안 된다.
+
+공통 변환은 공식 MLX-LM의 병합·양자화 복원 기능으로 새 HF 가중치를 만들고 전체 텐서·설정·구조를
+검사한 뒤, 고정 `llama.cpp`로 GGUF 변환과 `Q4_K_M` 양자화를 실행한다.
+이어 학습의 어댑터에는 부모 학습 내용이 들어 있으므로 부모를 다시 병합하지 않는다.
+기존 Qwen의 메모리 절감 전용 변환과 형식 1 서명은 그대로 유지한다.
+
+공통 패키지는 형식 2로 기반 ID·고정 버전·모델 구조·전체 프로필·실제 GGUF 구조를 대조한다.
+두 형식 모두 `model-deliveries/trained-web-<학습 작업 UUID>/model.gguf`에 게시하며
+고정 이름의 평가 요약·명세·완료 표시를 함께 쓴다. 선택 모델·부모 작업·부모 파일 해시는 새 평가 요약에 기록한다.
+파일명을 사람이 바꾸는 대신 작업 ID로 결과를 구분하며 같은 위치의 다른 파일을 덮어쓰지 않는다.
+
+새 경로의 변환·서명·수신·엔진 요청은 합성 자료와 대역을 이용한 회귀 검사로 확인했다.
+실제 대형 EXAONE4 등의 전체 변환과 Mac Studio 등록 성공을 검증한 것은 아니다.
+실제 분석 서버에 접근할 수 있을 때 같은 최신 코드를 반영하고 파일 수신·등록·JSON 응답을 확인한다.
 
 ## 세 설정값 적용과 학습 서버 재시작
 
