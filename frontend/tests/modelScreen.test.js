@@ -529,3 +529,40 @@ test('학습 생성 모델과 기반 버전이 없는 이전 서버 응답에서
         screen.cleanup()
     }
 })
+
+test('학습 시작 확인 중 기반 버전이 바뀌면 이전 확인을 해제한다', async () => {
+    let version = 'a'
+    const screen = await mountScreen({
+        getModelRegistry: async () => registry,
+        getModelRuntime: async () => runtime,
+        getModelTraining: async () => ({
+            requestedModel: 'qwen3.8:27b',
+            dataset: {
+                target: { sourceModel: 'qwen3.8:27b', baseModel: 'mlx-community/Qwen3.8-27B-4bit', revision: version.repeat(40), digest: version.repeat(64) },
+                samples: [],
+                total: 0,
+            },
+            capabilities: { trainingExecution: true },
+            jobs: [],
+        }),
+    })
+    try {
+        screen.button('학습 작업').props.onClick()
+        await screen.settle()
+        screen.button('학습 시작').props.onClick()
+        await screen.settle()
+        screen
+            .all()
+            .find((node) => node.type === 'input' && node.props.type === 'checkbox')
+            .props['onUpdate:modelValue'](true)
+        await screen.settle()
+        assert.equal(screen.button('확인 후 학습 시작').props.disabled, false)
+        version = 'b'
+        screen.button('작업 새로고침').props.onClick()
+        await screen.settle()
+        assert.equal(screen.button('확인 후 학습 시작').props.disabled, true)
+        assert.match(screen.text(), /기반 버전이 바뀌었습니다/)
+    } finally {
+        screen.cleanup()
+    }
+})

@@ -18,6 +18,7 @@ from uuid import UUID
 
 from dataset_contract import DatasetError, digest, read_jsonl, validate_case
 from shared_transfer import HASH, write_json_atomic
+from model_registry import RegistryError, resolve, QWEN_SOURCE, QWEN_BASE, QWEN_TRAINER
 from transfer_cases import TransferError, content_hash, private_directory
 
 ROOT = Path(__file__).resolve().parent
@@ -83,10 +84,11 @@ class TrainingJobStore:
     """단일 작업 잠금과 영속 기록으로 중복 실행·재시작 뒤의 자동 재학습을 막는다."""
 
     def __init__(self, receiver, model_dir=None, *, state_dir=None, work_root=None, root=ROOT,
-                 popen_factory=None, stage_timeout=3600):
+                 popen_factory=None, stage_timeout=3600, models_file=None):
         self.receiver = receiver
         self.root = Path(root)
         self.model_dir = Path(model_dir) if model_dir else None
+        self.models_file = Path(models_file) if models_file else None
         self.state_dir = private_directory(state_dir or self.root / "datasets/training-jobs")
         self.work_root = private_directory(work_root or self.root / "outputs/web-jobs")
         self.popen_factory = popen_factory or subprocess.Popen
@@ -118,11 +120,16 @@ class TrainingJobStore:
                     self._set(record, "FAILED", record["progress"], "JOB_INTERRUPTED")
             return True
 
-    def _configuration_error(self):
+    def _configuration_error(self, source_model=None):
         """설정한 로컬 모델만 확인하며 모델 다운로드와 GPU 연산은 하지 않는다."""
-        model = self.model_dir
-        if model is None:
-            return "DOENAAI_TRAINING_MODEL_DIR에 학습 서버의 로컬 모델 경로를 설정하세요."
+        try:
+            binding = self._binding(source_model)
+        except (RegistryError, OSError, ValueError, TypeError):
+            return "선택한 분석 모델에 대응하는 로컬 MLX 모델 등록과 다운로드 명세를 확인해 주세요."
+        if (binding.target["trainer"] != QWEN_TRAINER or binding.target["baseModel"] != QWEN_BASE
+                or binding.target["sourceModel"] != QWEN_SOURCE):
+            return "등록된 모델의 학습기가 아직 지원되지 않습니다. 현재 검증된 Qwen MLP 시험 학습기만 실행할 수 있습니다."
+        model = binding.directory
         if not model.is_absolute() or model.is_symlink() or not model.is_dir():
             return "학습 모델 경로는 심볼릭 링크가 아닌 로컬 폴더의 절대 경로여야 합니다."
         try:
@@ -145,21 +152,20 @@ class TrainingJobStore:
             return "학습 모델 설정과 실행 환경을 확인하지 못했습니다."
         return None
 
-    def training_target(self):
-        """검증한 기반 모델과 분석 모델의 명시적 대응만 허용한다."""
+    def _binding(self, source_model=None):
+        """전역 선택값을 바꾸지 않고 요청별 로컬 모델 대응을 읽는다."""
+        return resolve(source_model if source_model is not None else QWEN_SOURCE, self.model_dir, self.models_file)
+
+    def training_target(self, source_model=None):
+        """등록한 기반 모델과 고정 버전을 반환하고 확인 실패 때는 대체 모델을 쓰지 않는다."""
         try:
-            manifest = json.loads((self.model_dir / "download_manifest.json").read_text())
-            if (manifest.get("modelId") != "mlx-community/Qwen3.8-27B-4bit"
-                    or not re.fullmatch(r"[0-9a-f]{40}", manifest.get("revision", ""))):
-                return None
-            target = {"sourceModel": "qwen3.8:27b", "baseModel": manifest["modelId"], "revision": manifest["revision"]}
-            return {**target, "digest": digest(target)}
-        except (OSError, ValueError, TypeError, AttributeError):
+            return self._binding(source_model).target
+        except (RegistryError, OSError, ValueError, TypeError, AttributeError):
             return None
 
-    def dataset_catalog(self):
+    def dataset_catalog(self, source_model=None):
         """같은 생성 모델의 검증 자료만 표시하고 원문과 다른 모델의 사례는 노출하지 않는다."""
-        target = self.training_target()
+        target = self.training_target(source_model)
         samples = []
         excluded = 0
         total_bytes = 0
@@ -193,18 +199,23 @@ class TrainingJobStore:
         return {"target": target, "samples": samples[:100], "total": len(samples), "excluded": excluded,
                 "truncated": len(samples) > 100}
 
-    def capabilities(self, include_dataset=True):
+    def capabilities(self, include_dataset=True, source_model=None):
         """실행 기능 제공 여부와 불가 이유만 반환하고 전체 경로는 공개하지 않는다."""
         with self.lock:
-            configured = self._configuration_error()
-            if not self.training_target():
+            configured = self._configuration_error(source_model)
+            if not self.training_target(source_model):
                 configured = configured or "학습 기반 모델과 분석 생성 모델의 대응 정보를 확인할 수 없습니다."
             owner = self._claim_owner()
             reason = configured or ("이전 작업 프로세스의 종료를 확인하지 못했습니다." if self.unsafe_process else None) or (
                 None if owner else "다른 학습 서버 프로세스가 작업 잠금을 보유하고 있습니다.")
+            target = self.training_target(source_model)
+            reason_code = "MODEL_NOT_REGISTERED" if target is None else (
+                "TRAINER_UNSUPPORTED" if target["trainer"] != QWEN_TRAINER or target["baseModel"] != QWEN_BASE or target["sourceModel"] != QWEN_SOURCE
+                else "TRAINING_UNAVAILABLE" if reason else "READY")
             return {"trainingExecution": reason is None and not self.stopping.is_set(),
                     "trainingExecutionReason": reason or "일반 분석의 제한된 시험 학습만 실행하며 운영 모델은 바꾸지 않습니다.",
-                    "dataset": self.dataset_catalog() if include_dataset else {}}
+                    "dataset": self.dataset_catalog(source_model) if include_dataset else {},
+                    "requestedModel": source_model or QWEN_SOURCE, "trainingReasonCode": reason_code}
 
     def _path(self, identifier):
         return self.state_dir / f"{job_id(identifier)}.json"
@@ -280,10 +291,10 @@ class TrainingJobStore:
                         or previous["target"]["sourceModel"] != body["model"] or previous["target"]["digest"] != body["digest"]):
                     raise TrainingJobError("JOB_CONFLICT")
                 return self._public(previous)
-            target = self.training_target()
+            target = self.training_target(body["model"])
             if not target or body["model"] != target["sourceModel"] or body["digest"] != target["digest"]:
                 raise TrainingJobError("TRAINING_UNAVAILABLE")
-            if not self.capabilities(include_dataset=False)["trainingExecution"]:
+            if not self.capabilities(include_dataset=False, source_model=body["model"])["trainingExecution"]:
                 raise TrainingJobError("TRAINING_UNAVAILABLE")
             if self.worker and self.worker.is_alive():
                 raise TrainingJobError("TRAINING_BUSY")
@@ -293,7 +304,7 @@ class TrainingJobStore:
                     raise TrainingJobError("TRAINING_BUSY")
             created = now()
             record = {"id": identifier, "status": "PENDING", "progress": 0, "iterations": body["iterations"],
-                      "createdAt": created, "updatedAt": created, "target": self.training_target()}
+                      "createdAt": created, "updatedAt": created, "target": target}
             write_json_atomic(self._path(identifier), record)
             self.cancel_requested.clear()
             self.worker = threading.Thread(target=self._worker_entry, args=(identifier,), name="training-job", daemon=True)
@@ -322,7 +333,7 @@ class TrainingJobStore:
         if self.stopping.is_set() or self.cancel_requested.is_set():
             raise InterruptedError()
 
-    def _snapshot(self, directory):
+    def _snapshot(self, directory, source_model=None):
         """수신 완료 기록과 이름·크기·해시를 다시 대조한 사본만 새 작업 폴더에 둔다."""
         sources = private_directory(directory / "incoming")
         records, total, count = [], 0, 0
@@ -349,7 +360,7 @@ class TrainingJobStore:
                     raise TrainingJobError("DATASET_INVALID")
                 for value in values:
                     validate_case(value)
-                target = self.training_target()
+                target = self.training_target(source_model)
                 matched = [value for value in values if target and value.get("sourceModel") == target["sourceModel"]]
                 if not matched:
                     continue
@@ -438,27 +449,40 @@ class TrainingJobStore:
     def _run(self, identifier):
         try:
             record = self._read(self._path(identifier))
-            if not record.get("target") or record["target"] != self.training_target():
+            source_model = record.get("target", {}).get("sourceModel")
+            if not source_model:
                 raise TrainingJobError("TRAINING_UNAVAILABLE")
+            binding = self._binding(source_model)
+            if record["target"] != binding.target or self._configuration_error(source_model):
+                raise TrainingJobError("TRAINING_UNAVAILABLE")
+            model_dir = binding.directory
+            pinned_target = record["target"]
+
+            def run_stage(arguments, code, result_path=None):
+                # 등록 파일이 실행 중 바뀌어도 다른 기반 모델로 다음 단계를 실행하지 않는다.
+                if self.training_target(source_model) != pinned_target:
+                    raise TrainingJobError("TRAINING_UNAVAILABLE")
+                self._execute(arguments, code, result_path)
+
             self._phase(identifier, "PREPARING", 10)
             directory = self.work_root / identifier
             directory.mkdir(mode=0o700, exist_ok=False)
-            sources = self._snapshot(directory)
+            sources = self._snapshot(directory, source_model)
             dataset = directory / "dataset"
             adapter = self.root / "adapters" / f"trial-web-{identifier}"
-            self._execute([self.root / "training_job_prepare.py", "--input-dir", sources, "--output", dataset,
-                           "--model", self.model_dir], "PREPARATION_FAILED", directory / "preparation-result.json")
+            run_stage([self.root / "training_job_prepare.py", "--input-dir", sources, "--output", dataset,
+                           "--model", model_dir], "PREPARATION_FAILED", directory / "preparation-result.json")
             manifest = json.loads((dataset / "manifest.json").read_text())
             counts = manifest.get("stageSampleCounts", {})
             if any(type(counts.get(split)) is not int or counts[split] < 1 for split in ("train", "valid")):
                 raise TrainingJobError("DATASET_TOO_SMALL")
             self._phase(identifier, "TRAINING", 30)
             record = self._read(self._path(identifier))
-            self._execute([self.root / "trial_train.py", "train", "--dataset", dataset, "--adapter", adapter,
-                           "--model", self.model_dir, "--iters", record["iterations"], "--layers", "1"], "TRAINING_FAILED")
+            run_stage([self.root / "trial_train.py", "train", "--dataset", dataset, "--adapter", adapter,
+                           "--model", model_dir, "--iters", record["iterations"], "--layers", "1"], "TRAINING_FAILED")
             self._phase(identifier, "VERIFYING", 85)
-            self._execute([self.root / "trial_train.py", "reload", "--dataset", dataset, "--adapter", adapter,
-                           "--model", self.model_dir], "VERIFICATION_FAILED")
+            run_stage([self.root / "trial_train.py", "reload", "--dataset", dataset, "--adapter", adapter,
+                           "--model", model_dir], "VERIFICATION_FAILED")
             report = json.loads((dataset / "training-report.json").read_text())
             reload = json.loads((dataset / "reload-report.json").read_text())
             if report.get("status") != "complete" or reload.get("status") != "complete" or report.get("protectedFilesUnchanged") is not True:

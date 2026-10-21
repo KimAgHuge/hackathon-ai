@@ -58,6 +58,20 @@ class TrainingJobApiTests(unittest.TestCase):
                 self.assertEqual(self.request(method, path, value, authorized=False)[0], 401)
         self.assertEqual(self.jobs.mock_calls, [])
 
+    def test_capabilities_select_model_from_authenticated_query(self):
+        path = CAPABILITIES_PATH + "?model=ingu627%2Fexaone4.0%3A32b"
+        self.assertEqual(self.request("GET", path)[0], 200)
+        self.jobs.capabilities.assert_called_once_with(source_model="ingu627/exaone4.0:32b")
+        self.jobs.reset_mock()
+        self.assertEqual(self.request("GET", path, authorized=False)[0], 401)
+        self.jobs.capabilities.assert_not_called()
+
+    def test_capabilities_reject_ambiguous_or_path_like_model_parameters(self):
+        for query in ("model=", "model=a&model=b", "model=../private", "model=qwen&path=private"):
+            with self.subTest(query=query):
+                self.assertEqual(self.request("GET", CAPABILITIES_PATH + "?" + query)[0], 422)
+        self.jobs.capabilities.assert_not_called()
+
     def test_submit_returns_accepted_job_and_preserves_request_body(self):
         value = {"jobId": self.job_id, "iterations": 3}
         self.assertEqual(self.request("POST", "/api/training/jobs", value), (202, self.job))

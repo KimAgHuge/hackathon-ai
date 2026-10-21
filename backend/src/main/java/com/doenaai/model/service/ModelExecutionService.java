@@ -73,6 +73,9 @@ public class ModelExecutionService {
             default -> throw invalid();
         }
         try {
+            // 추론 선택이 바뀐 뒤 이전 화면에서 보낸 학습 요청은 실행하지 않는다.
+            if (action.equals("TRAINING_START") && !Objects.equals(input.model(), currentInferenceModel()))
+                return publicValue(repository.record(id, created ? "FAILED" : "UNKNOWN", "TRAINING_MODEL_CHANGED", Map.of()));
             var remote = training ? client.training("POST", path, body) : client.inference("POST", path, body, action.equals("MODEL_PROBE"));
             var state = snapshot(remote);
             String status = state.get("status") instanceof String value ? value : "UNKNOWN";
@@ -103,12 +106,20 @@ public class ModelExecutionService {
         boolean executable = false;
         String reason = "AI 학습 서버 주소·전송 키·실행 설정과 서버 업데이트를 확인해 주세요.";
         Map<String, Object> dataset = Map.of();
+        String requestedModel = "";
         Map<String, Map<String, Object>> remoteJobs = new HashMap<>();
         try {
-            var capabilities = client.training("GET", "/api/training/capabilities", Map.of());
+            requestedModel = currentInferenceModel();
+            var capabilities = client.training("GET", "/api/training/capabilities?model="
+                    + java.net.URLEncoder.encode(requestedModel, java.nio.charset.StandardCharsets.UTF_8), Map.of());
             dataset = safeDataset(capabilities.get("dataset"));
+            if (dataset.get("target") instanceof Map<?, ?> selected && !requestedModel.equals(selected.get("sourceModel"))) dataset = Map.of();
             executable = Boolean.TRUE.equals(capabilities.get("trainingExecution")) && dataset.containsKey("target");
             reason = executable ? "검증된 수신 자료로 짧은 시험 학습을 시작할 수 있습니다. 운영 모델은 자동 변경되지 않습니다."
+                    : "MODEL_NOT_REGISTERED".equals(capabilities.get("trainingReasonCode"))
+                    ? "현재 사용 모델에 대응하는 로컬 MLX 모델이 학습 서버에 등록되지 않았습니다. 다른 모델로 대신 학습하지 않습니다."
+                    : "TRAINER_UNSUPPORTED".equals(capabilities.get("trainingReasonCode"))
+                    ? "대응하는 MLX 모델은 등록됐지만 이 모델의 학습기는 아직 지원되지 않습니다."
                     : "AI 학습 서버의 모델 경로·호환성·실행 설정을 확인해 주세요.";
             var listing = client.training("GET", "/api/training/jobs", Map.of());
             if (listing.get("jobs") instanceof List<?> rows) for (Object row : rows) {
@@ -132,8 +143,16 @@ public class ModelExecutionService {
                     && Objects.equals(selected.get("sourceModel"), recorded.get("sourceModel")))
                 jobs.add(job);
         }
-        return Map.of("capabilities", Map.of("trainingExecution", executable, "reason", reason), "dataset", dataset, "jobs", jobs,
+        return Map.of("capabilities", Map.of("trainingExecution", executable, "reason", reason), "dataset", dataset, "requestedModel", requestedModel, "jobs", jobs,
                 "limit", 100, "truncated", rows.size() > 100);
+    }
+
+    /** 화면의 임의 모델 대신 추론 서버가 현재 선택한 모델을 학습 조회 기준으로 사용한다. */
+    private String currentInferenceModel() {
+        var status = client.inference("GET", "/api/models/installed", Map.of(), false);
+        if (status == null || !(status.get("model") instanceof String model) || !validModel(model))
+            throw new ModelExecutionClient.RemoteFailure("MODEL_SELECTION_UNAVAILABLE", false, 503);
+        return model;
     }
 
     /** 모델 식별자와 비식별 사례 식별자만 화면에 전달한다. 원문과 로컬 경로는 전달하지 않는다. */
@@ -279,6 +298,9 @@ public class ModelExecutionService {
     }
 
     private static String message(String status, String code) {
+        if ("TRAINING_MODEL_CHANGED".equals(code)) return "UNKNOWN".equals(status)
+                ? "현재 사용 모델이 바뀌어 기존 요청을 재전송하지 않았습니다. 실제 실행 여부는 실행 이력에서 계속 확인해 주세요."
+                : "현재 사용 모델이 바뀌어 학습을 시작하지 않았습니다. 학습 작업을 새로고침한 뒤 대상 모델을 확인해 주세요.";
         if ("UNCONFIGURED".equals(code)) return "대상 서버 주소와 인증 설정을 확인해 주세요. 원격 실행을 시작하지 않았습니다.";
         return switch (status) {
             case "PASSED" -> "짧은 JSON 응답 시험을 통과했습니다. 실제 업무 정확도나 긴 입력 처리를 보장하지는 않습니다.";

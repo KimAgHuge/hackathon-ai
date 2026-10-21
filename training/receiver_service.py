@@ -2,6 +2,7 @@
 
 import argparse
 import json
+from urllib.parse import urlsplit, parse_qs
 import logging
 import os
 import re
@@ -245,12 +246,17 @@ def make_handler(store, secret, jobs=None):
                 except Exception as error:
                     self._job_error(error)
                 return
-            if self.path == CAPABILITIES_PATH:
+            if urlsplit(self.path).path == CAPABILITIES_PATH:
                 if not self._authorized(b""):
                     self._send(401, {"code": "UNAUTHORIZED"})
                     return
                 try:
-                    execution = jobs.capabilities() if jobs else {
+                    query = parse_qs(urlsplit(self.path).query, keep_blank_values=True)
+                    if query and (set(query) != {"model"} or len(query["model"]) != 1
+                                  or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/@+\-]{0,199}", query["model"][0])):
+                        self._send(422, {"code": "INVALID_JOB_REQUEST", "message": "조회할 모델 식별자를 확인하세요."})
+                        return
+                    execution = (jobs.capabilities(source_model=query["model"][0]) if query else jobs.capabilities()) if jobs else {
                         "trainingExecution": False, "trainingExecutionReason": "학습 실행 설정이 준비되지 않았습니다."}
                     self._send(200, {"validationVersion": 2, "features": list(VALIDATION_FEATURES), **execution})
                 except Exception as error:
@@ -280,7 +286,8 @@ def make_handler(store, secret, jobs=None):
 
 def serve(store, secret, host, port):
     """수신 API와 주기적 재확인을 함께 실행한다."""
-    jobs = TrainingJobStore(store, os.environ.get("DOENAAI_TRAINING_MODEL_DIR"))
+    jobs = TrainingJobStore(store, os.environ.get("DOENAAI_TRAINING_MODEL_DIR"),
+                            models_file=os.environ.get("DOENAAI_TRAINING_MODELS_FILE"))
     try:
         server = ThreadingHTTPServer((host, port), make_handler(store, secret, jobs))
     except Exception:

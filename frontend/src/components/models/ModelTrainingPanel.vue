@@ -73,6 +73,15 @@ watch(
         else monitor.pause()
     }
 )
+watch(
+    () => trainingTarget.value?.digest,
+    (current, previous) => {
+        if (current !== previous && modal.value === 'start' && !pending.value) {
+            confirmed.value = false
+            validation.value = '학습 대상 모델 또는 기반 버전이 바뀌었습니다. 변경된 대상을 다시 확인해 주세요.'
+        }
+    }
+)
 const openStart = () => {
     if (!canStart.value || busy.value) return
     modal.value = 'start'
@@ -175,6 +184,8 @@ defineExpose({ openStart, refresh })
         </div>
         <section class="mb-4 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
             <h3 class="text-sm font-bold">학습 대상과 사용 자료</h3>
+            <p v-if="state?.requestedModel" class="mt-2 break-all text-xs text-slate-500 dark:text-slate-400">현재 사용 모델 · {{ state.requestedModel }}</p>
+            <p class="mt-1 text-xs leading-6 text-slate-500 dark:text-slate-400">현재 사용 모델에 대응하는 학습 서버의 MLX 기반 모델을 자동으로 확인합니다.</p>
             <template v-if="trainingTarget">
                 <p class="mt-3 break-all text-sm font-bold">{{ trainingTarget.sourceModel }} → {{ trainingTarget.baseModel }}</p>
                 <p class="mt-1 break-all text-xs text-slate-500 dark:text-slate-400">기반 모델 버전 · {{ trainingTarget.revision }}</p>
@@ -192,7 +203,7 @@ defineExpose({ openStart, refresh })
                     다른 모델 또는 생성 모델 미확인 자료 {{ state.dataset.excluded }}건은 제외했습니다.
                 </p>
             </template>
-            <p v-else class="mt-2 text-sm text-slate-500">학습 대상 모델을 확인하지 못했습니다. 서버 연결과 최신 학습 서버 설정을 확인해 주세요.</p>
+            <p v-else class="mt-2 text-sm text-slate-500">호환되는 학습 대상 모델을 확인하지 못했습니다. 모델 대응 등록과 서버 연결을 확인해 주세요.</p>
         </section>
         <p v-if="state?.capabilities?.reason" class="mb-4 rounded-lg bg-slate-100 p-3 text-sm leading-6 dark:bg-slate-800">{{ state.capabilities.reason }}</p>
         <p v-if="hasActive" class="mb-4 text-xs text-blue-700 dark:text-blue-300">

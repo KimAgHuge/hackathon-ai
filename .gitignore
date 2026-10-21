@@ -72,6 +72,8 @@ htmlcov/
 /training/.python/
 /training/.cache/
 /training/models/
+# 장비별 로컬 모델 대응 경로는 예시 파일과 분리해 보관한다.
+/training/local-model-registry.json
 /training/datasets/
 /training/adapters/
 /ai-server/.analysis-checkpoints/

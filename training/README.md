@@ -299,3 +299,9 @@ chat template과 prompt masking을 이용한 마지막 4개 층·rank 4의 QLoRA
 시험 adapter는 `training/adapters/compatibility-only/`에 저장하고 운영에 배포하지 않습니다.
 상세 측정값은 `training/outputs/qwen-compatibility/`에 저장합니다.
 짧은 입력의 성공은 대규모 입력의 학습·모델 정확도·Ollama 배포 성공을 의미하지 않습니다.
+
+## 사용 모델에 맞는 학습 모델 연결
+
+웹의 현재 사용 모델에 대응하는 로컬 MLX 기반 모델과 학습기 조회는
+[모델 호환성 설정](MODEL_COMPATIBILITY.md)을 따른다. 미등록 모델은 Qwen으로 대체하지 않는다.
+현재 실행 학습기는 기존 Qwen MLP 시험 범위이며 다른 구조의 학습은 아직 지원하지 않는다.

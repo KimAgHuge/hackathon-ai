@@ -122,6 +122,32 @@ class TrainingWorkerTests(unittest.TestCase):
         execute.assert_not_called()
         self.assertEqual(self.store.get_job(job["id"])["errorCode"], "TRAINING_UNAVAILABLE")
 
+    def test_other_model_capability_query_does_not_change_an_accepted_job(self):
+        job = self.submit()
+        original_target = job["target"]
+        status = self.store.capabilities(source_model="gemma4:26b")
+        self.assertFalse(status["trainingExecution"])
+        self.assertEqual(status["trainingReasonCode"], "MODEL_NOT_REGISTERED")
+        self.assertIsNone(status["dataset"]["target"])
+        self.assertEqual(self.store.get_job(job["id"])["target"], original_target)
+        self.assertEqual(self.store.model_dir, self.root / "model")
+
+    def test_registered_but_unsupported_trainer_is_not_run_as_qwen(self):
+        other = self.root / "other-model"
+        other.mkdir()
+        write_json_atomic(other / "download_manifest.json", {"modelId": "local/other-base", "revision": "a" * 40})
+        registry = self.root / "registry.json"
+        write_json_atomic(registry, {"devstral:latest": {"directory": str(other), "baseModel": "local/other-base", "trainer": "unavailable"}})
+        self.store.models_file = registry
+        self.configuration.stop()
+        status = self.store.capabilities(source_model="devstral:latest")
+        self.assertFalse(status["trainingExecution"])
+        self.assertEqual(status["trainingReasonCode"], "TRAINER_UNSUPPORTED")
+        target = status["dataset"]["target"]
+        with self.assertRaises(TrainingJobError):
+            self.store.submit({"jobId": str(uuid4()), "iterations": 2, "model": "devstral:latest", "digest": target["digest"]})
+        self.assertEqual(self.store.list_jobs()["jobs"], [])
+
     def test_only_exact_id_and_bounded_integer_request_is_accepted(self):
         for value in ({"jobId": "../private", "iterations": 2}, {"jobId": str(uuid4()), "iterations": True},
                       {"jobId": str(uuid4()), "iterations": 0}, {"jobId": str(uuid4()), "iterations": 21},
@@ -187,7 +213,7 @@ class TrainingWorkerTests(unittest.TestCase):
         self.configuration.stop()
         self.store.model_dir = None
         self.assertFalse(self.store.capabilities()["trainingExecution"])
-        self.assertIn("DOENAAI_TRAINING_MODEL_DIR", self.store.capabilities()["trainingExecutionReason"])
+        self.assertEqual(self.store.capabilities()["trainingReasonCode"], "MODEL_NOT_REGISTERED")
         with self.assertRaises(TrainingJobError) as error:
             self.submit()
         self.assertEqual(error.exception.code, "TRAINING_UNAVAILABLE")

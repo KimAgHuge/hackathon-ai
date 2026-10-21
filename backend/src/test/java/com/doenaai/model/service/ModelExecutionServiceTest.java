@@ -24,6 +24,7 @@ class ModelExecutionServiceTest {
     @BeforeEach void setup() {
         when(client.targetKey(false)).thenReturn("inference-target");
         when(client.targetKey(true)).thenReturn("training-target");
+        when(client.inference("GET", "/api/models/installed", Map.of(), false)).thenReturn(Map.of("model", "qwen3.8:27b"));
         when(repository.create(any(), anyString(), any(), anyString(), anyString(), anyMap())).thenAnswer(call -> {
             UUID key = call.getArgument(0);
             if (records.containsKey(key)) return false;
@@ -137,7 +138,7 @@ class ModelExecutionServiceTest {
     @Test void trainingCatalogAndHistoryOnlyExposeTheMatchingSourceModel() {
         var target = Map.<String, Object>of("sourceModel", "qwen3.8:27b", "baseModel", "mlx-community/Qwen3.8-27B-4bit",
                 "revision", "a".repeat(40), "digest", "b".repeat(64));
-        when(client.training("GET", "/api/training/capabilities", Map.of())).thenReturn(Map.of("trainingExecution", true,
+        when(client.training("GET", "/api/training/capabilities?model=qwen3.8%3A27b", Map.of())).thenReturn(Map.of("trainingExecution", true,
                 "dataset", Map.of("target", target, "samples", List.of(
                         Map.of("caseId", "qwen-case", "sourceModel", "qwen3.8:27b"),
                         Map.of("caseId", "other-case", "sourceModel", "gemma4:26b")), "total", 1)));
@@ -147,6 +148,38 @@ class ModelExecutionServiceTest {
                 Map.of("id", "legacy", "status", "SUCCEEDED", "result", Map.of())));
         var result = service.training();
         assertThat(result.toString()).contains("qwen-case", "matching").doesNotContain("other-case", "legacy");
+    }
+
+    @Test void changedInferenceModelRejectsStaleTrainingBeforeRemoteStart() {
+        when(client.inference("GET", "/api/models/installed", Map.of(), false)).thenReturn(Map.of("model", "gemma4:26b"));
+        assertThat(service.execute("TRAINING_START", training(id, 10), actor, null))
+                .containsEntry("status", "FAILED").containsEntry("errorCode", "TRAINING_MODEL_CHANGED");
+        verify(client, never()).training(eq("POST"), anyString(), anyMap());
+    }
+
+    @Test void modelChangeDoesNotTurnAnUncertainExistingStartIntoADefiniteFailure() {
+        when(client.training(eq("POST"), eq("/api/training/jobs"), anyMap()))
+                .thenThrow(new ModelExecutionClient.RemoteFailure("REMOTE_UNREACHABLE", true, 503));
+        service.execute("TRAINING_START", training(id, 10), actor, null);
+        when(client.inference("GET", "/api/models/installed", Map.of(), false)).thenReturn(Map.of("model", "gemma4:26b"));
+        when(client.training(eq("GET"), anyString(), anyMap()))
+                .thenThrow(new ModelExecutionClient.RemoteFailure("REMOTE_UNREACHABLE", true, 503));
+        assertThat(service.execute("TRAINING_START", training(id, 10), actor, null))
+                .containsEntry("status", "UNKNOWN").containsEntry("errorCode", "TRAINING_MODEL_CHANGED");
+        verify(client, times(1)).training(eq("POST"), eq("/api/training/jobs"), anyMap());
+    }
+
+    @Test void selectedInferenceModelIsSentToTrainingCapabilitiesWithoutQwenFallback() {
+        when(client.inference("GET", "/api/models/installed", Map.of(), false)).thenReturn(Map.of("model", "ingu627/exaone4.0:32b"));
+        when(client.training("GET", "/api/training/capabilities?model=ingu627%2Fexaone4.0%3A32b", Map.of()))
+                .thenReturn(Map.of("trainingExecution", false, "trainingReasonCode", "MODEL_NOT_REGISTERED"));
+        when(client.training("GET", "/api/training/jobs", Map.of())).thenReturn(Map.of("jobs", List.of()));
+        when(repository.training("training-target", 101)).thenReturn(List.of());
+        var result = service.training();
+        assertThat(result).containsEntry("requestedModel", "ingu627/exaone4.0:32b");
+        assertThat((Map<?, ?>) result.get("dataset")).isEmpty();
+        assertThat(result.toString()).contains("등록되지 않았습니다");
+        verify(client, never()).training("GET", "/api/training/capabilities?model=qwen3.8%3A27b", Map.of());
     }
 
     private static ModelExecutionRequest training(UUID id, int count) { return new ModelExecutionRequest(id, "qwen3.8:27b", "a".repeat(64), null, null, count); }

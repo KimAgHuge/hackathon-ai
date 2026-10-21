@@ -1,0 +1,7 @@
+{
+  "qwen3.8:27b": {
+    "directory": "/absolute/path/to/Qwen3.8-27B-4bit",
+    "baseModel": "mlx-community/Qwen3.8-27B-4bit",
+    "trainer": "qwen-mlp-trial-v1"
+  }
+}
