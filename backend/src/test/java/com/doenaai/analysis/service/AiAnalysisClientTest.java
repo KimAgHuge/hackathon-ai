@@ -366,12 +366,18 @@ class AiAnalysisClientTest {
                 + "{\"type\":\"progress\",\"code\":\"DATABASE_BATCH_STARTED\",\"attempt\":25}\n"
                 + "{\"type\":\"progress\",\"code\":\"DATABASE_BATCH_REUSED\",\"attempt\":25}\n"
                 + "{\"type\":\"progress\",\"code\":\"DATABASE_MERGE_COMPLETED\",\"attempt\":2}\n"
+                + "{\"type\":\"progress\",\"code\":\"RECONCILIATION_STARTED\"}\n"
+                + "{\"type\":\"progress\",\"code\":\"RECONCILIATION_REUSED\"}\n"
+                + "{\"type\":\"progress\",\"code\":\"RECONCILIATION_COMPLETED\"}\n"
+                + "{\"type\":\"progress\",\"code\":\"DATABASE_SCOPE_FOCUSED\",\"attempt\":26}\n"
+                + "{\"type\":\"progress\",\"code\":\"DATABASE_SCOPE_FULL\",\"attempt\":40}\n"
                 + "{\"type\":\"result\",\"result\":" + VALID_RESULT.replace("\n", "") + "}\n"));
         server.start();
         var events = new CopyOnWriteArrayList<AiAnalysisClient.ProgressEvent>();
         assertThat(client(Duration.ofSeconds(3)).analyzeWithProgress(PAYLOAD, events::add)).containsKey("summary");
         assertThat(events).extracting(AiAnalysisClient.ProgressEvent::code)
-                .containsExactly("GENERAL_REUSED", "DATABASE_BATCH_STARTED", "DATABASE_BATCH_REUSED", "DATABASE_MERGE_COMPLETED");
+                .containsExactly("GENERAL_REUSED", "DATABASE_BATCH_STARTED", "DATABASE_BATCH_REUSED", "DATABASE_MERGE_COMPLETED",
+                        "RECONCILIATION_STARTED", "RECONCILIATION_REUSED", "RECONCILIATION_COMPLETED", "DATABASE_SCOPE_FOCUSED", "DATABASE_SCOPE_FULL");
         assertThat(events.get(1).attempt()).isEqualTo(25);
     }
 

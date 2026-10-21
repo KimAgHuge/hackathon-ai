@@ -81,6 +81,9 @@ final class TrainingCaseDraftBuilder {
             }
         }
         fillDatabaseRelevance(general, savedGeneral, effective, autoFilled);
+        if (savedGeneral.get("databaseReviewPlan") instanceof Map<?, ?> plan) {
+            general.put("databaseReviewPlan", plan);
+        }
         // DB 결론을 바꾸지 않은 문장 수정본은 원래 단계의 관련 없음 판단을 검토용 후보로 재사용한다.
         if (general.get("databaseRelevance") == null && result.correctedResult() != null
                 && facts.get("generalAnalysis") instanceof Map<?, ?> originalGeneral

@@ -68,11 +68,11 @@ public class AnalysisJobService {
             }
             var evidence = analysisResultRepository.findReusableEvidenceByJobId(projectId, reuseFromJobId)
                     .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                            "선택한 분석의 저장 근거가 없거나 재사용할 수 없습니다."));
+                            "선택한 분석의 저장 근거가 없거나 재사용할 수 없습니다. 최신 Git·DB 확인으로 다시 수집하세요."));
             if (!EvidenceReusePolicy.canUseSavedSnapshot(evidence,
                     (String) evidence.sourceSummary().get("commitSha"))) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                        "저장된 소스·DB 근거가 완전하지 않아 재사용할 수 없습니다.");
+                        "저장된 소스·DB 근거가 완전하지 않거나 수집 방식이 이전 버전입니다. 최신 Git·DB 확인으로 다시 수집하세요.");
             }
             return analysisJobRepository.createFromSavedEvidence(projectId, requirementVersionId,
                     userId, reuseFromJobId);

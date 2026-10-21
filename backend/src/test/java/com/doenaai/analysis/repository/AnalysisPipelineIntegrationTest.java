@@ -1,6 +1,7 @@
 package com.doenaai.analysis.repository;
 
 import com.doenaai.analysis.AnalysisNodeIdentity;
+import com.doenaai.analysis.SourceEvidenceVersion;
 import com.doenaai.analysis.dto.AnalysisJobResponse;
 import com.doenaai.analysis.dto.AnalysisWorkItem;
 import org.junit.jupiter.api.AfterAll;
@@ -35,11 +36,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * Opt-in tests for a disposable PostgreSQL database, never the application datasource.
- * Set DOENAAI_TEST_POSTGRES_URL=jdbc:postgresql://127.0.0.1:PORT/doenaai_worker_test.
- * Fixture credentials are postgres / doenaai-worker-test. Existing test tables are refused.
- * These fixtures mirror the columns/checks used from migrations 002 and 007, omitting
- * foreign keys to unrelated project, requirement, model, and auth tables and their RLS.
+ * 폐기용 로컬 PostgreSQL에서만 실행하며 실제 앱 데이터소스는 사용하지 않는다.
+ * DOENAAI_TEST_POSTGRES_URL=jdbc:postgresql://127.0.0.1:PORT/doenaai_worker_test로 명시해서 켠다.
+ * 시험 계정은 postgres / doenaai-worker-test이며 이미 시험 테이블이 있으면 실행을 거부한다.
+ * 마이그레이션 002·007·010에서 사용하는 컬럼과 제약을 반영한다.
+ * 관련 없는 프로젝트·요구사항·모델·인증 테이블의 외래키와 행 접근 정책은 포함하지 않는다.
  */
 @EnabledIfEnvironmentVariable(named = "DOENAAI_TEST_POSTGRES_URL", matches = ".+")
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
@@ -136,6 +137,10 @@ class AnalysisPipelineIntegrationTest {
                         approved_by uuid,
                         approved_at timestamptz,
                         review_note text,
+                        review_status varchar(16) not null default 'PENDING'
+                            check (review_status in ('PENDING', 'APPROVED', 'REJECTED')),
+                        reviewed_by uuid,
+                        reviewed_at timestamptz,
                         inference_metadata jsonb not null default '{}'::jsonb,
                         created_at timestamptz not null default now(),
                         updated_at timestamptz not null default now()
@@ -374,6 +379,7 @@ class AnalysisPipelineIntegrationTest {
         jobs.claimNext().orElseThrow();
         var facts = Map.<String, Object>of(
                 "sourceSummary", Map.of("commitSha", COMMIT_SHA,
+                        "collectorVersion", SourceEvidenceVersion.CURRENT,
                         "promptCoverage", Map.of("truncated", false),
                         "scanMetrics", Map.of("truncated", false)),
                 "databaseSummary", Map.of("type", "POSTGRESQL", "schema", "public",
@@ -393,6 +399,33 @@ class AnalysisPipelineIntegrationTest {
                 select analysis_options ->> 'evidenceReusedFromJobId'
                 from public.analysis_jobs where id = ?
                 """, String.class, second.jobId())).isEqualTo(first.jobId().toString());
+    }
+
+    @Test
+    void outdatedLatestEvidenceDoesNotHideAnOlderCurrentSnapshotOrDeleteItsHistory() {
+        var current = newJob();
+        jobs.claimNext().orElseThrow();
+        var baseSource = Map.<String, Object>of("commitSha", COMMIT_SHA,
+                "promptCoverage", Map.of("truncated", false), "scanMetrics", Map.of("truncated", false));
+        var currentSource = new java.util.LinkedHashMap<>(baseSource);
+        currentSource.put("collectorVersion", SourceEvidenceVersion.CURRENT);
+        var db = Map.<String, Object>of("tables", List.of(), "warnings", List.of(), "truncated", false);
+        results.complete(current.jobId(), validResult(), Map.of("sourceSummary", currentSource, "databaseSummary", db, "relations", List.of()));
+        jdbc.update("update public.analysis_jobs set created_at = now() - interval '1 hour' where id = ?", current.jobId());
+
+        for (Object version : java.util.Arrays.asList(null, "source-evidence-v1", "source-evidence-v3", 2)) {
+            var previous = newJob();
+            jobs.claimNext().orElseThrow();
+            var oldSource = new java.util.LinkedHashMap<>(baseSource);
+            if (version != null) oldSource.put("collectorVersion", version);
+            results.complete(previous.jobId(), validResult(), Map.of("sourceSummary", oldSource, "databaseSummary", db, "relations", List.of()));
+
+            assertThat(results.findReusableEvidenceByJobId(PROJECT_ID, previous.jobId())).isEmpty();
+            assertThat(results.findByJobId(previous.jobId())).isPresent();
+            assertThat(results.findReusableEvidence(PROJECT_ID, COMMIT_SHA).orElseThrow().sourceJobId()).isEqualTo(current.jobId());
+        }
+        assertThat(results.findReusableEvidenceByJobId(PROJECT_ID, current.jobId())).isPresent();
+        assertThat(jdbc.queryForObject("select count(*) from public.analysis_results", Integer.class)).isEqualTo(5);
     }
 
     @Test

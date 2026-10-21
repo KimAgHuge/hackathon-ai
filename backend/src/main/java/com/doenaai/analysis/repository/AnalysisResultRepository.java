@@ -1,5 +1,6 @@
 package com.doenaai.analysis.repository;
 
+import com.doenaai.analysis.SourceEvidenceVersion;
 import com.doenaai.analysis.dto.AnalysisResultResponse;
 import com.doenaai.analysis.dto.AnalysisReviewDecision;
 import com.doenaai.analysis.dto.ReusableEvidence;
@@ -103,6 +104,7 @@ public class AnalysisResultRepository {
                 from public.analysis_jobs j join public.analysis_results r on r.analysis_job_id = j.id
                 where j.project_id = ? and j.status = 'COMPLETED'
                   and j.input_snapshot ->> 'commitSha' = ?
+                  and (r.inference_metadata -> 'facts' -> 'sourceSummary' ->> 'collectorVersion') = ?
                   and (r.inference_metadata -> 'facts' -> 'sourceSummary'
                       -> 'promptCoverage' ->> 'truncated') = 'false'
                   and (r.inference_metadata -> 'facts' -> 'sourceSummary'
@@ -117,7 +119,7 @@ public class AnalysisResultRepository {
                     (Map<String, Object>) facts.get("sourceSummary"),
                     (Map<String, Object>) facts.get("databaseSummary"),
                     (List<Map<String, Object>>) facts.get("relations"));
-        }, projectId, commitSha).stream().findFirst();
+        }, projectId, commitSha, SourceEvidenceVersion.CURRENT).stream().findFirst();
     }
 
     /** 사용자가 명시적으로 선택한 완료 작업의 완전한 입력 근거만 반환한다. */
@@ -127,6 +129,7 @@ public class AnalysisResultRepository {
                 select j.id, r.inference_metadata -> 'facts' as facts
                 from public.analysis_jobs j join public.analysis_results r on r.analysis_job_id = j.id
                 where j.id = ? and j.project_id = ? and j.status = 'COMPLETED'
+                  and (r.inference_metadata -> 'facts' -> 'sourceSummary' ->> 'collectorVersion') = ?
                   and (j.input_snapshot ->> 'commitSha') is not null
                   and (j.input_snapshot ->> 'commitSha') =
                       (r.inference_metadata -> 'facts' -> 'sourceSummary' ->> 'commitSha')
@@ -143,6 +146,6 @@ public class AnalysisResultRepository {
                     (Map<String, Object>) facts.get("sourceSummary"),
                     (Map<String, Object>) facts.get("databaseSummary"),
                     (List<Map<String, Object>>) facts.get("relations"));
-        }, sourceJobId, projectId).stream().findFirst();
+        }, sourceJobId, projectId, SourceEvidenceVersion.CURRENT).stream().findFirst();
     }
 }

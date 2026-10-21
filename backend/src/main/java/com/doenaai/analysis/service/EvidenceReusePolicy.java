@@ -1,6 +1,7 @@
 package com.doenaai.analysis.service;
 
 import com.doenaai.analysis.dto.ReusableEvidence;
+import com.doenaai.analysis.SourceEvidenceVersion;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -17,6 +18,7 @@ final class EvidenceReusePolicy {
         if (previous == null || previous.sourceSummary() == null || previous.databaseSummary() == null
                 || previous.relations() == null || commitSha == null
                 || !Objects.equals(previous.sourceSummary().get("commitSha"), commitSha)) return false;
+        if (!SourceEvidenceVersion.isCurrent(previous.sourceSummary())) return false;
         if (!(previous.sourceSummary().get("promptCoverage") instanceof Map<?, ?> coverage)
                 || !Boolean.FALSE.equals(coverage.get("truncated"))) return false;
         if (!(previous.sourceSummary().get("scanMetrics") instanceof Map<?, ?> scan)

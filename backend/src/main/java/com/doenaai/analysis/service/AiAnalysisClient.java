@@ -196,10 +196,12 @@ public class AiAnalysisClient {
                             || !Set.of("GENERAL_STARTED", "GENERAL_COMPLETED", "DATABASE_STARTED",
                                     "DATABASE_COMPLETED", "DATABASE_SKIPPED", "VALIDATION_RETRY", "GENERAL_REUSED", "DATABASE_REUSED",
                                     "DATABASE_BATCH_STARTED", "DATABASE_BATCH_COMPLETED", "DATABASE_BATCH_REUSED",
-                                    "DATABASE_MERGE_STARTED", "DATABASE_MERGE_COMPLETED", "DATABASE_MERGE_REUSED").contains(code)
+                                    "DATABASE_MERGE_STARTED", "DATABASE_MERGE_COMPLETED", "DATABASE_MERGE_REUSED",
+                                    "RECONCILIATION_STARTED", "RECONCILIATION_COMPLETED", "RECONCILIATION_REUSED",
+                                    "DATABASE_SCOPE_FOCUSED", "DATABASE_SCOPE_FULL").contains(code)
                             || (event.containsKey("attempt") && (!(event.get("attempt") instanceof Number attempt)
                                 || attempt.doubleValue() != attempt.intValue()
-                                || attempt.intValue() < 1 || attempt.intValue() > (code.startsWith("DATABASE_BATCH") || code.startsWith("DATABASE_MERGE") ? 1000 : 10)))) {
+                                || attempt.intValue() < 1 || attempt.intValue() > (code.startsWith("DATABASE_BATCH") || code.startsWith("DATABASE_MERGE") || code.startsWith("DATABASE_SCOPE") ? 1000 : 10)))) {
                         throw new IOException("Invalid AI progress event.");
                     }
                     if (onProgress != null) {

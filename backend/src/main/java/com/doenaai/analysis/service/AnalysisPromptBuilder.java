@@ -40,6 +40,19 @@ public class AnalysisPromptBuilder {
                 new TypeReference<>() {});
         rejectSensitiveFields(payload);
         var sourceCopy = (Map<String, Object>) payload.get("sourceSummary");
+        var connections = sourceCopy.get("sourceConnections") instanceof Map<?, ?> rawConnections
+                ? (Map<String, Object>) rawConnections : new LinkedHashMap<String, Object>();
+        var links = (List<?>) connections.getOrDefault("links", new ArrayList<>());
+        var routes = (List<?>) connections.getOrDefault("routes", new ArrayList<>());
+        var unresolved = (List<?>) connections.getOrDefault("unresolvedReferences", new ArrayList<>());
+        int totalLinks = links.size(), totalRoutes = routes.size();
+        int totalUnresolved = unresolved.size();
+        trim(unresolved, 30);
+        connections.put("collectedUnresolvedReferences", totalUnresolved);
+        connections.put("includedUnresolvedReferences", unresolved.size());
+        boolean connectionsAlreadyTruncated = Boolean.TRUE.equals(connections.get("truncated")) || totalUnresolved != unresolved.size();
+        trim(links, 150);
+        trim(routes, 80);
         // Collector currently exposes the same technology facts under both names.
         sourceCopy.remove("technologies");
         int omittedFrameworkEvidences = 0;
@@ -59,6 +72,8 @@ public class AnalysisPromptBuilder {
         relations.forEach(r -> referenced.add(r.get("schema") + "." + r.get("table")));
         tables.sort(Comparator.comparing(t -> !referenced.contains(t.get("schema") + "." + t.get("name"))));
         var components = (List<?>) sourceCopy.getOrDefault("components", new ArrayList<>());
+        components = diverseComponents(components);
+        sourceCopy.put("components", components);
         int totalComponents = components.size();
         trim(components, 150);
         trim(references, 200);
@@ -70,12 +85,23 @@ public class AnalysisPromptBuilder {
         coverage.put("omittedFrameworkEvidences", omittedFrameworkEvidences);
         coverage.put("notice", "수집 및 모델 입력 범위만 분석합니다. 누락된 관계가 없다는 보장은 아닙니다.");
         sourceCopy.put("promptCoverage", coverage);
+        updateConnections(connections, totalLinks, totalRoutes, links, routes, connectionsAlreadyTruncated);
+        coverage.put("sourceConnectionsTruncated", Boolean.TRUE.equals(connections.get("truncated")));
         updateCoverage(coverage, tables, references, components);
         while (mapper.writeValueAsString(payload).length() > maxChars) {
             if (components.size() > 10) components.removeLast();
+            else if (!links.isEmpty()) links.removeLast();
+            else if (!routes.isEmpty()) routes.removeLast();
+            else if (!unresolved.isEmpty()) {
+                unresolved.removeLast();
+                connections.put("includedUnresolvedReferences", unresolved.size());
+                connectionsAlreadyTruncated = true;
+            }
             else if (references.size() > 10) references.removeLast();
             else if (tables.size() > 1) tables.removeLast();
             else throw new IllegalStateException("Analysis input exceeds context limit; narrow the schema or requirement.");
+            updateConnections(connections, totalLinks, totalRoutes, links, routes, connectionsAlreadyTruncated);
+            coverage.put("sourceConnectionsTruncated", Boolean.TRUE.equals(connections.get("truncated")));
             updateCoverage(coverage, tables, references, components);
         }
         // Do not retain references to a table omitted from model context.
@@ -83,7 +109,32 @@ public class AnalysisPromptBuilder {
         tables.forEach(t -> included.add(t.get("schema") + "." + t.get("name")));
         references.removeIf(r -> !included.contains(r.get("schema") + "." + r.get("table")));
         updateCoverage(coverage, tables, references, components);
+        if (mapper.writeValueAsString(payload).length() > maxChars) {
+            throw new IllegalStateException("소스 연결 범위 표시를 포함한 입력이 크기 제한을 초과했습니다.");
+        }
         return payload;
+    }
+
+    private void updateConnections(Map<String, Object> connections, int totalLinks, int totalRoutes,
+                                   List<?> links, List<?> routes, boolean alreadyTruncated) {
+        connections.put("collectedLinks", totalLinks);
+        connections.put("includedLinks", links.size());
+        connections.put("collectedRoutes", totalRoutes);
+        connections.put("includedRoutes", routes.size());
+        connections.put("truncated", alreadyTruncated || totalLinks != links.size() || totalRoutes != routes.size());
+    }
+
+    /** 한 언어의 파일이 입력 상한을 먼저 채우지 않도록 역할·언어별로 번갈아 선택한다. */
+    private List<?> diverseComponents(List<?> values) {
+        var groups = new LinkedHashMap<String, ArrayDeque<Object>>();
+        for (Object value : values) {
+            String role = value instanceof Map<?, ?> component ? String.valueOf(component.get("type")) : "SOURCE";
+            String language = value instanceof Map<?, ?> component ? String.valueOf(component.get("language")) : "";
+            groups.computeIfAbsent(role + ":" + language, ignored -> new ArrayDeque<>()).add(value);
+        }
+        var selected = new ArrayList<>();
+        while (selected.size() < values.size()) for (var group : groups.values()) if (!group.isEmpty()) selected.add(group.removeFirst());
+        return selected;
     }
 
     private void updateCoverage(Map<String, Object> coverage, List<?> tables, List<?> relations, List<?> components) {
@@ -93,7 +144,8 @@ public class AnalysisPromptBuilder {
         coverage.put("truncated", !coverage.get("collectedTables").equals(tables.size())
                 || !coverage.get("collectedRelations").equals(relations.size())
                 || !coverage.get("collectedComponents").equals(components.size())
-                || !coverage.get("omittedFrameworkEvidences").equals(0));
+                || !coverage.get("omittedFrameworkEvidences").equals(0)
+                || Boolean.TRUE.equals(coverage.get("sourceConnectionsTruncated")));
     }
 
     private void trim(List<?> values, int max) {

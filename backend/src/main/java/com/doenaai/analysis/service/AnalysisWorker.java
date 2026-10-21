@@ -108,7 +108,7 @@ public class AnalysisWorker {
                 stage = "선택한 저장 근거 확인";
                 stageStartedNanos = startStage(jobId, stage);
                 var saved = results.findReusableEvidenceByJobId(job.projectId(), job.reuseFromJobId())
-                        .orElseThrow(() -> new IllegalStateException("Saved evidence is no longer available."));
+                        .orElseThrow(() -> new IllegalStateException("저장 근거를 재사용할 수 없습니다. 최신 Git·DB 확인으로 다시 수집하세요."));
                 if (!EvidenceReusePolicy.canUseSavedSnapshot(saved, job.commitSha())) {
                     throw new IllegalStateException("Saved evidence is incomplete.");
                 }
@@ -305,9 +305,19 @@ public class AnalysisWorker {
                 label = "추가 DB 분석 대상 아님";
                 state = "COMPLETED";
             }
+            case "DATABASE_SCOPE_FOCUSED", "DATABASE_SCOPE_FULL" -> {
+                label = "DATABASE_SCOPE_FOCUSED".equals(event.code()) ? "요구사항 관련 DB 범위 우선 검토" : "수집한 전체 DB 범위 검토";
+                if (event.attempt() != null) label += " (" + event.attempt() + "개 테이블)";
+                state = "COMPLETED";
+            }
             case "GENERAL_REUSED", "DATABASE_REUSED" -> {
                 label = "GENERAL_REUSED".equals(event.code()) ? "저장된 AI 일반 분석 불러오기" : "저장된 AI DB 분석 불러오기";
                 state = "COMPLETED";
+            }
+            case "RECONCILIATION_STARTED", "RECONCILIATION_COMPLETED", "RECONCILIATION_REUSED" -> {
+                label = "일반·DB 분석 결과 최종 정리";
+                if (event.code().endsWith("REUSED")) label += " · 저장 결과 재사용";
+                state = event.code().endsWith("STARTED") ? "STARTED" : "COMPLETED";
             }
             case "DATABASE_BATCH_STARTED", "DATABASE_BATCH_COMPLETED", "DATABASE_BATCH_REUSED" -> {
                 label = "AI DB 분할 검토" + (event.attempt() == null ? "" : " (" + event.attempt() + "번째 묶음)");

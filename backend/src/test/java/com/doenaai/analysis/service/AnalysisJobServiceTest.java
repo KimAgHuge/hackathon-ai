@@ -1,5 +1,6 @@
 package com.doenaai.analysis.service;
 
+import com.doenaai.analysis.SourceEvidenceVersion;
 import com.doenaai.analysis.AnalysisNodeIdentity;
 import com.doenaai.analysis.dto.AnalysisJobResponse;
 import com.doenaai.analysis.dto.ReusableEvidence;
@@ -223,6 +224,7 @@ class AnalysisJobServiceTest {
         String sha = "a".repeat(40);
         var evidence = new ReusableEvidence(sourceJobId,
                 Map.of("commitSha", sha, "promptCoverage", Map.of("truncated", false),
+                        "collectorVersion", SourceEvidenceVersion.CURRENT,
                         "scanMetrics", Map.of("truncated", false)),
                 Map.of("truncated", false, "warnings", List.of(), "tables", List.of()), List.of());
         var saved = AnalysisJobResponse.of(UUID.randomUUID(), projectId, versionId, "PENDING", 0, 0, 0,
@@ -248,6 +250,20 @@ class AnalysisJobServiceTest {
         assertThatThrownBy(() -> analysisJobService.createProjectScan(projectId, null, UUID.randomUUID(), sourceJobId, true))
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageContaining("저장 근거");
+        verifyNoInteractions(gitService, analysisJobRepository);
+    }
+
+    @Test
+    void oldSavedEvidenceReturnsARecollectionGuideWithoutCreatingAJob() {
+        var projectId = UUID.randomUUID();
+        var sourceJobId = UUID.randomUUID();
+        when(analysisResultRepository.findReusableEvidenceByJobId(projectId, sourceJobId)).thenReturn(Optional.of(
+                new ReusableEvidence(sourceJobId, Map.of("commitSha", "a".repeat(40),
+                        "promptCoverage", Map.of("truncated", false), "scanMetrics", Map.of("truncated", false)),
+                        Map.of("truncated", false, "warnings", List.of()), List.of())));
+
+        assertThatThrownBy(() -> analysisJobService.createProjectScan(projectId, null, UUID.randomUUID(), sourceJobId, true))
+                .isInstanceOf(ResponseStatusException.class).hasMessageContaining("최신 Git·DB 확인");
         verifyNoInteractions(gitService, analysisJobRepository);
     }
 

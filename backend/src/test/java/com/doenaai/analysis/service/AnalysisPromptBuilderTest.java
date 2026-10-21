@@ -9,6 +9,21 @@ class AnalysisPromptBuilderTest {
     final JsonMapper mapper = JsonMapper.builder().build();
     final AnalysisPromptBuilder builder = new AnalysisPromptBuilder(mapper, AnalysisPromptBuilder.DEFAULT_MAX_CHARS);
 
+    @Test void preservesDifferentComponentRolesAndReportsOmittedConnections() {
+        var components = new ArrayList<Map<String, Object>>();
+        for (int index = 0; index < 200; index++) components.add(Map.of("path", "app/Store" + index + ".py", "type", "SOURCE", "language", "Python"));
+        components.add(Map.of("path", "web/Page.jsx", "type", "SOURCE", "language", "JavaScript"));
+        var links = new ArrayList<Map<String, Object>>();
+        for (int index = 0; index < 160; index++) links.add(Map.of("file", "web/Page.jsx", "line", index + 1, "targetFile", "app/Store.py"));
+        var payload = builder.build(UUID.randomUUID(), Map.of("components", components,
+                "sourceConnections", Map.of("links", links, "routes", List.of(), "unresolvedReferences", List.of())), Map.of(), List.of());
+        var source = (Map<?, ?>) payload.get("sourceSummary");
+        assertThat(source.toString()).contains("web/Page.jsx", "collectedLinks=160", "includedLinks=150", "sourceConnectionsTruncated=true");
+        assertThat((List<?>) source.get("components")).hasSize(150);
+        assertThat(components).hasSize(201);
+        assertThat(links).hasSize(160);
+    }
+
     @Test void boundedContextPrioritizesReferencedTablesWithoutMutatingCollectedFacts() {
         var tables = new ArrayList<Map<String, Object>>();
         for (int i = 0; i < 100; i++) {

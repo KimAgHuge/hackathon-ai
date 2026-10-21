@@ -123,14 +123,17 @@ class TrainingCaseDraftBuilderTest {
     @Test void prefersSavedStageResponseButNeverOverridesApprovedCorrection() {
         var legacy = legacyResult("CHANGE_REQUIRED");
         var facts = new java.util.LinkedHashMap<>(legacy.facts());
+        var plan = Map.of("targetTables", List.of("example.records"), "evidenceFiles", List.of("app/store.py"),
+                "requiresFullReview", false, "reason", "저장된 참조를 확인했습니다.");
         facts.put("generalAnalysis", Map.of("summary", "원래 단계 요약", "riskScore", 10,
-                "databaseRelevance", "UNRELATED", "databaseRelevanceReason", "원래 단계의 판단 이유"));
+                "databaseRelevance", "UNRELATED", "databaseRelevanceReason", "원래 단계의 판단 이유", "databaseReviewPlan", plan));
         var original = new AnalysisResultResponse(jobId, projectId, "최종 요약", "LOW", 10,
                 legacy.result(), facts, now, "APPROVED", null, "검토", reviewerId, now);
         var response = TrainingCaseDraftBuilder.build(jobWithActivity(List.of()), original, reviewerId);
         var general = (Map<?, ?>) ((Map<?, ?>) response.caseDraft().get("answers")).get("general");
         assertThat(general.get("summary")).isEqualTo("원래 단계 요약");
         assertThat(general.get("databaseRelevanceReason")).isEqualTo("원래 단계의 판단 이유");
+        assertThat(general.get("databaseReviewPlan")).isEqualTo(plan);
 
         var corrected = new AnalysisResultResponse(jobId, projectId, "승인 수정 요약", "LOW", 10,
                 legacy.result(), facts, now, "APPROVED", legacy.result(), "검토", reviewerId, now);
@@ -138,6 +141,7 @@ class TrainingCaseDraftBuilderTest {
         var correctedGeneral = (Map<?, ?>) ((Map<?, ?>) correctedDraft.caseDraft().get("answers")).get("general");
         assertThat(correctedGeneral.get("summary")).isEqualTo("최종 요약");
         assertThat(correctedGeneral.get("databaseRelevance")).isEqualTo("RELATED");
+        assertThat(correctedGeneral.containsKey("databaseReviewPlan")).isFalse();
     }
 
     private AnalysisJobResponse jobWithActivity(List<AnalysisActivityEvent> events) {

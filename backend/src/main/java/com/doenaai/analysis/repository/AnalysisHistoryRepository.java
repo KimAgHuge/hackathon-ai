@@ -1,5 +1,6 @@
 package com.doenaai.analysis.repository;
 
+import com.doenaai.analysis.SourceEvidenceVersion;
 import com.doenaai.analysis.dto.AnalysisHistoryItem;
 import com.doenaai.analysis.dto.AnalysisHistoryPage;
 import lombok.RequiredArgsConstructor;
@@ -23,6 +24,7 @@ public class AnalysisHistoryRepository {
     public AnalysisHistoryPage find(List<UUID> projectIds, int page, int size) {
         if (projectIds.isEmpty()) return new AnalysisHistoryPage(List.of(), 0, page, size);
         var params = new MapSqlParameterSource("projectIds", projectIds)
+                .addValue("collectorVersion", SourceEvidenceVersion.CURRENT)
                 .addValue("limit", size).addValue("offset", page * size);
         Long total = jdbc.queryForObject("""
                 select count(*) from public.analysis_jobs j
@@ -36,12 +38,14 @@ public class AnalysisHistoryRepository {
                        j.input_snapshot ->> 'commitSha' as source_commit,
                        r.analysis_job_id as result_job_id,
                        r.inference_metadata -> 'facts' -> 'sourceSummary' ->> 'commitSha' as facts_commit,
+                       r.inference_metadata -> 'facts' -> 'sourceSummary' ->> 'collectorVersion' as collector_version,
                        r.inference_metadata -> 'facts' -> 'sourceSummary' -> 'promptCoverage' ->> 'truncated' as prompt_truncated,
                        r.inference_metadata -> 'facts' -> 'sourceSummary' -> 'scanMetrics' ->> 'truncated' as scan_truncated,
                        r.inference_metadata -> 'facts' -> 'databaseSummary' ->> 'truncated' as database_truncated,
                        (r.inference_metadata -> 'facts' -> 'databaseSummary' -> 'warnings') = '[]'::jsonb as database_warnings_empty,
                        jsonb_typeof(r.inference_metadata -> 'facts' -> 'relations') as relations_type,
                        (j.status = 'COMPLETED'
+                         and (r.inference_metadata -> 'facts' -> 'sourceSummary' ->> 'collectorVersion') = :collectorVersion
                          and (j.input_snapshot ->> 'commitSha') is not null
                          and (j.input_snapshot ->> 'commitSha') =
                              (r.inference_metadata -> 'facts' -> 'sourceSummary' ->> 'commitSha')
@@ -91,6 +95,7 @@ public class AnalysisHistoryRepository {
 
         String sourceCommit = rs.getString("source_commit");
         String factsCommit = rs.getString("facts_commit");
+        if (!SourceEvidenceVersion.CURRENT.equals(rs.getString("collector_version"))) reasons.add("SOURCE_COLLECTOR_OUTDATED");
         if (sourceCommit == null) reasons.add("SOURCE_COMMIT_MISSING");
         if (factsCommit == null) reasons.add("SAVED_COMMIT_MISSING");
         if (sourceCommit != null && factsCommit != null && !sourceCommit.equals(factsCommit)) {

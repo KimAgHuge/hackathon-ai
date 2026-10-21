@@ -1,5 +1,6 @@
 package com.doenaai.analysis.service;
 
+import com.doenaai.analysis.SourceEvidenceVersion;
 import org.springframework.stereotype.Service;
 import org.w3c.dom.NodeList;
 import org.xml.sax.InputSource;
@@ -197,6 +198,7 @@ public class SourceEvidenceCollector {
                         }
                         if (language != null) state.languages.add(language);
                         Lexed lexed = lex(content, language);
+                        if (language != null) state.connections.inspect(relative, language, lexed.code(), lexed.commentsRemoved());
                         state.components.add(Map.of("path", relative, "language", language == null ? "Manifest" : language,
                                 "type", componentType(relative, language, lexed.code(), manifest), "line", 1));
                         if (manifest) inspectManifest(relative, name, content, state);
@@ -223,11 +225,13 @@ public class SourceEvidenceCollector {
         state.components.sort(Comparator.comparing(component -> component.get("path").toString()));
         List<Map<String, Object>> frameworks = state.frameworks.values().stream().map(FrameworkFact::asMap).toList();
         Map<String, Object> summary = new LinkedHashMap<>();
+        summary.put("collectorVersion", SourceEvidenceVersion.CURRENT);
         summary.put("languages", List.copyOf(state.languages));
         summary.put("frameworks", frameworks);
         summary.put("technologies", frameworks);
         summary.put("buildTools", List.copyOf(state.buildTools));
         summary.put("components", List.copyOf(state.components));
+        summary.put("sourceConnections", state.connections.build());
         summary.put("detectionWarnings", List.copyOf(state.warnings));
         summary.put("scanMetrics", Map.of("scannedFileCount", state.scannedFiles, "scannedBytes", state.scannedBytes,
                 "visitedEntryCount", state.visitedEntries, "excludedFileCount", state.excludedFiles,
@@ -623,6 +627,7 @@ public class SourceEvidenceCollector {
         private final List<Map<String, Object>> components = new ArrayList<>();
         private final List<Map<String, Object>> relations = new ArrayList<>();
         private final Set<String> relationKeys = new LinkedHashSet<>();
+        private final SourceConnectionCollector connections = new SourceConnectionCollector();
         private int visitedEntries;
         private int scannedFiles;
         private int excludedFiles;

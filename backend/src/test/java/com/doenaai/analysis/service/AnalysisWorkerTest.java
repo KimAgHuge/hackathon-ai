@@ -1,6 +1,7 @@
 package com.doenaai.analysis.service;
 
 import com.doenaai.analysis.AnalysisNodeIdentity;
+import com.doenaai.analysis.SourceEvidenceVersion;
 import com.doenaai.analysis.dto.AnalysisWorkItem;
 import com.doenaai.analysis.dto.ReusableEvidence;
 import com.doenaai.analysis.repository.AnalysisJobRepository;
@@ -238,6 +239,11 @@ class AnalysisWorkerTest {
             report.accept(new AiAnalysisClient.ProgressEvent("DATABASE_BATCH_STARTED", 2));
             report.accept(new AiAnalysisClient.ProgressEvent("DATABASE_BATCH_REUSED", 2));
             report.accept(new AiAnalysisClient.ProgressEvent("DATABASE_MERGE_COMPLETED", 1));
+            report.accept(new AiAnalysisClient.ProgressEvent("RECONCILIATION_STARTED", null));
+            report.accept(new AiAnalysisClient.ProgressEvent("RECONCILIATION_REUSED", null));
+            report.accept(new AiAnalysisClient.ProgressEvent("RECONCILIATION_COMPLETED", null));
+            report.accept(new AiAnalysisClient.ProgressEvent("DATABASE_SCOPE_FOCUSED", 2));
+            report.accept(new AiAnalysisClient.ProgressEvent("DATABASE_SCOPE_FULL", 26));
             return Map.of("summary", "검토 완료", "riskLevel", "UNKNOWN", "riskScore", 0);
         });
         worker.process(job);
@@ -245,6 +251,11 @@ class AnalysisWorkerTest {
         verify(jobs).appendActivity(job.jobId(), "AI DB 분할 검토 (2번째 묶음)", "STARTED");
         verify(jobs).appendActivity(job.jobId(), "AI DB 분할 검토 (2번째 묶음) · 저장 결과 재사용", "COMPLETED");
         verify(jobs).appendActivity(job.jobId(), "AI DB 분할 결과 종합 (1번째 묶음)", "COMPLETED");
+        verify(jobs).appendActivity(job.jobId(), "일반·DB 분석 결과 최종 정리", "STARTED");
+        verify(jobs).appendActivity(job.jobId(), "일반·DB 분석 결과 최종 정리 · 저장 결과 재사용", "COMPLETED");
+        verify(jobs).appendActivity(job.jobId(), "일반·DB 분석 결과 최종 정리", "COMPLETED");
+        verify(jobs).appendActivity(job.jobId(), "요구사항 관련 DB 범위 우선 검토 (2개 테이블)", "COMPLETED");
+        verify(jobs).appendActivity(job.jobId(), "수집한 전체 DB 범위 검토 (26개 테이블)", "COMPLETED");
     }
 
     @Test void includesValidatedRequirementVersionButNotRawOriginalOrAttachments() throws Exception {
@@ -323,6 +334,7 @@ class AnalysisWorkerTest {
         Map<String, Object> db = Map.of("type", "POSTGRESQL", "schema", "public", "tables", List.of(),
                 "warnings", List.of(), "truncated", false);
         Map<String, Object> oldSource = Map.of("commitSha", job.commitSha(), "components", List.of(),
+                "collectorVersion", SourceEvidenceVersion.CURRENT,
                 "promptCoverage", Map.of("truncated", false),
                 "scanMetrics", Map.of("truncated", false),
                 "changeRequirement", Map.of("title", "이전 요구사항"));
@@ -355,6 +367,7 @@ class AnalysisWorkerTest {
                 "warnings", List.of(), "truncated", false);
         when(results.findReusableEvidence(job.projectId(), job.commitSha())).thenReturn(java.util.Optional.of(
                 new ReusableEvidence(oldJobId, Map.of("commitSha", job.commitSha(),
+                        "collectorVersion", SourceEvidenceVersion.CURRENT,
                         "promptCoverage", Map.of("truncated", false),
                         "scanMetrics", Map.of("truncated", false)), oldDb, List.of())));
         when(database.collect(job.projectId())).thenReturn(currentDb);
@@ -376,6 +389,7 @@ class AnalysisWorkerTest {
         var db = Map.<String, Object>of("type", "POSTGRESQL", "tables", List.of(),
                 "warnings", List.of(), "truncated", false);
         var sourceFacts = Map.<String, Object>of("commitSha", job.commitSha(), "components", List.of(),
+                "collectorVersion", SourceEvidenceVersion.CURRENT,
                 "promptCoverage", Map.of("truncated", false), "scanMetrics", Map.of("truncated", false));
         when(results.findReusableEvidenceByJobId(job.projectId(), sourceJobId)).thenReturn(java.util.Optional.of(
                 new ReusableEvidence(sourceJobId, sourceFacts, db, List.of())));
@@ -386,6 +400,44 @@ class AnalysisWorkerTest {
         verifyNoInteractions(git, database, source);
         verify(ai).analyzeWithProgress(anyMap(), any());
         verify(results).complete(eq(job.jobId()), anyMap(), anyMap());
+    }
+
+    @Test void oldCollectorFactsAreRecollectedEvenWhenCommitAndDatabaseAreUnchanged() throws Exception {
+        var db = Map.<String, Object>of("type", "POSTGRESQL", "tables", List.of(), "warnings", List.of(), "truncated", false);
+        var oldSource = Map.<String, Object>of("commitSha", job.commitSha(), "promptCoverage", Map.of("truncated", false),
+                "scanMetrics", Map.of("truncated", false));
+        var fresh = Map.<String, Object>of("collectorVersion", SourceEvidenceVersion.CURRENT, "sourceConnections", Map.of("version", 1));
+        when(results.findReusableEvidence(job.projectId(), job.commitSha())).thenReturn(java.util.Optional.of(
+                new ReusableEvidence(UUID.randomUUID(), oldSource, db, List.of())));
+        when(database.collect(job.projectId())).thenReturn(db);
+        when(source.collect(checkout, db)).thenReturn(new SourceEvidenceCollector.ScanResult(fresh, List.of()));
+        when(ai.analyzeWithProgress(anyMap(), any())).thenAnswer(call -> {
+            assertThat(call.getArgument(0).toString()).contains("collectorVersion=" + SourceEvidenceVersion.CURRENT, "sourceConnections");
+            return Map.of("summary", "새로 수집한 근거 분석", "riskLevel", "UNKNOWN", "riskScore", 0);
+        });
+
+        worker.process(job);
+
+        verify(git).checkoutSnapshot(any(), any(), any(), any(), any());
+        verify(source).collect(checkout, db);
+        verify(database, times(1)).collect(job.projectId());
+        verify(jobs, never()).markEvidenceReused(any(), any());
+        verify(results).complete(eq(job.jobId()), anyMap(), anyMap());
+    }
+
+    @Test void queuedSavedAnalysisRejectsOldCollectorFactsBeforeRemoteCalls() {
+        var sourceJobId = UUID.randomUUID();
+        var savedJob = new AnalysisWorkItem(job.jobId(), job.projectId(), null, job.requestedBy(),
+                job.repositoryUrl(), job.branch(), job.commitSha(), sourceJobId);
+        when(results.findReusableEvidenceByJobId(job.projectId(), sourceJobId)).thenReturn(java.util.Optional.of(
+                new ReusableEvidence(sourceJobId, Map.of("commitSha", job.commitSha(), "promptCoverage", Map.of("truncated", false),
+                        "scanMetrics", Map.of("truncated", false)), Map.of("truncated", false, "warnings", List.of()), List.of())));
+
+        worker.process(savedJob);
+
+        verifyNoInteractions(git, database, source, ai);
+        verify(jobs).fail(eq(job.jobId()), contains("선택한 저장 근거 확인"));
+        verify(results, never()).complete(any(), anyMap(), anyMap());
     }
 
     @Test void alreadyCancelledJobNeverStartsRemoteWork() {
