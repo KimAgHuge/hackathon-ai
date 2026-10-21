@@ -137,10 +137,56 @@ training/.venv/bin/python training/receiver_service.py --host 0.0.0.0 --port 801
 결과 승인 API와 승인 결과의 학습 사례 초안 다운로드는 구현됐습니다.
 초안은 사람이 보완·비식별화한 뒤 `finalize_draft.py`로 확정합니다.
 원격 DB의 승인 사례 일괄 자동 추출과 `train_lora.py` 자동화는 아직 구현하지 않았습니다.
+웹에서 명시적으로 요청하는 제한된 시험 학습은 아래 작업 API와 별도 워커로 지원합니다.
 확정 사례의 전송·수신 검증은 `transfer_cases.py`를 사용합니다.
 일반적인 학습 실행은 공식 `mlx_lm.lora` 명령을 사용하며, 아래 승인 자료 시험은 별도 도구를 사용합니다.
 모델, 데이터셋, 캐시, adapter, 체크포인트는 Git에서 제외합니다.
 비밀키나 고객 원문은 소스·문서·학습 데이터에 넣지 않습니다.
+
+## 웹 요청으로 제한된 시험 학습 실행
+
+수신 서버의 `training/.env`에 `DOENAAI_TRAINING_MODEL_DIR`을 설정하면 검증된 로컬
+`qwen3_5` MLX 모델과 학습 환경을 확인한 뒤 작업 API를 엽니다. 빈 설정이나 호환되지 않는
+환경에서는 기존 자료 수신은 계속하고 `trainingExecution=false`와 한국어 이유를 반환합니다.
+Mac Studio의 추론 모델 경로가 아니라 **맥북 학습 서버의 로컬 모델 절대 경로**입니다.
+설정 반영에는 수신 서비스 재시작이 필요하며 이 문서의 변경만으로 실행 중 서버가 바뀌지는 않습니다.
+
+모든 요청은 기존 전송 API와 같은 `X-Transfer-Timestamp`·`X-Transfer-Signature` 서명을
+사용합니다. 브라우저에서 키를 보내지 않고 권한을 확인한 백엔드가 서명합니다.
+
+| 요청 | 결과 |
+|---|---|
+| `GET /api/training/capabilities` | 기존 검증 기능과 `trainingExecution`, `trainingExecutionReason` |
+| `POST /api/training/jobs` | `{jobId: UUID, iterations: 1부터 20까지의 정수}`만 받고 202로 접수 |
+| `GET /api/training/jobs` | 최근 100개 작업과 `limit`, `truncated` |
+| `GET /api/training/jobs/{UUID}` | 상태·진행률·시각·고정 안내·허용한 측정값만 반환 |
+| `POST /api/training/jobs/{UUID}/cancel` | 빈 객체 `{}`로 취소 요청, 실제 종료는 상태 조회로 확인 |
+
+같은 작업 ID와 같은 반복 횟수는 기존 결과를 반환하고 재학습하지 않습니다. 같은 ID의 다른
+조건과 동시 작업은 409로 거부합니다. 상태는 `PENDING → PREPARING → TRAINING → VERIFYING`
+뒤 `SUCCEEDED`, `FAILED`, `CANCELLED` 중 하나로 확정합니다. 진행률은 단계 기준이며 정밀한
+완료 시간 예측이 아닙니다. 원문·키·경로·자식 출력·예외 원문은 API나 로그에 보내지 않습니다.
+
+워커는 수신 기록이 `VERIFIED`인 파일만 해시·크기·승인 계약을 다시 검사해 작업별 사본으로
+만듭니다. 사용자 경로·명령·셸을 받지 않습니다. 최대 100개 파일·32 MiB를 준비하며, 원본은
+변경하지 않습니다. `training_job_prepare.py`가 `trial_dataset.py`의 규칙으로 원 요구사항을
+세 분할에 묶습니다. 길이를 확인해 서로 다른 짧은 두 그룹을 학습·검증에 두고 나머지는
+시험 분할로 보관합니다. 총 세 그룹과 18,000토큰 이내의 유효한 학습·검증 자료가 필요합니다.
+긴 시험 자료는 근거나 정답을 자르지 않고 제외합니다. DB 단계 정답은 학습하지 않습니다.
+
+이후 고정된 `trial_train.py train`과 별도 `reload` 명령을 순서대로 실행합니다. 마지막 층
+MLP만 제한적으로 학습하며 모델을 다운로드하지 않습니다. 각 단계는 1시간 후 중단하고
+취소 시 이 작업이 만든 프로세스 묶음만 종료합니다. 새 산출물은
+`training/outputs/web-jobs/{UUID}/`와 `training/adapters/trial-web-{UUID}/`에 보존합니다.
+
+영속 기록과 운영체제 파일 잠금으로 한 작업만 실행합니다. 자식도 잠금을 보유하므로 수신
+서비스가 강제 종료돼도 기존 자식이 끝나기 전에 새 GPU 작업을 시작하지 않습니다. 재시작 후
+이전 작업은 잠금을 다시 확보한 시점에 `JOB_INTERRUPTED`로 실패 처리하며 자동 재개하지 않습니다.
+기존 CLI 학습 명령은 이 웹 작업 잠금을 공유하지 않으므로 웹 작업 중 별도 GPU 학습을 실행하지 마세요.
+
+`SUCCEEDED`는 학습·저장·재로딩 성공만 뜻합니다. `metrics.independentTestExecuted=false`와
+`qualityEvaluated=false`를 반환하며 `excludedTestSamples`로 제외한 시험 자료 수를 알립니다.
+독립 생성 시험, 업무 정답 품질 평가, 운영 승인과 Mac Studio의 모델 전환은 이 워커가 수행하지 않습니다.
 
 ## 단일 프로젝트의 짧은 승인 자료 시험
 

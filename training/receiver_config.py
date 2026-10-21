@@ -1,11 +1,11 @@
-"""추가 패키지나 셸 실행 없이 수신 서버의 두 설정만 .env에서 읽는다."""
+"""추가 패키지나 셸 실행 없이 수신 서버의 허용된 설정만 .env에서 읽는다."""
 
 import os
 import re
 import shlex
 from pathlib import Path
 
-RECEIVER_ENV_KEYS = {"DOENAAI_TRAINING_SHARED_DIR", "DOENAAI_TRAINING_TRANSFER_KEY"}
+RECEIVER_ENV_KEYS = {"DOENAAI_TRAINING_SHARED_DIR", "DOENAAI_TRAINING_TRANSFER_KEY", "DOENAAI_TRAINING_MODEL_DIR"}
 
 
 def _without_comment(value):

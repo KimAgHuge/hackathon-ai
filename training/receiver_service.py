@@ -12,10 +12,11 @@ from collections import OrderedDict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from dataset_contract import DatasetError, VALIDATION_FEATURES
+from dataset_contract import DatasetError, VALIDATION_FEATURES, strict_json
 from shared_transfer import HASH, verify_signature, write_json_atomic
 from transfer_cases import MAX_BYTES, TransferError, checked_cases, content_hash, private_directory, receive
 from receiver_config import load_receiver_env
+from training_jobs import TrainingJobError, TrainingJobStore
 
 
 ROOT = Path(__file__).resolve().parent
@@ -25,6 +26,9 @@ DEFAULT_INBOX = ROOT / "datasets/incoming"
 STATUS_PATH = re.compile(r"/api/training/transfers/([0-9a-f]{64})\Z")
 INTAKE_PATH = "/api/training/intake"
 CAPABILITIES_PATH = "/api/training/capabilities"
+JOBS_PATH = "/api/training/jobs"
+JOB_PATH = re.compile(r"/api/training/jobs/([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})\Z")
+CANCEL_PATH = re.compile(r"/api/training/jobs/([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})/cancel\Z")
 logger = logging.getLogger("doenaai.training.receiver")
 
 
@@ -163,8 +167,8 @@ class ReceiverStore:
                 "files": verified, "cases": cases}
 
 
-def make_handler(store, secret):
-    """서명된 알림과 수신 상태 조회만 노출한다."""
+def make_handler(store, secret, jobs=None):
+    """기존 수신과 새 학습 작업 API 모두 같은 서명 인증으로 보호한다."""
     class Handler(BaseHTTPRequestHandler):
         def _send(self, status, value):
             body = json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode()
@@ -178,8 +182,17 @@ def make_handler(store, secret):
         def _authorized(self, body):
             return verify_signature(secret, self.command, self.path, body, self.headers)
 
+        def _job_error(self, error):
+            if isinstance(error, TrainingJobError):
+                self._send(error.http_status, {"code": error.code, "message": error.message})
+            else:
+                self._send(500, {"code": "TRAINING_INTERNAL_ERROR", "message": "학습 작업을 처리하지 못했습니다. 서버 상태를 확인하세요."})
+            logger.warning("학습 작업 API 처리 실패 code=%s", error.code if isinstance(error, TrainingJobError) else "TRAINING_INTERNAL_ERROR")
+
         def do_POST(self):
-            if self.path != "/api/training/transfers":
+            cancel = CANCEL_PATH.fullmatch(self.path)
+            job_request = self.path == JOBS_PATH or cancel is not None
+            if self.path != "/api/training/transfers" and not job_request:
                 self._send(404, {"code": "NOT_FOUND"})
                 return
             try:
@@ -194,6 +207,21 @@ def make_handler(store, secret):
                 store.log_event(None, "NOTICE_AUTH_REJECTED", "수신 알림 인증 실패 · 두 서버의 전송 키와 시각을 확인해 주세요.", level=logging.WARNING)
                 self._send(401, {"code": "UNAUTHORIZED"})
                 return
+            if job_request:
+                if jobs is None:
+                    self._send(503, {"code": "TRAINING_UNAVAILABLE", "message": "학습 실행 설정이 준비되지 않았습니다."})
+                    return
+                try:
+                    value = strict_json(body.decode("utf-8"))
+                except (ValueError, TypeError, UnicodeError):
+                    self._send(422, {"code": "INVALID_JOB_REQUEST", "message": "학습 요청의 JSON 형식을 확인하세요."})
+                    return
+                try:
+                    value = jobs.cancel(cancel.group(1), value) if cancel else jobs.submit(value)
+                    self._send(200 if cancel else 202, value)
+                except Exception as error:
+                    self._job_error(error)
+                return
             try:
                 value = store.notify(json.loads(body))
             except (ValueError, TypeError, UnicodeError):
@@ -203,11 +231,30 @@ def make_handler(store, secret):
             self._send(202, value)
 
         def do_GET(self):
+            job = JOB_PATH.fullmatch(self.path)
+            if self.path == JOBS_PATH or job:
+                if not self._authorized(b""):
+                    self._send(401, {"code": "UNAUTHORIZED"})
+                    return
+                try:
+                    value = jobs.get_job(job.group(1)) if job and jobs else (
+                        jobs.list_jobs() if jobs else {"jobs": [], "limit": 100, "truncated": False})
+                    if job and jobs is None:
+                        value = None
+                    self._send(200 if value is not None else 404, value if value is not None else {"code": "NOT_FOUND", "message": "학습 작업을 찾을 수 없습니다."})
+                except Exception as error:
+                    self._job_error(error)
+                return
             if self.path == CAPABILITIES_PATH:
                 if not self._authorized(b""):
                     self._send(401, {"code": "UNAUTHORIZED"})
                     return
-                self._send(200, {"validationVersion": 2, "features": list(VALIDATION_FEATURES)})
+                try:
+                    execution = jobs.capabilities() if jobs else {
+                        "trainingExecution": False, "trainingExecutionReason": "학습 실행 설정이 준비되지 않았습니다."}
+                    self._send(200, {"validationVersion": 2, "features": list(VALIDATION_FEATURES), **execution})
+                except Exception as error:
+                    self._job_error(error)
                 return
             if self.path == INTAKE_PATH:
                 if not self._authorized(b""):
@@ -233,7 +280,12 @@ def make_handler(store, secret):
 
 def serve(store, secret, host, port):
     """수신 API와 주기적 재확인을 함께 실행한다."""
-    server = ThreadingHTTPServer((host, port), make_handler(store, secret))
+    jobs = TrainingJobStore(store, os.environ.get("DOENAAI_TRAINING_MODEL_DIR"))
+    try:
+        server = ThreadingHTTPServer((host, port), make_handler(store, secret, jobs))
+    except Exception:
+        jobs.close()
+        raise
     stopping = threading.Event()
 
     def check_pending():
@@ -256,6 +308,7 @@ def serve(store, secret, host, port):
         stopping.set()
         server.server_close()
         worker.join(timeout=2)
+        jobs.close()
         logger.info("수신 서비스가 종료되었습니다. 저장된 수신 기록은 유지됩니다.")
 
 
