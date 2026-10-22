@@ -16,6 +16,11 @@ import java.util.UUID;
 public class TrainedModelManagementService {
     private static final Set<String> BUILD_STATES = Set.of("NOT_BUILT", "PENDING", "FUSING", "CONVERTING", "QUANTIZING", "PUBLISHING", "SUCCEEDED", "FAILED", "CANCELLED", "UNAVAILABLE");
     private static final Set<String> IMPORT_STATES = Set.of("NOT_STARTED", "IMPORTING", "READY", "WAITING", "UNAVAILABLE");
+    private static final Map<String, String> IMPORT_PHASE_MESSAGES = Map.of(
+            "DOWNLOADING", "공유 저장소에 모델 파일 다운로드를 요청했습니다. AI 분석/추론 서버에 파일이 준비되기를 기다립니다.",
+            "VERIFYING", "AI 분석/추론 서버에서 모델 파일의 서명·크기·해시를 검사하고 있습니다.",
+            "COPYING", "검사한 모델 파일을 AI 분석/추론 서버에 보관하고 보관한 파일을 다시 확인하고 있습니다.",
+            "REGISTERING", "AI 분석/추론 서버의 모델 실행 환경에 새 모델을 등록하고 있습니다.");
     private static final Set<String> METADATA = Set.of("jobId", "version", "manifestSha256", "sourceModel", "baseModel", "baseRevision", "model", "artifactSha256", "artifactSize", "quantization");
     private final ModelOperationRepository repository;
     private final ModelExecutionClient client;
@@ -42,9 +47,11 @@ public class TrainedModelManagementService {
             if (!"SUCCEEDED".equals(built.get("status"))) return unavailable(id, origin, "MODEL_BUILD_NOT_COMPLETE");
             var metadata = metadata(built.get("result"), id, origin);
             if (metadata == null) return unavailable(id, origin, "MODEL_BUILD_METADATA_INVALID");
-            var imported = importValue(client.inference("POST", "/api/models/trained/import", metadata, false), id, origin);
+            Map<String, Object> imported;
+            try { imported = importValue(client.inference("POST", "/api/models/trained/import", metadata, false), id, origin); }
+            catch (ModelExecutionClient.RemoteFailure failure) { return importFailure(id, origin, failure); }
             if (imported.containsKey("manifestSha256") && !metadata.get("manifestSha256").equals(imported.get("manifestSha256")))
-                return unavailable(id, origin, "MODEL_IMPORT_METADATA_INVALID");
+                return importUnavailable(id, origin, "MODEL_IMPORT_METADATA_INVALID");
             return imported;
         } catch (ModelExecutionClient.RemoteFailure failure) { return failure(id, origin, failure); }
     }
@@ -52,7 +59,7 @@ public class TrainedModelManagementService {
     public Map<String, Object> importStatus(UUID id) {
         var origin = origin(id);
         try { return importValue(client.inference("GET", "/api/models/trained/imports/" + id, Map.of(), false), id, origin); }
-        catch (ModelExecutionClient.RemoteFailure failure) { return failure(id, origin, failure); }
+        catch (ModelExecutionClient.RemoteFailure failure) { return importFailure(id, origin, failure); }
     }
 
     private Map<String, Object> origin(UUID id) {
@@ -83,11 +90,16 @@ public class TrainedModelManagementService {
     private static Map<String, Object> importValue(Map<String, Object> supplied, UUID id, Map<String, Object> origin) {
         if (supplied == null || !(supplied.get("status") instanceof String status) || !IMPORT_STATES.contains(status)
                 || !id.toString().equals(supplied.get("jobId")) || !runtimeModel(id).equals(supplied.get("model")))
-            return unavailable(id, origin, "MODEL_IMPORT_RESPONSE_INVALID");
-        if (supplied.containsKey("sourceModel") && !source(origin).equals(supplied.get("sourceModel"))) return unavailable(id, origin, "MODEL_IMPORT_METADATA_INVALID");
-        if ("READY".equals(status) && (!hash(supplied.get("digest")) || !hash(supplied.get("manifestSha256")))) return unavailable(id, origin, "MODEL_IMPORT_METADATA_INVALID");
+            return importUnavailable(id, origin, "MODEL_IMPORT_RESPONSE_INVALID");
+        if (supplied.containsKey("sourceModel") && !source(origin).equals(supplied.get("sourceModel"))) return importUnavailable(id, origin, "MODEL_IMPORT_METADATA_INVALID");
+        if ("READY".equals(status) && (!hash(supplied.get("digest")) || !hash(supplied.get("manifestSha256")))) return importUnavailable(id, origin, "MODEL_IMPORT_METADATA_INVALID");
         var result = base(id, origin, status);
         safeFields(supplied, result);
+        if ("IMPORTING".equals(status) && supplied.get("phase") instanceof String phase && IMPORT_PHASE_MESSAGES.containsKey(phase)) {
+            result.put("phase", phase);
+            result.put("message", IMPORT_PHASE_MESSAGES.get(phase));
+        }
+        if ("UNAVAILABLE".equals(status)) result.put("message", importFailureMessage((String) result.get("errorCode")));
         for (String key : Set.of("digest", "manifestSha256")) if (hash(supplied.get(key))) result.put(key, supplied.get(key));
         return result;
     }
@@ -138,6 +150,32 @@ public class TrainedModelManagementService {
         return value;
     }
     private static Map<String, Object> unavailable(UUID id, Map<String, Object> origin, String code) { var value = base(id, origin, "UNAVAILABLE"); value.put("errorCode", code); return value; }
+    private static Map<String, Object> importUnavailable(UUID id, Map<String, Object> origin, String code) {
+        var value = unavailable(id, origin, code);
+        value.put("message", importFailureMessage(code));
+        return value;
+    }
+    private static Map<String, Object> importFailure(UUID id, Map<String, Object> origin, ModelExecutionClient.RemoteFailure failure) {
+        if (!failure.uncertain) return importUnavailable(id, origin, failure.code);
+        var value = base(id, origin, "UNKNOWN");
+        value.put("errorCode", failure.code);
+        return value;
+    }
+    private static String importFailureMessage(String code) {
+        return switch (code == null ? "" : code) {
+            case "TRAINED_MODEL_IMPORT_TIMEOUT" -> "모델 등록 제한 시간이 지났습니다. 공유 파일의 다운로드와 설치 목록을 확인한 뒤 등록 상태를 다시 확인하세요.";
+            case "TRAINED_MODEL_CLOUD_DOWNLOAD_FAILED", "TRAINED_MODEL_CLOUD_DOWNLOAD_UNAVAILABLE" -> "AI 분석/추론 서버에서 공유 모델 파일의 다운로드를 완료하지 못했습니다. 공유 저장소 연결·접근 권한·저장 공간을 확인한 뒤 다시 등록하세요.";
+            case "TRAINED_MODEL_CLOUD_PATH_INVALID" -> "공유 저장소의 모델 폴더와 필수 파일 구성을 확인한 뒤 다시 등록하세요.";
+            case "TRAINED_MODEL_IMPORT_INTERRUPTED" -> "AI 분석/추론 서버에서 모델 등록이 중단됐습니다. 등록 상태를 확인한 뒤 다시 요청하세요.";
+            case "TRAINED_MODEL_DISK_FULL" -> "AI 분석/추론 서버의 모델 보관과 등록에 필요한 저장 공간이 부족합니다. 공간을 확보한 뒤 다시 등록하세요.";
+            case "TRAINED_MODEL_INTEGRITY_FAILED" -> "공유 모델 파일의 서명·크기·해시를 확인하지 못했습니다. 파일 동기화와 원본 구성을 확인하세요.";
+            case "TRAINED_MODEL_IMPORT_BUSY" -> "AI 분석/추론 서버에서 다른 모델을 등록 중입니다. 완료 후 다시 요청하세요.";
+            case "TRAINED_MODEL_NAME_CONFLICT", "TRAINED_MODEL_IMPORT_CONFLICT" -> "같은 이름이나 버전의 다른 모델이 있어 등록하지 못했습니다. 설치 모델과 등록 상태를 확인하세요.";
+            case "TRAINED_MODEL_SOURCE_UNAVAILABLE", "TRAINED_MODEL_TEMPLATE_INVALID" -> "AI 분석/추론 서버에서 기반 모델과 대화 형식을 확인하지 못했습니다. 기반 모델의 설치 상태를 확인하세요.";
+            case "TRAINED_MODEL_NOT_CONFIGURED", "TRAINED_MODEL_STATE_UNAVAILABLE", "TRAINED_MODEL_STATE_INVALID" -> "AI 분석/추론 서버의 공유 폴더·모델 보관 폴더·서명 검증 설정을 확인하세요.";
+            default -> "모델 등록을 완료하지 못했습니다. 오류 코드와 AI 분석/추론 서버의 파일 동기화·모델 실행 환경을 확인하세요.";
+        };
+    }
     private static Map<String, Object> failure(UUID id, Map<String, Object> origin, ModelExecutionClient.RemoteFailure failure) {
         boolean preparation = Set.of("MODEL_BUILD_UNAVAILABLE", "MODEL_BUILD_DISK_SPACE", "MODEL_BUILD_BUSY").contains(failure.code);
         var value = base(id, origin, !preparation && failure.uncertain ? "UNKNOWN" : "UNAVAILABLE");

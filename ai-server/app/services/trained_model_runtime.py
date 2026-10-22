@@ -18,6 +18,8 @@ from uuid import UUID
 
 import httpx
 
+from app.services.cloud_model_files import CloudModelFilesError, ensure_local_files
+
 TRAINING_ROOT = Path(__file__).resolve().parents[3] / "training"
 if str(TRAINING_ROOT) not in sys.path:
     sys.path.insert(0, str(TRAINING_ROOT))
@@ -30,6 +32,12 @@ HASH = re.compile(r"[0-9a-f]{64}\Z")
 METADATA = {"jobId", "version", "manifestSha256", "sourceModel", "baseModel", "baseRevision", "model",
             "artifactSha256", "artifactSize", "quantization"}
 MAX_WEIGHTS = 64 * 1024 ** 3
+IMPORT_PHASE_MESSAGES = {
+    "DOWNLOADING": "공유 저장소에 모델 파일 다운로드를 요청했습니다. AI 분석/추론 서버에 파일이 준비되기를 기다립니다.",
+    "VERIFYING": "AI 분석/추론 서버에서 모델 파일의 서명·크기·해시를 검사하고 있습니다.",
+    "COPYING": "검사한 모델 파일을 AI 분석/추론 서버에 보관하고 보관한 파일을 다시 확인하고 있습니다.",
+    "REGISTERING": "AI 분석/추론 서버에서 기존 모델 실행 환경에 새 모델을 등록하고 있습니다.",
+}
 
 
 class TrainedModelError(Exception):
@@ -232,6 +240,9 @@ class TrainedModelRuntime:
             result["digest"] = state["digest"]
         if state.get("errorCode"):
             result["errorCode"] = state["errorCode"]
+        if state["status"] == "IMPORTING" and state.get("phase") in IMPORT_PHASE_MESSAGES:
+            result["phase"] = state["phase"]
+            result["message"] = IMPORT_PHASE_MESSAGES[state["phase"]]
         return result
 
     def status(self, job_id):
@@ -336,6 +347,14 @@ class TrainedModelRuntime:
                 raise TrainedModelError(409, "TRAINED_MODEL_INTEGRITY_FAILED", "공유 폴더의 완성 모델 경로를 확인하세요.")
             if not source.is_dir() or any(not (source / name).is_file() for name in PACKAGE_FILES):
                 return {**state, "status": "WAITING", "message": "공유 폴더의 완성 모델 파일이 모두 동기화되기를 기다립니다."}
+            def phase(value):
+                if value not in IMPORT_PHASE_MESSAGES:
+                    raise ValueError()
+                check()
+                self._save({"metadata": metadata, "status": "IMPORTING", "phase": value,
+                            "message": IMPORT_PHASE_MESSAGES[value]})
+            ensure_local_files(source, PACKAGE_FILES, deadline, check=check, progress=phase)
+            phase("VERIFYING")
             if verify_package(source, secret, check=check) != metadata:
                 raise TrainedModelError(409, "TRAINED_MODEL_INTEGRITY_FAILED", "완성 모델의 서명과 요청 식별값이 일치하지 않습니다.")
             destination = self._root() / metadata["version"]
@@ -348,6 +367,7 @@ class TrainedModelRuntime:
                 if verify_package(destination, secret, check=check) != metadata:
                     raise TrainedModelError(409, "TRAINED_MODEL_IMPORT_CONFLICT", "보관 중인 같은 버전의 완성 모델 내용이 다릅니다.")
             else:
+                phase("COPYING")
                 temporary = Path(tempfile.mkdtemp(prefix=".model-", dir=self._root()))
                 for name in PACKAGE_FILES:
                     digest, size = hashlib.sha256(), 0
@@ -373,11 +393,14 @@ class TrainedModelRuntime:
                 temporary.rename(destination)
                 temporary = None
             check()
+            phase("REGISTERING")
             actual = self.importer.register(metadata, destination / "model.gguf", deadline, check=check)
             if not isinstance(actual, str) or not HASH.fullmatch(actual):
                 raise ValueError()
             return {**state, "status": "READY", "digest": actual,
                     "message": "완성 모델을 분석 엔진에 등록했습니다. 응답 검증 후 적용하세요. 답변 품질은 아직 평가하지 않았습니다."}
+        except CloudModelFilesError as error:
+            return {**state, "errorCode": error.code, "message": error.message}
         except TrainedModelError as error:
             return {**state, "errorCode": error.code, "message": error.message}
         except (TimeoutError, httpx.TimeoutException):

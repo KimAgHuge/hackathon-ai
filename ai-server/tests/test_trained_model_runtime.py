@@ -3,6 +3,7 @@
 import asyncio
 import json
 import shutil
+import threading
 import time
 from types import SimpleNamespace
 from uuid import uuid4
@@ -82,6 +83,74 @@ def test_missing_cloud_files_wait_without_calling_engine(staged):
     importer = FakeImporter()
     assert complete(TrainedModelRuntime(settings, importer), metadata)["status"] == "WAITING"
     assert not importer.calls
+
+
+def test_cloud_download_is_visible_and_finishes_before_model_registration(staged, monkeypatch):
+    from app.services import trained_model_runtime as module
+    metadata, _, settings = staged
+    importer = FakeImporter()
+    runtime = TrainedModelRuntime(settings, importer)
+    downloading, downloaded = threading.Event(), threading.Event()
+    phases = []
+    save = runtime._save
+
+    def record(state):
+        if state.get("phase"):
+            phases.append(state["phase"])
+        save(state)
+
+    def hydrate(package, filenames, deadline, *, check, progress):
+        progress("DOWNLOADING")
+        downloading.set()
+        assert downloaded.wait(timeout=3)
+        check()
+
+    monkeypatch.setattr(module, "ensure_local_files", hydrate)
+    monkeypatch.setattr(runtime, "_save", record)
+
+    async def flow():
+        await runtime.prepare(metadata)
+        try:
+            assert await asyncio.to_thread(downloading.wait, 3)
+            state = runtime.status(JOB)
+            assert state["status"] == "IMPORTING" and state["phase"] == "DOWNLOADING"
+            assert "다운로드를 요청했습니다" in state["message"] and "기다립니다" in state["message"]
+            assert not importer.calls and not (runtime.cache / metadata["version"]).exists()
+        finally:
+            downloaded.set()
+            await runtime.tasks[JOB]
+        result = runtime.status(JOB)
+        assert result["status"] == "READY" and "phase" not in result
+        assert len(importer.calls) == 1
+        assert phases == ["DOWNLOADING", "VERIFYING", "COPYING", "REGISTERING"]
+
+    asyncio.run(flow())
+
+
+@pytest.mark.parametrize("failure", ["timeout", "unavailable"])
+def test_cloud_download_failure_never_reads_or_registers_the_model(staged, monkeypatch, failure):
+    from app.services import trained_model_runtime as module
+    from app.services.cloud_model_files import CloudModelFilesError
+    metadata, _, settings = staged
+    importer = FakeImporter()
+    runtime = TrainedModelRuntime(settings, importer)
+
+    def hydrate(*args, progress, **kwargs):
+        progress("DOWNLOADING")
+        if failure == "timeout":
+            raise TimeoutError()
+        raise CloudModelFilesError("TRAINED_MODEL_CLOUD_DOWNLOAD_UNAVAILABLE", "iCloud 연결과 접근 권한을 확인하세요.")
+
+    def reject_read(*args, **kwargs):
+        pytest.fail("다운로드 전에 모델 본문을 검사했습니다.")
+
+    monkeypatch.setattr(module, "ensure_local_files", hydrate)
+    monkeypatch.setattr("trained_model_delivery.verify_package", reject_read)
+    result = complete(runtime, metadata)
+    assert result["status"] == "UNAVAILABLE" and "phase" not in result
+    expected = "TRAINED_MODEL_IMPORT_TIMEOUT" if failure == "timeout" else "TRAINED_MODEL_CLOUD_DOWNLOAD_UNAVAILABLE"
+    assert result["errorCode"] == expected and not importer.calls
+    assert not (runtime.cache / metadata["version"]).exists()
 
 
 def test_changed_signed_file_fails_before_registration(staged):

@@ -134,6 +134,84 @@ class TrainedModelManagementServiceTest {
         verify(client, never()).inference(eq("POST"), anyString(), anyMap(), anyBoolean());
     }
 
+    @Test void registrationAndPollingExposeOnlyKnownImportPhasesWithSafeMessages() {
+        var messages = Map.of(
+                "DOWNLOADING", "다운로드를 요청했습니다",
+                "VERIFYING", "모델 파일의 서명·크기·해시를 검사하고 있습니다",
+                "COPYING", "AI 분석/추론 서버에 보관하고 보관한 파일을 다시 확인하고 있습니다",
+                "REGISTERING", "모델 실행 환경에 새 모델을 등록하고 있습니다");
+        for (var phase : messages.entrySet()) {
+            var remote = new LinkedHashMap<>(imported("IMPORTING"));
+            remote.put("phase", phase.getKey()); remote.put("message", "/private/model 원격 오류 원문");
+            remote.put("path", "/private/model");
+            when(client.inference(eq("POST"), eq("/api/models/trained/import"), anyMap(), eq(false))).thenReturn(remote);
+            when(client.inference("GET", "/api/models/trained/imports/" + id, Map.of(), false)).thenReturn(remote);
+            for (var result : List.of(service.register(id, Map.of()), service.importStatus(id))) {
+                assertThat(result).containsEntry("status", "IMPORTING").containsEntry("phase", phase.getKey());
+                assertThat(result.get("message").toString()).contains(phase.getValue());
+                assertThat(result.toString()).doesNotContain("/private/model", "원격 오류 원문");
+            }
+        }
+        verify(client, never()).inference(anyString(), contains("activate"), anyMap(), anyBoolean());
+    }
+
+    @Test void unknownOrMissingImportPhasesKeepTheGenericProgressMessage() {
+        when(client.inference("GET", "/api/models/trained/imports/" + id, Map.of(), false)).thenReturn(imported("IMPORTING"));
+        var generic = service.importStatus(id);
+        assertThat(generic).containsEntry("status", "IMPORTING").doesNotContainKey("phase");
+        var expectedMessage = generic.get("message");
+        for (var phase : List.of("", "PENDING", "/private/model", Map.of("path", "/private/model"), 42)) {
+            var remote = new LinkedHashMap<>(imported("IMPORTING"));
+            remote.put("phase", phase); remote.put("message", "/private/model");
+            when(client.inference("GET", "/api/models/trained/imports/" + id, Map.of(), false)).thenReturn(remote);
+            assertThat(service.importStatus(id)).containsEntry("status", "IMPORTING").containsEntry("message", expectedMessage)
+                    .doesNotContainKey("phase");
+        }
+    }
+
+    @Test void completedOrFailedImportsDoNotExposeAStaleImportPhase() {
+        for (var status : List.of("READY", "WAITING", "UNAVAILABLE", "NOT_STARTED")) {
+            var remote = new LinkedHashMap<>(imported(status)); remote.put("phase", "DOWNLOADING");
+            when(client.inference("GET", "/api/models/trained/imports/" + id, Map.of(), false)).thenReturn(remote);
+            assertThat(service.importStatus(id)).containsEntry("status", status).doesNotContainKey("phase");
+        }
+    }
+
+    @Test void importFailuresExplainTheRegistrationStageWithoutExposingRemoteDetails() {
+        var messages = Map.of(
+                "TRAINED_MODEL_IMPORT_TIMEOUT", "모델 등록 제한 시간이 지났습니다",
+                "TRAINED_MODEL_CLOUD_DOWNLOAD_FAILED", "공유 모델 파일의 다운로드를 완료하지 못했습니다",
+                "TRAINED_MODEL_CLOUD_DOWNLOAD_UNAVAILABLE", "공유 모델 파일의 다운로드를 완료하지 못했습니다",
+                "TRAINED_MODEL_IMPORT_INTERRUPTED", "모델 등록이 중단됐습니다",
+                "TRAINED_MODEL_DISK_FULL", "저장 공간이 부족합니다",
+                "TRAINED_MODEL_INTEGRITY_FAILED", "파일의 서명·크기·해시를 확인하지 못했습니다");
+        for (var error : messages.entrySet()) {
+            var remote = new LinkedHashMap<>(imported("UNAVAILABLE"));
+            remote.put("errorCode", error.getKey()); remote.put("message", "/private/model 원격 오류 원문");
+            when(client.inference("GET", "/api/models/trained/imports/" + id, Map.of(), false)).thenReturn(remote);
+            var result = service.importStatus(id);
+            assertThat(result).containsEntry("status", "UNAVAILABLE").containsEntry("errorCode", error.getKey());
+            assertThat(result.get("message").toString()).contains(error.getValue());
+            assertThat(result.toString()).doesNotContain("/private/model", "원격 오류 원문", "학습 서버", "MLX");
+        }
+        when(client.inference(eq("POST"), eq("/api/models/trained/import"), anyMap(), eq(false)))
+                .thenThrow(new ModelExecutionClient.RemoteFailure("TRAINED_MODEL_IMPORT_BUSY", false, 409));
+        var rejected = service.register(id, Map.of());
+        assertThat(rejected).containsEntry("status", "UNAVAILABLE");
+        assertThat(rejected.get("message").toString()).contains("다른 모델을 등록 중입니다");
+    }
+
+    @Test void unknownImportFailureCodesStillExplainTheInferenceServerInsteadOfTrainingSetup() {
+        for (var code : List.of("OTHER_REMOTE_FAILURE", "/private/error")) {
+            var remote = new LinkedHashMap<>(imported("UNAVAILABLE"));
+            remote.put("errorCode", code); remote.put("message", "/private/model");
+            when(client.inference("GET", "/api/models/trained/imports/" + id, Map.of(), false)).thenReturn(remote);
+            var result = service.importStatus(id);
+            assertThat(result.get("message").toString()).contains("AI 분석/추론 서버", "파일 동기화");
+            assertThat(result.toString()).doesNotContain("/private", "학습 서버", "MLX");
+        }
+    }
+
     @Test void malformedImportResponsesAreSanitizedAndCannotBecomeReady() {
         for (var changes : List.of(Map.<String, Object>of("jobId", UUID.randomUUID().toString()),
                 Map.<String, Object>of("model", "https://private/model"), Map.<String, Object>of("sourceModel", "gemma4:26b"),
