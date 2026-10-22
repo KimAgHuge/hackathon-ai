@@ -120,10 +120,20 @@ const compileComponent = async (path) => {
     return result
 }
 const { default: ModelScreen } = await import(await compileComponent(new URL('../src/views/AiModelManagementView.vue', import.meta.url)))
+const { default: TrainedModelPanel } = await import(await compileComponent(new URL('../src/components/models/ModelTrainedModelPanel.vue', import.meta.url)))
 
 const makeNode = (type, text = '') => ({ type, text, children: [], props: {}, parent: null, style: {}, addEventListener() {}, removeEventListener() {} })
-const mountScreen = async (api, permissions = null) => {
-    globalThis.document = { hidden: false, addEventListener() {}, removeEventListener() {} }
+const mountScreen = async (api, permissions = null, options = {}) => {
+    const visibilityListeners = new Set()
+    globalThis.document = {
+        hidden: false,
+        addEventListener(name, listener) {
+            if (name === 'visibilitychange') visibilityListeners.add(listener)
+        },
+        removeEventListener(name, listener) {
+            if (name === 'visibilitychange') visibilityListeners.delete(listener)
+        },
+    }
     globalThis[dependenciesKey].api = {
         getInstalledModels: async () => ({
             model: 'qwen3.8:27b',
@@ -163,7 +173,7 @@ const mountScreen = async (api, permissions = null) => {
         remove: detach,
     })
     const root = makeNode('root')
-    const app = renderer.createApp(ModelScreen)
+    const app = renderer.createApp(options.component || ModelScreen, options.props)
     app.mount(root)
     const settle = async () => {
         for (let step = 0; step < 6; step++) {
@@ -179,7 +189,18 @@ const mountScreen = async (api, permissions = null) => {
         return element
     }
     await settle()
-    return { all, text, button, settle, cleanup: () => app.unmount() }
+    return {
+        all,
+        text,
+        button,
+        settle,
+        async setHidden(hidden) {
+            document.hidden = hidden
+            for (const listener of visibilityListeners) listener()
+            await settle()
+        },
+        cleanup: () => app.unmount(),
+    }
 }
 
 const serverError = (message) => ({ response: { status: 503, data: { message } } })
@@ -1267,6 +1288,407 @@ test('완성한 새 모델을 분석 서버에 등록하고 검증 뒤 별도 �
         assert.equal(activations[0].model, preparedModel.model)
         assert.equal(activations[0].probeToken, probeResult.probeToken)
         assert.equal(activations[0].expectedRevision, 7)
+    } finally {
+        screen.cleanup()
+    }
+})
+
+test('등록 응답을 기다리는 동안 즉시 안내하고 중복 요청을 보내지 않는다', async () => {
+    let finishImport,
+        calls = 0
+    const screen = await mountScreen({
+        getModelRegistry: async () => registry,
+        getModelRuntime: async () => runtime,
+        getModelTraining: async () => ({ jobs: [completedTraining] }),
+        getTrainedModelBuild: async () => ({ jobId: completedTraining.id, sourceModel: 'qwen3.8:27b', status: 'SUCCEEDED', available: true }),
+        importTrainedModel: () => {
+            calls += 1
+            return new Promise((resolve) => (finishImport = resolve))
+        },
+    })
+    try {
+        await openAdapterAction(screen)
+        screen.button('분석 서버에 새 모델 등록').props.onClick()
+        await screen.settle()
+        await checkConfirmation(screen)
+        const submit = screen.button('확인 후 새 모델 등록')
+        submit.props.onClick()
+        submit.props.onClick()
+        await screen.settle()
+        assert.equal(calls, 1)
+        assert.match(screen.text(), /등록 요청을 보내고 있습니다/)
+        assert.match(screen.text(), /서버의 접수 응답을 기다리고 있습니다/)
+        assert.ok(
+            screen
+                .all()
+                .filter((node) => node.type === 'button' && screen.text(node).trim() === '등록 요청 확인 중')
+                .every((node) => node.props.disabled)
+        )
+        finishImport({ ...preparedModel, status: 'IMPORTING', phase: 'DOWNLOADING', message: '모델 파일이 준비되기를 기다립니다.' })
+        await screen.settle()
+        assert.match(screen.text(), /모델 파일 준비 대기/)
+        assert.match(screen.text(), /마지막 상태 확인/)
+        assert.ok(!screen.all().some((node) => node.props.role === 'dialog' && node.props['aria-label'] === '분석 서버 등록 확인'))
+    } finally {
+        screen.cleanup()
+    }
+})
+
+test('등록 단계를 자동 조회하고 반복 검증을 현재 단계로 표시하며 완료 뒤 조회를 멈춘다', async (context) => {
+    context.mock.timers.enable({ apis: ['setTimeout'] })
+    const phases = ['VERIFYING', 'COPYING', 'VERIFYING', 'REGISTERING', 'READY']
+    let requested = false,
+        registered = false,
+        queries = 0
+    const screen = await mountScreen({
+        getModelRegistry: async () => registry,
+        getModelRuntime: async () => runtime,
+        getModelTraining: async () => ({ jobs: [completedTraining] }),
+        getTrainedModelBuild: async () => ({ jobId: completedTraining.id, sourceModel: 'qwen3.8:27b', status: 'SUCCEEDED', available: true }),
+        getTrainedModelImport: async () => {
+            queries += 1
+            if (!requested) return { ...preparedModel, status: 'NOT_STARTED' }
+            if (registered) return preparedModel
+            const phase = phases.shift()
+            registered = phase === 'READY'
+            return registered ? preparedModel : { ...preparedModel, status: 'IMPORTING', phase, message: '서버가 현재 단계를 처리하고 있습니다.' }
+        },
+        getInstalledModels: async () => ({
+            model: 'qwen3.8:27b',
+            models: [
+                { name: 'qwen3.8:27b', selectable: true },
+                ...(registered ? [{ name: preparedModel.model, digest: preparedModel.digest, selectable: true, trainedModel: true }] : []),
+            ],
+        }),
+        importTrainedModel: async () => {
+            requested = true
+            return {
+                ...preparedModel,
+                status: 'IMPORTING',
+                phase: 'DOWNLOADING',
+                message: '공유 저장소에 다운로드를 요청했습니다. 파일이 준비되기를 기다립니다.',
+            }
+        },
+    })
+    try {
+        await openAdapterAction(screen)
+        screen.button('분석 서버에 새 모델 등록').props.onClick()
+        await screen.settle()
+        await checkConfirmation(screen)
+        screen.button('확인 후 새 모델 등록').props.onClick()
+        await screen.settle()
+        const currentStep = () => screen.all().filter((node) => node.props['aria-current'] === 'step')
+        assert.equal(currentStep().length, 1)
+        assert.match(screen.text(currentStep()[0]), /모델 파일 다운로드/)
+        assert.doesNotMatch(screen.text(), /\d+%/)
+        for (const label of ['파일 검증', '로컬 보관', '파일 검증', '실행 엔진 등록']) {
+            context.mock.timers.tick(5000)
+            await screen.settle()
+            assert.equal(currentStep().length, 1)
+            assert.match(screen.text(currentStep()[0]), new RegExp(label))
+        }
+        context.mock.timers.tick(5000)
+        await screen.settle()
+        assert.match(screen.text(), /분석 서버 등록 완료/)
+        assert.match(screen.text(), /아래에서 새 모델의 응답을 검증한 뒤 적용/)
+        assert.equal(screen.button('새 학습 모델 적용').props.disabled, true)
+        const completedQueries = queries
+        context.mock.timers.tick(15000)
+        await screen.settle()
+        assert.equal(queries, completedQueries)
+        assert.equal(phases.length, 0)
+    } finally {
+        screen.cleanup()
+    }
+})
+
+test('세부 단계를 보내지 않는 서버 응답에는 확인 가능한 범위를 명확히 표시한다', async () => {
+    const screen = await mountScreen({
+        getModelRegistry: async () => registry,
+        getModelRuntime: async () => runtime,
+        getModelTraining: async () => ({ jobs: [completedTraining] }),
+        getTrainedModelBuild: async () => ({ jobId: completedTraining.id, sourceModel: 'qwen3.8:27b', status: 'SUCCEEDED', available: true }),
+        getTrainedModelImport: async () => ({ ...preparedModel, status: 'IMPORTING', message: '등록을 처리하고 있습니다.' }),
+    })
+    try {
+        await openAdapterAction(screen)
+        assert.match(screen.text(), /서버가 세부 진행 단계를 제공하지 않아 현재 작업 위치는 확인할 수 없습니다/)
+        assert.equal(screen.all().filter((node) => node.props['aria-current'] === 'step').length, 0)
+        assert.equal(screen.button('분석 서버에 새 모델 등록').props.disabled, true)
+    } finally {
+        screen.cleanup()
+    }
+})
+
+test('진행 상태 조회가 실패하면 마지막 확인 상태와 복구 버튼을 표시하고 자동 조회를 멈춘다', async (context) => {
+    context.mock.timers.enable({ apis: ['setTimeout'] })
+    let queries = 0,
+        recovered = false
+    const screen = await mountScreen({
+        getModelRegistry: async () => registry,
+        getModelRuntime: async () => runtime,
+        getModelTraining: async () => ({ jobs: [completedTraining] }),
+        getTrainedModelBuild: async () => ({ jobId: completedTraining.id, sourceModel: 'qwen3.8:27b', status: 'SUCCEEDED', available: true }),
+        getTrainedModelImport: async () => {
+            queries += 1
+            if (queries === 1 || recovered) return { ...preparedModel, status: 'IMPORTING', phase: recovered ? 'COPYING' : 'DOWNLOADING' }
+            throw serverError('등록 상태 연결이 끊겼습니다.')
+        },
+    })
+    try {
+        await openAdapterAction(screen)
+        context.mock.timers.tick(5000)
+        await screen.settle()
+        assert.match(screen.text(), /등록 상태 확인이 중단되었습니다/)
+        assert.match(screen.text(), /마지막으로 확인한 상태/)
+        assert.match(screen.text(), /등록 상태 연결이 끊겼습니다/)
+        assert.match(screen.text(), /마지막 확인 단계/)
+        assert.doesNotMatch(screen.text(), /5초마다 상태를 확인/)
+        context.mock.timers.tick(15000)
+        await screen.settle()
+        assert.equal(queries, 2)
+        recovered = true
+        screen.button('등록 상태 다시 확인').props.onClick()
+        await screen.settle()
+        assert.match(screen.text(), /분석 서버에 모델 파일 보관 중/)
+        assert.doesNotMatch(screen.text(), /등록 상태 확인이 중단되었습니다|등록 상태 연결이 끊겼습니다/)
+        assert.equal(queries, 3)
+    } finally {
+        screen.cleanup()
+    }
+})
+
+test('서버가 연결 오류를 미확인 상태로 반환해도 재등록을 막고 상태 재조회를 제공한다', async (context) => {
+    context.mock.timers.enable({ apis: ['setTimeout'] })
+    let queries = 0
+    const screen = await mountScreen({
+        getModelRegistry: async () => registry,
+        getModelRuntime: async () => runtime,
+        getModelTraining: async () => ({ jobs: [completedTraining] }),
+        getTrainedModelBuild: async () => ({ jobId: completedTraining.id, sourceModel: 'qwen3.8:27b', status: 'SUCCEEDED', available: true }),
+        getTrainedModelImport: async () => {
+            queries += 1
+            return queries === 2
+                ? { ...preparedModel, status: 'UNKNOWN', errorCode: 'REMOTE_UNREACHABLE', message: 'AI 분석/추론 서버에 연결하지 못했습니다.' }
+                : { ...preparedModel, status: 'IMPORTING', phase: 'DOWNLOADING' }
+        },
+    })
+    try {
+        await openAdapterAction(screen)
+        context.mock.timers.tick(5000)
+        await screen.settle()
+        assert.match(screen.text(), /등록 결과 확인 필요/)
+        assert.match(screen.text(), /AI 분석\/추론 서버에 연결하지 못했습니다/)
+        assert.doesNotMatch(screen.text(), /등록 실패/)
+        assert.equal(screen.button('분석 서버에 새 모델 등록').props.disabled, true)
+        context.mock.timers.tick(15000)
+        await screen.settle()
+        assert.equal(queries, 2)
+        screen.button('등록 상태 다시 확인').props.onClick()
+        await screen.settle()
+        assert.equal(queries, 3)
+        assert.match(screen.text(), /모델 파일 준비 대기/)
+    } finally {
+        screen.cleanup()
+    }
+})
+
+test('등록 요청의 응답이 끊기면 중복 등록 대신 상태를 다시 확인할 수 있다', async () => {
+    let attempted = false,
+        calls = 0
+    const screen = await mountScreen({
+        getModelRegistry: async () => registry,
+        getModelRuntime: async () => runtime,
+        getModelTraining: async () => ({ jobs: [completedTraining] }),
+        getTrainedModelBuild: async () => ({ jobId: completedTraining.id, sourceModel: 'qwen3.8:27b', status: 'SUCCEEDED', available: true }),
+        getTrainedModelImport: async () => ({
+            ...preparedModel,
+            status: attempted ? 'IMPORTING' : 'NOT_STARTED',
+            phase: attempted ? 'DOWNLOADING' : undefined,
+        }),
+        importTrainedModel: async () => {
+            attempted = true
+            calls += 1
+            throw new Error('응답 시간 초과')
+        },
+    })
+    try {
+        await openAdapterAction(screen)
+        screen.button('분석 서버에 새 모델 등록').props.onClick()
+        await screen.settle()
+        await checkConfirmation(screen)
+        screen.button('확인 후 새 모델 등록').props.onClick()
+        await screen.settle()
+        assert.match(screen.text(), /등록 요청 결과 확인 필요/)
+        assert.match(screen.text(), /서버가 접수했을 수 있으므로/)
+        assert.equal(screen.button('분석 서버에 새 모델 등록').props.disabled, true)
+        screen.button('등록 상태 다시 확인').props.onClick()
+        await screen.settle()
+        assert.equal(calls, 1)
+        assert.match(screen.text(), /모델 파일 준비 대기/)
+        assert.doesNotMatch(screen.text(), /등록 요청 결과 확인 필요/)
+    } finally {
+        screen.cleanup()
+    }
+})
+
+test('등록 응답 전에 화면을 숨겼다 돌아와도 중복 등록을 막고 서버 상태를 다시 조회한다', async () => {
+    let finishImport,
+        requested = false,
+        calls = 0,
+        queries = 0
+    const screen = await mountScreen({
+        getModelRegistry: async () => registry,
+        getModelRuntime: async () => runtime,
+        getModelTraining: async () => ({ jobs: [completedTraining] }),
+        getTrainedModelBuild: async () => ({ jobId: completedTraining.id, sourceModel: 'qwen3.8:27b', status: 'SUCCEEDED', available: true }),
+        getTrainedModelImport: async () => {
+            queries += 1
+            return { ...preparedModel, status: requested ? 'IMPORTING' : 'NOT_STARTED', phase: requested ? 'COPYING' : undefined }
+        },
+        importTrainedModel: () => {
+            calls += 1
+            requested = true
+            return new Promise((resolve) => (finishImport = resolve))
+        },
+    })
+    try {
+        await openAdapterAction(screen)
+        screen.button('분석 서버에 새 모델 등록').props.onClick()
+        await screen.settle()
+        await checkConfirmation(screen)
+        screen.button('확인 후 새 모델 등록').props.onClick()
+        await screen.settle()
+        await screen.setHidden(true)
+        await screen.setHidden(false)
+        finishImport({ ...preparedModel, status: 'IMPORTING', phase: 'DOWNLOADING' })
+        await screen.settle()
+        assert.equal(calls, 1)
+        assert.ok(queries >= 2)
+        assert.match(screen.text(), /분석 서버에 모델 파일 보관 중/)
+        assert.equal(screen.button('분석 서버에 새 모델 등록').props.disabled, true)
+        assert.ok(!screen.all().some((node) => node.props.role === 'dialog' && node.props['aria-label'] === '분석 서버 등록 확인'))
+    } finally {
+        screen.cleanup()
+    }
+})
+
+test('등록 완료 뒤 설치 목록 갱신이 실패해도 완료 결과를 보존하고 목록만 다시 조회한다', async () => {
+    let reloads = 0
+    const screen = await mountScreen(
+        {
+            getModelTraining: async () => ({ jobs: [completedTraining] }),
+            getTrainedModelBuild: async () => ({ jobId: completedTraining.id, sourceModel: 'qwen3.8:27b', status: 'SUCCEEDED', available: true }),
+            getTrainedModelImport: async () => preparedModel,
+            importTrainedModel: async () => {
+                throw new Error('완료한 모델을 다시 등록하면 안 됩니다.')
+            },
+        },
+        null,
+        {
+            component: TrainedModelPanel,
+            props: {
+                modelName: 'qwen3.8:27b',
+                visible: true,
+                available: true,
+                canDeploy: true,
+                canTrain: true,
+                reload: async () => {
+                    reloads += 1
+                    if (reloads === 1) throw new Error('설치 목록 연결 실패')
+                },
+            },
+        }
+    )
+    try {
+        screen
+            .all()
+            .find((node) => node.props['data-label'] === '완료한 학습 결과')
+            .props.onChange({ target: { value: completedTraining.id } })
+        await screen.settle()
+        assert.match(screen.text(), /분석 서버 등록 완료/)
+        assert.match(screen.text(), /새 모델 등록은 완료했지만 설치 목록을 갱신하지 못했습니다/)
+        assert.equal(reloads, 1)
+        screen.button('설치 목록 다시 확인').props.onClick()
+        await screen.settle()
+        assert.equal(reloads, 2)
+        assert.match(screen.text(), /분석 서버 등록 완료/)
+        assert.doesNotMatch(screen.text(), /설치 목록을 갱신하지 못했습니다/)
+    } finally {
+        screen.cleanup()
+    }
+})
+
+test('완료 모델의 목록을 갱신하다 화면을 숨겨도 요청 중 잠금이 남지 않는다', async () => {
+    let finishReload,
+        reloads = 0
+    const busy = []
+    const screen = await mountScreen(
+        {
+            getModelTraining: async () => ({ jobs: [completedTraining] }),
+            getTrainedModelBuild: async () => ({ jobId: completedTraining.id, sourceModel: 'qwen3.8:27b', status: 'SUCCEEDED', available: true }),
+            getTrainedModelImport: async () => preparedModel,
+        },
+        null,
+        {
+            component: TrainedModelPanel,
+            props: {
+                modelName: 'qwen3.8:27b',
+                visible: true,
+                available: true,
+                canDeploy: true,
+                canTrain: true,
+                onBusy: (value) => busy.push(value),
+                reload: async () => {
+                    reloads += 1
+                    if (reloads === 1) await new Promise((resolve) => (finishReload = resolve))
+                },
+            },
+        }
+    )
+    try {
+        screen
+            .all()
+            .find((node) => node.props['data-label'] === '완료한 학습 결과')
+            .props.onChange({ target: { value: completedTraining.id } })
+        await screen.settle()
+        assert.equal(busy.at(-1), true)
+        await screen.setHidden(true)
+        finishReload()
+        await screen.settle()
+        assert.equal(busy.at(-1), false)
+        await screen.setHidden(false)
+        assert.match(screen.text(), /분석 서버 등록 완료/)
+        assert.equal(busy.at(-1), false)
+    } finally {
+        screen.cleanup()
+    }
+})
+
+test('같은 학습 결과의 늦은 조회 응답이 최신 등록 단계로 되돌아가지 않게 한다', async () => {
+    let finishOldStatus,
+        queries = 0
+    const screen = await mountScreen({
+        getModelRegistry: async () => registry,
+        getModelRuntime: async () => runtime,
+        getModelTraining: async () => ({ jobs: [completedTraining] }),
+        getTrainedModelBuild: async () => ({ jobId: completedTraining.id, sourceModel: 'qwen3.8:27b', status: 'SUCCEEDED', available: true }),
+        getTrainedModelImport: async () => {
+            queries += 1
+            if (queries === 1) return new Promise((resolve) => (finishOldStatus = resolve))
+            return { ...preparedModel, status: 'IMPORTING', phase: 'COPYING' }
+        },
+    })
+    try {
+        await openAdapterAction(screen)
+        screen.button('준비 상태 새로고침').props.onClick()
+        await screen.settle()
+        assert.match(screen.text(), /분석 서버에 모델 파일 보관 중/)
+        finishOldStatus({ ...preparedModel, status: 'IMPORTING', phase: 'DOWNLOADING' })
+        await screen.settle()
+        assert.match(screen.text(), /분석 서버에 모델 파일 보관 중/)
+        assert.doesNotMatch(screen.text(), /모델 파일 준비 대기/)
+        assert.equal(queries, 2)
     } finally {
         screen.cleanup()
     }

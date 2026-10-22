@@ -182,7 +182,7 @@ create table if not exists public.training_jobs (
           ),
 
     -- 작업을 가져간 AI 학습 서버
-    -- 예: macbook-m4max
+    -- 예: ai-training-server
     worker_name varchar(200),
 
     -- 실제 학습에 사용한 Base Model 기록
@@ -359,10 +359,10 @@ create table if not exists public.model_evaluations (
 -- 어떤 서버에서 어떤 모델 버전이 활성화되어 있는지 관리
 --
 -- 예:
--- mac-studio-ai / ANALYSIS / v1.2.0 / ACTIVE
+-- ai-inference-server / ANALYSIS / v1.2.0 / ACTIVE
 --
 -- 향후 RAG:
--- mac-studio-ai / EMBEDDING / embedding-v1 / ACTIVE
+-- ai-inference-server / EMBEDDING / embedding-v1 / ACTIVE
 -- =========================================================
 
 create table if not exists public.model_deployments (
@@ -373,7 +373,7 @@ create table if not exists public.model_deployments (
     references public.model_versions(id)
     on delete restrict,
 
-    -- 예: mac-studio-ai
+    -- 예: ai-inference-server
     server_name varchar(200) not null,
 
     deployment_role varchar(30) not null
@@ -417,7 +417,7 @@ create table if not exists public.model_deployments (
 -- =========================================================
 -- 동시에 같은 서버/역할에 ACTIVE 모델은 하나만 허용
 --
--- mac-studio-ai
+-- ai-inference-server
 --    ANALYSIS  → 1개
 --    EMBEDDING → 1개
 -- =========================================================

@@ -162,7 +162,7 @@ class TrainingJobStore:
             if not weights or any(path.is_symlink() or not path.is_file() for path in weights):
                 return "학습에 사용할 로컬 가중치 파일을 확인할 수 없습니다."
             if sys.platform != "darwin" or any(importlib.util.find_spec(name) is None for name in ("mlx", "mlx_lm", "transformers")):
-                return "맥북 학습 서버의 MLX·MLX-LM·Transformers 환경을 준비하세요."
+                return "학습 서버의 MLX·MLX-LM·Transformers 환경을 준비하세요."
         except (OSError, ValueError, TypeError, AttributeError, ImportError, KeyError):
             return "학습 모델 설정과 실행 환경을 확인하지 못했습니다."
         return None

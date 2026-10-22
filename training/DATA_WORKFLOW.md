@@ -1,6 +1,6 @@
 # 승인 자료 전달·분할·평가
 
-맥 스튜디오(스튜디오)는 AI 분석/추론 서버이고, 맥북은 학습 서버다. 기본 흐름은 **분석 결과 승인 → 학습 자료 검토·비식별화 → 전송 전 검사 → NAS 게시 → 맥북 학습 서버 수신·검증**이다. 분석 승인·파일 수신·학습 실행·새 모델 적용은 별도 작업이다. 수신 뒤의 학습은 [서버 안내](README.md), 완성 모델 전달은 [생성·적용 안내](MODEL_EXPORT.md)를 따른다.
+기본 흐름은 **분석 결과 승인 → 학습 자료 검토·비식별화 → 전송 전 검사 → NAS 게시 → 학습 서버 수신·검증**이다. 분석 승인·파일 수신·학습 실행·새 모델 적용은 별도 작업이다. 수신 뒤의 학습은 [서버 안내](README.md), 완성 모델 전달은 [생성·적용 안내](MODEL_EXPORT.md)를 따른다.
 
 ## 학습 사례 계약
 
@@ -33,7 +33,7 @@ DB 상태는 `CHANGE_REQUIRED`, `NO_CHANGE`, `NEEDS_CLARIFICATION`, `UNKNOWN`, `
 1. 일반·DB 단계 정답, 소스 근거, 당시 DB 수집 시각을 확인한다. 저장된 단계 응답·승인 수정본·수집 완료 기록으로 보완한 값도 출처와 실제 내용을 검토한다.
 2. 누락 정보는 **누락 정보 보완**에서 수정한다. 현재 시각이나 분석 완료 시각을 DB 수집 시각 대신 넣지 않는다. **저장된 근거로 빈 항목 채우기**는 편집한 값을 덮지 않고 빈 항목만 보완한다.
 3. 사람 검토·비식별화 확인란을 선택하고 **전송 전 전체 검사**를 실행한다. 내용을 바꾸면 확인란을 다시 선택한다.
-4. **AI 학습 서버로 데이터 전송**을 요청해 맥북 학습 서버의 게시·수신 상태를 확인한다. 한 분석 작업에서 전송한 내용을 다른 내용으로 덮어쓰지 않는다.
+4. **AI 학습 서버로 데이터 전송**을 요청해 학습 서버의 게시·수신 상태를 확인한다. 한 분석 작업에서 전송한 내용을 다른 내용으로 덮어쓰지 않는다.
 
 검토 중 JSON은 브라우저에 저장하지 않는다. 별도 검토가 필요하면 **파일로 따로 검토하기**에서 초안을 내려받는다. 초안 전체를 공유 폴더에 올리거나 학습 입력으로 쓰지 않는다. 로컬에서 보완한 `caseDraft`는 새 파일로 확정한다.
 
@@ -55,19 +55,19 @@ ai-server/.venv/bin/python training/finalize_draft.py \
 
 ## 공유 폴더 자동 전달
 
-현재 공유 NAS는 스튜디오와 맥북에서 동기화하는 iCloud Drive 폴더다. 회사 자료의 클라우드 저장 조건을 확인하고 승인·비식별화한 자료만 사용한다. 공유 폴더는 원문을 HTTP로 보내는 대신 파일을 전달하는 공간이다.
+현재 공유 NAS는 AI 분석/추론 서버와 학습 서버에서 동기화하는 iCloud Drive 폴더다. 회사 자료의 클라우드 저장 조건을 확인하고 승인·비식별화한 자료만 사용한다. 공유 폴더는 원문을 HTTP로 보내는 대신 파일을 전달하는 공간이다.
 
 ```text
-화면 → 백엔드 권한·승인 확인 → 스튜디오의 AI 분석/추론 서버 계약 검사·outbox 보존
-     → 공유 폴더에 해시 이름으로 게시 → 해시·크기·건수만 서명해 맥북 학습 서버에 알림
-     → 동기화 대기 → 맥북 학습 서버 파일·계약 검사 → incoming 확정 → 화면 수신 완료
+화면 → 백엔드 권한·승인 확인 → AI 분석/추론 서버 계약 검사·outbox 보존
+     → 공유 폴더에 해시 이름으로 게시 → 해시·크기·건수만 서명해 학습 서버에 알림
+     → 동기화 대기 → 학습 서버 파일·계약 검사 → incoming 확정 → 화면 수신 완료
 ```
 
-스튜디오의 AI 분석/추론 서버 `ai-server/.env`에 다음 값을 설정한다. 맥북 학습 서버의 `training/.env`에는 그 장비에서 보이는 공유 폴더와 같은 전송 키를 설정한다.
+AI 분석/추론 서버 `ai-server/.env`에 다음 값을 설정한다. 학습 서버의 `training/.env`에는 그 장비에서 보이는 공유 폴더와 같은 전송 키를 설정한다.
 
 ```dotenv
 DOENAAI_TRAINING_SHARED_DIR=<이 장비에서 보이는 공유 폴더 절대 경로>
-DOENAAI_TRAINING_RECEIVER_URL=http://<맥북 주소>:8011
+DOENAAI_TRAINING_RECEIVER_URL=http://<학습 서버 주소>:8011
 DOENAAI_TRAINING_TRANSFER_KEY=<두 서버의 같은 32자 이상 전송 키>
 ```
 
@@ -75,7 +75,7 @@ DOENAAI_TRAINING_TRANSFER_KEY=<두 서버의 같은 32자 이상 전송 키>
 
 게시 전에 수신 서버의 서명된 `GET /api/training/capabilities`에서 사례에 필요한 기능을 확인한다. 현재 계약 기능은 `FILE_LEVEL_EVIDENCE`, `DATABASE_SCOPE_REVIEW`, `DATABASE_CHANGE_SEMANTICS_V2`, `DATABASE_REVIEW_PLAN_V1`, `SOURCE_MODEL_V1`, `SOURCE_ADAPTER_V1`, `SOURCE_TRAINED_MODEL_V1`이다. 필요한 기능이 없거나 확인할 수 없으면 `RECEIVER_UPDATE_REQUIRED`로 중단하며 일부 파일만 복사해 계약을 맞추지 않는다.
 
-맥북 학습 서버는 알림을 보존하고 5초마다 공유 폴더를 확인한다. 파일이 없으면 `WAITING_FOR_FILE`, 동기화 중이면 `WAITING_FOR_SYNC`로 대기한다. 해시·크기·건수·계약이 맞아야 `training/datasets/incoming/<SHA256>.jsonl`로 확정한다. 스튜디오의 AI 분석/추론 서버는 미완료 알림을 15초마다 재시도한다.
+학습 서버는 알림을 보존하고 5초마다 공유 폴더를 확인한다. 파일이 없으면 `WAITING_FOR_FILE`, 동기화 중이면 `WAITING_FOR_SYNC`로 대기한다. 해시·크기·건수·계약이 맞아야 `training/datasets/incoming/<SHA256>.jsonl`로 확정한다. AI 분석/추론 서버는 미완료 알림을 15초마다 재시도한다.
 
 `VERIFIED`는 수신·검증 완료다. 게시 성공이나 파일 이름 표시만으로 전달 완료를 판단하지 않는다. `GET /api/training/intake`의 `READY_FOR_DATASET`도 학습 대기 자료가 있다는 뜻이다. 원본·outbox·수신 기록은 보존하며 자동으로 학습을 시작하지 않는다. 로그는 상태 변화·안전한 오류 코드만 표시하고 키·원문·전체 로컬 경로·예외 원문을 남기지 않는다.
 
@@ -89,11 +89,11 @@ ai-server/.venv/bin/python training/transfer_cases.py stage \
 
 ai-server/.venv/bin/python training/transfer_cases.py send \
   --package 'training/datasets/outbox/<SHA256>.jsonl' \
-  --remote '사용자@맥북-SSH-주소' \
+  --remote '사용자@학습-서버-SSH-주소' \
   --remote-repo '/Users/사용자/IdeaProjects/hackathon-ai'
 ```
 
-실패하면 원본을 보존한 채 같은 `send`를 다시 요청한다. 직접 안전하게 복사했다면 맥북의 `training/datasets/transfer-staging/<SHA256>.jsonl.part`를 `transfer_cases.py receive --staged <경로>`로 확정한다. 검사 전 `.part`를 incoming으로 옮기지 않는다. 수신 확인의 해시·건수가 같아야 완료이며 동일 파일 재수신은 중복 처리한다.
+실패하면 원본을 보존한 채 같은 `send`를 다시 요청한다. 직접 안전하게 복사했다면 학습 서버의 `training/datasets/transfer-staging/<SHA256>.jsonl.part`를 `transfer_cases.py receive --staged <경로>`로 확정한다. 검사 전 `.part`를 incoming으로 옮기지 않는다. 수신 확인의 해시·건수가 같아야 완료이며 동일 파일 재수신은 중복 처리한다.
 
 ## 자료 분할·변환
 

@@ -1,4 +1,4 @@
-# 맥 스튜디오(스튜디오) — AI 분석/추론 서버
+# AI 분석/추론 서버
 
 백엔드가 수집한 소스·DB 근거로 분석하고 구조화된 JSON을 검증하는 FastAPI 서버입니다.
 현재 모델 실행 엔진은 Ollama이며 기본 모델은 `qwen3.8:27b`입니다.
@@ -40,7 +40,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
 분석 API는 백엔드가 접근하는 사설망에만 공개합니다. Ollama는 `127.0.0.1:11434`를 유지하며 인터넷에 공개하지 않습니다.
-코드나 환경변수를 변경하면 스튜디오의 AI 분석/추론 서버를 재시작합니다.
+코드나 환경변수를 변경하면 AI 분석/추론 서버를 재시작합니다.
 
 ## 상태 확인과 API
 
@@ -56,7 +56,7 @@ curl http://127.0.0.1:8000/api/models/health -H "X-Internal-Api-Key: ${DOENAAI_A
 | --- | --- |
 | `POST /api/analysis/project` | 수집된 근거로 분석하고 검증된 JSON 반환 |
 | `POST /api/analysis/project/stream` | 같은 분석의 단계 이벤트와 최종 결과를 NDJSON으로 반환 |
-| `GET /api/models/installed` | 연결된 스튜디오의 AI 분석/추론 서버의 설치 모델과 현재 선택 조회 |
+| `GET /api/models/installed` | 연결된 AI 분석/추론 서버의 설치 모델과 현재 선택 조회 |
 | `POST /api/models/probe` | 지정한 모델·파일 식별값으로 짧은 JSON 응답 검사 |
 | `POST /api/models/activate` | 유효한 검사 증거와 현재 선택 버전을 확인한 뒤 전환 |
 | `POST /api/models/rollback` | 같은 파일이 설치된 직전 모델로 한 번 복구 |
@@ -70,15 +70,15 @@ curl http://127.0.0.1:8000/api/models/health -H "X-Internal-Api-Key: ${DOENAAI_A
 
 ## 학습 결과 등록
 
-맥북 학습 서버가 기반 모델과 어댑터를 병합하고 `Q4_K_M` GGUF로 변환해 공유 폴더에 게시합니다.
-스튜디오의 AI 분석/추론 서버는 서명·해시·크기를 검사한 뒤 기존 실행 엔진에 `doenaai-trained:web-{jobId}`로 등록합니다.
-등록 후 화면에서 **응답 검증 → 적용**해야 사용 모델이 바뀝니다. 스튜디오의 AI 분석/추론 서버에 MLX나 학습용 기반 모델을 설치할 필요는 없습니다.
+학습 서버가 기반 모델과 어댑터를 병합하고 `Q4_K_M` GGUF로 변환해 공유 폴더에 게시합니다.
+AI 분석/추론 서버는 서명·해시·크기를 검사한 뒤 기존 실행 엔진에 `doenaai-trained:web-{jobId}`로 등록합니다.
+등록 후 화면에서 **응답 검증 → 적용**해야 사용 모델이 바뀝니다. AI 분석/추론 서버에 MLX나 학습용 기반 모델을 설치할 필요는 없습니다.
 
 필요한 연동 설정은 다음과 같습니다.
 
 - `DOENAAI_TRAINING_SHARED_DIR`: 두 서버가 공유하는 동기화 폴더의 절대 경로
-- `DOENAAI_TRAINING_RECEIVER_URL`: 맥북 학습 서버 수신 API 주소
-- `DOENAAI_TRAINING_TRANSFER_KEY`: 맥북 학습 서버와 동일한 별도 서명 키
+- `DOENAAI_TRAINING_RECEIVER_URL`: 학습 서버 수신 API 주소
+- `DOENAAI_TRAINING_TRANSFER_KEY`: 학습 서버와 동일한 별도 서명 키
 - `DOENAAI_AI_TRAINED_MODEL_DIR`: 로컬 보관 위치, 비우면 `.runtime/trained-models`
 - `DOENAAI_AI_TRAINED_MODEL_IMPORT_TIMEOUT_SECONDS`: 등록 제한 시간, 기본 7,200초
 
@@ -112,4 +112,4 @@ python -m app.analyzers.scan_repository /path/to/repository --source-summary
 
 상세 운영은 [모델 관리 안내](../docs/18_AI_모델_관리_사용_안내.md),
 [워커 지정 운영](../docs/16_분석_워커_지정_운영.md),
-[맥북 학습 서버](../training/README.md), [모델 변환](../training/MODEL_EXPORT.md)을 참고합니다.
+[학습 서버](../training/README.md), [모델 변환](../training/MODEL_EXPORT.md)을 참고합니다.

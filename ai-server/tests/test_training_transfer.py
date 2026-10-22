@@ -86,7 +86,7 @@ def test_notice_failure_preserves_file_and_retry_verifies(tmp_path):
 
 
 @pytest.mark.parametrize("mode", ["legacy_database", "file_only", "classified_database"])
-def test_studio_to_macbook_receiver_over_local_http(tmp_path, mode):
+def test_analysis_to_training_receiver_over_local_http(tmp_path, mode):
     secret = "synthetic-transfer-key-long-enough-for-test"
     shared = tmp_path / "shared"
     shared.mkdir()

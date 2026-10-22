@@ -111,8 +111,8 @@ doenaai:
   # 로컬 개발:
   # http://localhost:8000
   #
-  # Mac Studio에서 AI 분석/추론 서버를 실행하는 경우:
-  # http://MAC_STUDIO_IP:8000
+  # AI 분석/추론 서버를 다른 장비에서 실행하는 경우:
+  # http://AI_SERVER_IP:8000
   ai-server:
     base-url: http://localhost:8000
     internal-api-key: ${DOENAAI_AI_INTERNAL_API_KEY:}
