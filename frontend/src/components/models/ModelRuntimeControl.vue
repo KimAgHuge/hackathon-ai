@@ -269,7 +269,7 @@ onBeforeUnmount(() => {
                         v-else-if="adapterMode || selected?.adapterId"
                         class="rounded-lg bg-amber-50 p-4 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200"
                     >
-                        업무 품질을 평가하지 않은 시험 학습 어댑터입니다. AI 분석 서버의 MLX 실행 환경에서 기반 모델과 함께 불러오며, 맥북의 학습 서버는 추론에
+                        업무 품질을 평가하지 않은 시험 학습 어댑터입니다. AI 분석/추론 서버의 MLX 실행 환경에서 기반 모델과 함께 불러오며, 학습 서버는 추론에
                         사용하지 않습니다. 적용 뒤 새 분석부터 이 학습 결과를 사용합니다.
                     </p>
                     <label class="flex items-start gap-3"

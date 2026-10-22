@@ -72,7 +72,7 @@ def install(directory, python, *, runner=run):
     if directory.exists():
         raise SetupError("설치 폴더가 이미 있습니다. --check로 확인하거나 별도의 새 경로를 지정하세요.")
     if sys.platform != "darwin" or any(shutil.which(name) is None for name in ("git", "cmake", "clang")):
-        raise SetupError("맥북에서 Git·CMake·Xcode 명령줄 도구를 준비한 뒤 실행하세요.")
+        raise SetupError("학습 서버에서 Git·CMake·Xcode 명령줄 도구를 준비한 뒤 실행하세요.")
     runner([str(python), "-c", "import sys; assert sys.version_info >= (3, 10)"])
     directory.mkdir(mode=0o700, parents=True, exist_ok=False)
     repository, environment = directory / "llama.cpp", directory / "converter-venv"
