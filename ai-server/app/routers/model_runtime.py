@@ -1,5 +1,6 @@
 """내부 인증 뒤 설치 모델 시험·전환·직전 모델 복구만 허용한다."""
 
+from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Response
@@ -52,10 +53,10 @@ class TrainedModelImportInput(RuntimeInput):
     artifact_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     artifact_size: StrictInt = Field(ge=24, le=64 * 1024 ** 3)
     quantization: str = Field(pattern=r"^Q4_K_M$")
-    format_version: StrictInt | None = Field(default=None, ge=2, le=2)
-    model_type: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_-]{0,79}$")
-    architecture: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_-]{0,79}$")
-    profile: dict[str, object] | None = None
+    format_version: Optional[StrictInt] = Field(default=None, ge=2, le=2)
+    model_type: Optional[str] = Field(default=None, pattern=r"^[a-z][a-z0-9_-]{0,79}$")
+    architecture: Optional[str] = Field(default=None, pattern=r"^[a-z][a-z0-9_-]{0,79}$")
+    profile: Optional[dict[str, object]] = None
 
 
 @router.post("/trained/import")
