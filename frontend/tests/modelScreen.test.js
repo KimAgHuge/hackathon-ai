@@ -66,6 +66,7 @@ globalThis[dependenciesKey] = {
 const apiModule = moduleUrl(
     [
         'getModelRegistry',
+        'synchronizeModelHistory',
         'getModelRuntime',
         'getModelVersion',
         'registerModelVersion',
@@ -122,6 +123,15 @@ const compileComponent = async (path) => {
 const { default: ModelScreen } = await import(await compileComponent(new URL('../src/views/AiModelManagementView.vue', import.meta.url)))
 const { default: TrainedModelPanel } = await import(await compileComponent(new URL('../src/components/models/ModelTrainedModelPanel.vue', import.meta.url)))
 
+const operationPage = (operations, pagination = {}) => ({
+    operations,
+    page: 0,
+    pageSize: 10,
+    totalCount: operations.length,
+    totalPages: Math.ceil(operations.length / 10),
+    ...pagination,
+})
+
 const makeNode = (type, text = '') => ({ type, text, children: [], props: {}, parent: null, style: {}, addEventListener() {}, removeEventListener() {} })
 const mountScreen = async (api, permissions = null, options = {}) => {
     const visibilityListeners = new Set()
@@ -142,7 +152,7 @@ const mountScreen = async (api, permissions = null, options = {}) => {
             canRollback: false,
         }),
         getModelTraining: async () => ({ capabilities: { trainingExecution: false }, jobs: [] }),
-        getModelOperations: async () => ({ operations: [] }),
+        getModelOperations: async () => operationPage([]),
         getTrainedModelBuild: async (id) => ({ jobId: id, sourceModel: 'qwen3.8:27b', status: 'NOT_BUILT', available: true, progress: 0 }),
         getTrainedModelImport: async (id) => ({ jobId: id, sourceModel: 'qwen3.8:27b', model: `doenaai-trained:web-${id}`, status: 'NOT_STARTED' }),
         ...api,
@@ -223,7 +233,7 @@ const registry = {
     versions: [version],
     trainingJobs: [],
     deployments: [],
-    capabilities: { trainingExecution: false, deploymentExecution: false, rollbackExecution: false },
+    capabilities: { trainingExecution: false, deploymentExecution: false, rollbackExecution: false, historySynchronization: true },
     truncated: { models: false, versions: false, trainingJobs: false, deployments: false },
     limit: 100,
 }
@@ -242,7 +252,7 @@ test('목록 조회에 실패해도 추론 서버 응답을 표시하고 오류�
         assert.match(visible, /runtime-model-from-server/)
         assert.match(visible, /서버가 반환한 상태 안내/)
         assert.ok(screen.all().some((node) => node.props.role === 'alert' && screen.text(node).includes('목록을 조회할 수 없습니다')))
-        assert.equal(screen.button('모델 버전 등록').props.disabled, true)
+        assert.ok(!screen.all().some((node) => node.type === 'button' && screen.text(node).trim() === '외부 모델 정보 등록'))
         assert.doesNotMatch(visible, /doenaai-code-analyzer|검증 정확도|서버에서 받은 모델 이름/)
     } finally {
         screen.cleanup()
@@ -262,7 +272,13 @@ test('추론 서버 확인에 실패해도 저장된 목록을 표시하고 측�
         assert.match(visible, /서버에서 받은 모델 이름/)
         assert.match(visible, /server-version-7/)
         assert.match(visible, /미측정/)
-        assert.equal(screen.button('모델 버전 등록').props.disabled, false)
+        const registration = screen.button('외부 모델 정보 등록')
+        assert.equal(registration.props.disabled, false)
+        let parent = registration.parent
+        while (parent && parent.type !== 'details') parent = parent.parent
+        assert.ok(parent)
+        assert.equal(parent.props['aria-label'], '모델 버전 기타 관리')
+        assert.ok(!parent.props.open)
         assert.doesNotMatch(visible, /runtime-model-from-server|검증 정확도|doenaai-code-analyzer/)
     } finally {
         screen.cleanup()
@@ -285,7 +301,7 @@ test('등록 저장 뒤 목록 갱신이 실패해도 저장 성공 안내와 �
         },
     })
     try {
-        screen.button('모델 버전 등록').props.onClick()
+        screen.button('외부 모델 정보 등록').props.onClick()
         await screen.settle()
         for (const [label, value] of [
             ['새 모델 이름', '새로 등록할 모델'],
@@ -297,18 +313,57 @@ test('등록 저장 뒤 목록 갱신이 실패해도 저장 성공 안내와 �
             input.props.onInput({ target: { value } })
         }
         await screen.settle()
-        const form = screen.all().find((node) => node.type === 'form')
+        const registrationDialog = screen.all().find((node) => node.props.role === 'dialog' && node.props['aria-label'] === '외부 모델 정보 등록')
+        assert.ok(registrationDialog)
+        const form = screen.all(registrationDialog).find((node) => node.type === 'form')
         assert.ok(form)
         form.props.onSubmit({ preventDefault() {} })
         await screen.settle()
         const visible = screen.text()
         assert.equal(savedBodies.length, 1)
         assert.equal(savedBodies[0].modelName, '새로 등록할 모델')
-        assert.match(visible, /모델 버전 등록 정보를 서버에 저장했습니다\./)
+        assert.match(visible, /외부 모델의 관리 정보를 저장했습니다\./)
         assert.match(visible, /저장 후 목록을 새로 불러올 수 없습니다\./)
         assert.match(visible, /최신 상태가 아니므로 등록은 잠시 사용할 수 없습니다/)
         assert.ok(screen.all().some((node) => node.props.role === 'dialog' && node.props['aria-label'] === '모델 버전 상세'))
         assert.doesNotMatch(visible, /등록 정보를 저장하지 못했습니다/)
+    } finally {
+        screen.cleanup()
+    }
+})
+
+test('자동 등록한 버전 상세는 실행 엔진 등록 정보와 확인된 준비 상태를 표시한다', async () => {
+    const automaticVersion = {
+        ...version,
+        artifactType: 'MERGED',
+        historySource: 'TRAINED_MODEL_IMPORT',
+        registrationVerified: true,
+        runtimeModel: 'trained:model',
+        runtimeDigest: 'd'.repeat(64),
+        trainingJobId: 'completed-training-job',
+        readiness: {
+            reason: '실행 엔진 등록을 확인했습니다.',
+            checks: [{ key: 'runtime', label: '실행 엔진 등록', status: 'PASSED', message: '등록 확인 완료' }],
+        },
+    }
+    const screen = await mountScreen({
+        getModelRegistry: async () => ({ ...registry, versions: [automaticVersion] }),
+        getModelRuntime: async () => runtime,
+        getModelVersion: async () => automaticVersion,
+    })
+    try {
+        const detailButton = screen.all().find((node) => node.type === 'button' && screen.text(node).trim() === '상세 보기')
+        detailButton.props.onClick()
+        await screen.settle()
+        assert.match(screen.text(), /모델 작업 자동 기록/)
+        assert.match(screen.text(), /trained:model/)
+        assert.match(screen.text(), /completed-training-job/)
+        assert.match(screen.text(), /실행 엔진 등록을 확인한 모델입니다/)
+        screen.button('배포 준비').props.onClick()
+        await screen.settle()
+        assert.match(screen.text(), /실행 엔진에 등록된 모델입니다/)
+        assert.match(screen.text(), /등록 확인 완료/)
+        assert.doesNotMatch(screen.text(), /등록 파일 직접 배포 불가|직접 적용하는 기능은 지원하지 않습니다|직접 저장한 관리 정보입니다/)
     } finally {
         screen.cleanup()
     }
@@ -351,6 +406,7 @@ test('조회 권한만 있는 사용자는 설치 목록을 보되 검증·전�
         ['MODEL_READ']
     )
     try {
+        assert.ok(!screen.all().some((node) => node.type === 'button' && screen.text(node).trim() === '기록 동기화'))
         await selectCandidate(screen)
         assert.equal(screen.button('JSON 응답 검증').props.disabled, true)
         assert.equal(screen.button('분석 모델로 사용').props.disabled, true)
@@ -358,6 +414,96 @@ test('조회 권한만 있는 사용자는 설치 목록을 보되 검증·전�
         screen.button('JSON 응답 검증').props.onClick()
         await screen.settle()
         assert.equal(writes, 0)
+    } finally {
+        screen.cleanup()
+    }
+})
+
+test('동기화 API가 없는 기존 서버에서는 실행할 수 없는 기록 동기화 버튼을 표시하지 않는다', async () => {
+    const screen = await mountScreen({
+        getModelRegistry: async () => ({ ...registry, capabilities: { ...registry.capabilities, historySynchronization: false } }),
+        getModelRuntime: async () => runtime,
+    })
+    try {
+        assert.ok(!screen.all().some((node) => node.type === 'button' && screen.text(node).trim() === '기록 동기화'))
+    } finally {
+        screen.cleanup()
+    }
+})
+
+test('기록 동기화는 즉시 진행을 알리고 중복 요청을 차단한 뒤 버전·배포·실행 기록을 갱신한다', async () => {
+    let finishSync,
+        writes = 0,
+        reads = 0,
+        operationsReads = 0,
+        synchronized = false
+    const screen = await mountScreen({
+        getModelRegistry: async () => {
+            reads += 1
+            return synchronized
+                ? { ...registry, versions: [{ ...version, version: '동기화한 버전' }], deployments: [{ id: 'deployment', version: '확인된 배포' }] }
+                : registry
+        },
+        getModelRuntime: async () => runtime,
+        getModelOperations: async () => {
+            operationsReads += 1
+            return operationPage([])
+        },
+        synchronizeModelHistory: () => {
+            writes += 1
+            return new Promise((resolve) => {
+                finishSync = resolve
+            })
+        },
+    })
+    try {
+        await selectManagementTab(screen, '실행 작업 이력')
+        const previousOperationsReads = operationsReads
+        const button = screen.button('기록 동기화')
+        button.props.onClick()
+        button.props.onClick()
+        await screen.settle()
+        assert.equal(writes, 1)
+        assert.equal(screen.button('기록 동기화').props.disabled, true)
+        assert.match(screen.text(), /학습이나 모델 전환을 다시 실행하지 않습니다/)
+        synchronized = true
+        finishSync({ status: 'SUCCEEDED', registrationsChecked: 1, deploymentsChecked: 1, failures: 0, message: '기록 동기화를 완료했습니다.' })
+        await screen.settle()
+        assert.equal(screen.button('기록 동기화').props.disabled, false)
+        assert.equal(reads, 2)
+        assert.equal(operationsReads, previousOperationsReads + 1)
+        assert.match(screen.text(), /기록 동기화를 완료했습니다/)
+        await selectManagementTab(screen, '모델 버전')
+        assert.match(screen.text(), /동기화한 버전/)
+        await selectManagementTab(screen, '배포 이력')
+        assert.match(screen.text(), /확인된 배포/)
+    } finally {
+        screen.cleanup()
+    }
+})
+
+test('기록 일부 동기화 실패와 응답 끊김은 모델 작업 실패로 바꾸지 않고 수동 재시도를 제공한다', async () => {
+    let calls = 0
+    const screen = await mountScreen({
+        getModelRegistry: async () => registry,
+        getModelRuntime: async () => runtime,
+        synchronizeModelHistory: async () => {
+            calls += 1
+            if (calls === 1) return { status: 'PARTIAL', failures: 1, message: '일부 기록을 보완하지 못했습니다. 기록 동기화를 다시 실행해 주세요.' }
+            throw serverError('기록 연결을 확인하지 못했습니다.')
+        },
+    })
+    try {
+        screen.button('기록 동기화').props.onClick()
+        await screen.settle()
+        assert.ok(screen.all().some((node) => node.props.role === 'alert' && screen.text(node).includes('일부 기록')))
+        assert.match(screen.text(), /server-version-7/)
+        assert.equal(calls, 1)
+        screen.button('기록 동기화').props.onClick()
+        await screen.settle()
+        assert.match(screen.text(), /기록 연결을 확인하지 못했습니다/)
+        assert.equal(calls, 2)
+        assert.equal(screen.button('기록 동기화').props.disabled, false)
     } finally {
         screen.cleanup()
     }
@@ -449,6 +595,42 @@ test('전환 결과가 불명확하면 자동 재실행하지 않고 같은 식�
         assert.equal(calls.length, 2)
         assert.equal(calls[0].operationId, calls[1].operationId)
         assert.deepEqual(calls[0], calls[1])
+    } finally {
+        screen.cleanup()
+    }
+})
+
+test('실제 적용 성공 뒤 기록 저장이 실패해도 적용 완료를 보존하고 기록 동기화만 안내한다', async () => {
+    let calls = 0,
+        registryReads = 0
+    const screen = await mountScreen({
+        getModelRegistry: async () => {
+            registryReads += 1
+            return registry
+        },
+        getModelRuntime: async () => runtime,
+        getInstalledModels: async () => installed,
+        probeInstalledModel: async () => probeResult,
+        activateInstalledModel: async () => {
+            calls += 1
+            return { status: 'APPLIED', message: '새 모델 적용을 완료했습니다.', historySyncRequired: true }
+        },
+    })
+    try {
+        await selectCandidate(screen)
+        screen.button('JSON 응답 검증').props.onClick()
+        await screen.settle()
+        screen.button('분석 모델로 사용').props.onClick()
+        await screen.settle()
+        await checkConfirmation(screen)
+        screen.button('확인 후 전환').props.onClick()
+        await screen.settle()
+        assert.equal(calls, 1)
+        assert.equal(registryReads, 2)
+        assert.match(screen.text(), /새 모델 적용을 완료했습니다/)
+        assert.match(screen.text(), /모델 작업 결과는 유지되었지만 관리 기록을 저장하지 못했습니다/)
+        assert.match(screen.text(), /모델 전환을 다시 요청할 필요는 없습니다/)
+        assert.doesNotMatch(screen.text(), /작업 결과가 아직 확정되지 않았습니다/)
     } finally {
         screen.cleanup()
     }
@@ -751,12 +933,12 @@ test('학습 대상 상세가 없는 이전 작업도 생성 모델로 구분하
         getModelRegistry: async () => registry,
         getModelRuntime: async () => runtime,
         getModelTraining: async () => ({ requestedModel: 'qwen3.8:27b', jobs: [legacy] }),
-        getModelOperations: async () => ({ operations: [{ ...legacy, action: 'TRAINING_START' }] }),
+        getModelOperations: async () => operationPage([{ ...legacy, action: 'TRAINING_START' }]),
     })
     try {
         screen.button('실행 작업 이력').props.onClick()
         await screen.settle()
-        assert.match(screen.text(), /학습 모델 · qwen3\.8:27b/)
+        assert.match(screen.text(), /qwen3\.8:27b/)
         assert.doesNotMatch(screen.text(), /기존 작업: 모델 미기록/)
         await openAdapterAction(screen)
         assert.match(screen.text(), /학습 기반 모델 · 미기록/)
@@ -981,9 +1163,29 @@ const selectManagementTab = async (screen, label) => {
     await screen.settle()
 }
 
-test('학습 탭 없이 세 관리 탭을 표시하고 진행률과 완료 결과를 실행 이력에서 한 번씩 표시한다', async () => {
+const operationRows = (screen) =>
+    screen
+        .all()
+        .filter(
+            (node) => node.type === 'tr' && screen.all(node).some((child) => child.type === 'button' && /상세 보기|결과 다시 확인/.test(screen.text(child)))
+        )
+const historySearchInput = (screen) => screen.all().find((node) => node.type === 'input' && node.props['data-label'] === '작업 이력 검색')
+const submitHistorySearch = async (screen, query) => {
+    const input = historySearchInput(screen)
+    assert.ok(input)
+    input.props.onInput({ target: { value: query } })
+    await screen.settle()
+    const form = screen.all().find((node) => node.type === 'form' && screen.all(node).includes(input))
+    assert.ok(form, '검색 입력은 제출할 수 있는 폼에 있어야 합니다.')
+    assert.equal(screen.button('검색').props.type, 'submit')
+    form.props.onSubmit({ preventDefault() {} })
+    await screen.settle()
+}
+
+test('학습 탭 없이 실행 이력을 표로 표시하고 완료 결과는 상세에서 조회한다', async () => {
     let listings = 0,
         trainingListings = 0
+    const details = []
     const completed = {
         ...trainingOperation,
         id: completedTraining.id,
@@ -1012,7 +1214,11 @@ test('학습 탭 없이 세 관리 탭을 표시하고 진행률과 완료 결�
         },
         getModelOperations: async () => {
             listings += 1
-            return { operations: [trainingOperation, completed] }
+            return operationPage([trainingOperation, completed])
+        },
+        getModelOperation: async (id) => {
+            details.push(id)
+            return id === completed.id ? completed : trainingOperation
         },
     })
     try {
@@ -1022,17 +1228,275 @@ test('학습 탭 없이 세 관리 탭을 표시하고 진행률과 완료 결�
         await selectManagementTab(screen, '실행 작업 이력')
         assert.equal(listings, 1)
         assert.equal(trainingListings, 0)
-        for (const operation of [trainingOperation, completed]) {
-            const cards = screen.all().filter((node) => node.type === 'article' && screen.text(node).includes(operation.id))
-            assert.equal(cards.length, 1)
-            assert.match(screen.text(cards[0]), /qwen3\.8:27b/)
-            assert.match(screen.text(cards[0]), new RegExp(`${operation.progress}%`))
-        }
+        assert.equal(operationRows(screen).length, 2)
+        assert.ok(operationRows(screen).every((row) => /qwen3\.8:27b/.test(screen.text(row))))
+        assert.ok(!screen.all().some((node) => node.type === 'article'))
         assert.match(screen.text(), /학습 중/)
         assert.match(screen.text(), /완료/)
-        assert.match(screen.text(), /1\.4747/)
-        assert.match(screen.text(), /0\.6343/)
-        assert.match(screen.text(), /0\.6335/)
+        assert.doesNotMatch(screen.text(), /1\.4747|0\.6343|0\.6335/)
+        const completedDetail = screen.all(operationRows(screen)[1]).find((node) => node.type === 'button' && screen.text(node).trim() === '상세 보기')
+        completedDetail.props.onClick()
+        await screen.settle()
+        assert.deepEqual(details, [completed.id])
+        const dialog = screen.all().find((node) => node.props.role === 'dialog' && node.props['aria-label'] === '실행 작업 상세')
+        assert.ok(dialog)
+        assert.match(screen.text(dialog), /100%/)
+        assert.match(screen.text(dialog), /1\.4747/)
+        assert.match(screen.text(dialog), /0\.6343/)
+        assert.match(screen.text(dialog), /0\.6335/)
+    } finally {
+        screen.cleanup()
+    }
+})
+
+test('실행 이력은 서버에서 열 건씩 조회하고 다음과 이전 페이지에서 필요한 행만 표시한다', async () => {
+    const queries = []
+    const operations = Array.from({ length: 12 }, (_, index) => ({
+        id: `history-${index + 1}`,
+        action: 'MODEL_PROBE',
+        status: 'PASSED',
+        afterModel: `page-model-${index + 1}`,
+    }))
+    const screen = await mountScreen({
+        getModelRegistry: async () => registry,
+        getModelRuntime: async () => runtime,
+        getModelOperations: async (query) => {
+            queries.push(query)
+            return operationPage(operations.slice(query.page * 10, (query.page + 1) * 10), { page: query.page, totalCount: 12, totalPages: 2 })
+        },
+    })
+    try {
+        await selectManagementTab(screen, '실행 작업 이력')
+        assert.deepEqual(queries, [{ page: 0, size: 10, query: '', status: '' }])
+        assert.equal(operationRows(screen).length, 10)
+        assert.match(screen.text(), /1\s*\/\s*2/)
+        assert.equal(screen.button('이전').props.disabled, true)
+        screen.button('다음').props.onClick()
+        await screen.settle()
+        assert.deepEqual(queries[1], { page: 1, size: 10, query: '', status: '' })
+        assert.equal(operationRows(screen).length, 2)
+        assert.match(screen.text(), /page-model-11/)
+        assert.doesNotMatch(screen.text(), /page-model-1(?:\s|$)/)
+        assert.match(screen.text(), /2\s*\/\s*2/)
+        assert.equal(screen.button('다음').props.disabled, true)
+        screen.button('이전').props.onClick()
+        await screen.settle()
+        assert.deepEqual(queries[2], { page: 0, size: 10, query: '', status: '' })
+        assert.equal(operationRows(screen).length, 10)
+    } finally {
+        screen.cleanup()
+    }
+})
+
+test('검색은 입력할 때 조회하지 않고 제출할 때 첫 페이지부터 서버 전체 이력을 검색한다', async () => {
+    const queries = []
+    const operations = Array.from({ length: 11 }, (_, index) => ({ id: `history-${index + 1}`, action: 'MODEL_PROBE', status: 'PASSED' }))
+    const screen = await mountScreen({
+        getModelRegistry: async () => registry,
+        getModelRuntime: async () => runtime,
+        getModelOperations: async (query) => {
+            queries.push(query)
+            return query.query
+                ? operationPage([{ id: 'server-result', action: 'MODEL_ACTIVATE', status: 'APPLIED', afterModel: 'server-selected-model' }])
+                : operationPage(operations.slice(query.page * 10, (query.page + 1) * 10), { page: query.page, totalCount: 11, totalPages: 2 })
+        },
+    })
+    try {
+        await selectManagementTab(screen, '실행 작업 이력')
+        screen.button('다음').props.onClick()
+        await screen.settle()
+        const input = historySearchInput(screen)
+        input.props.onInput({ target: { value: '  검증된 모델  ' } })
+        await screen.settle()
+        assert.equal(queries.length, 2)
+        assert.equal(operationRows(screen).length, 1)
+        await submitHistorySearch(screen, '  검증된 모델  ')
+        assert.deepEqual(queries[2], { page: 0, size: 10, query: '검증된 모델', status: '' })
+        assert.equal(operationRows(screen).length, 1)
+        assert.match(screen.text(), /server-selected-model/)
+        assert.equal(screen.button('다음').props.disabled, true)
+        await submitHistorySearch(screen, '')
+        assert.deepEqual(queries[3], { page: 0, size: 10, query: '', status: '' })
+        assert.equal(operationRows(screen).length, 10)
+    } finally {
+        screen.cleanup()
+    }
+})
+
+test('상태 필터를 바꾸면 검색어를 유지하며 서버의 첫 페이지를 다시 조회한다', async () => {
+    const queries = []
+    const operations = Array.from({ length: 10 }, (_, index) => ({ id: `history-${index + 1}`, action: 'MODEL_PROBE', status: 'PASSED' }))
+    const screen = await mountScreen({
+        getModelRegistry: async () => registry,
+        getModelRuntime: async () => runtime,
+        getModelOperations: async (query) => {
+            queries.push(query)
+            return query.status ? operationPage([]) : operationPage(operations, { page: query.page, totalCount: 20, totalPages: 2 })
+        },
+    })
+    try {
+        await selectManagementTab(screen, '실행 작업 이력')
+        await submitHistorySearch(screen, '대상 모델')
+        screen.button('다음').props.onClick()
+        await screen.settle()
+        const filter = screen.all().find((node) => node.type === 'select' && node.props['data-label'] === '작업 상태')
+        assert.ok(filter)
+        filter.props.onChange({ target: { value: 'FAILED' } })
+        await screen.settle()
+        assert.deepEqual(queries.at(-1), { page: 0, size: 10, query: '대상 모델', status: 'FAILED' })
+        assert.equal(operationRows(screen).length, 0)
+        assert.match(screen.text(), /검색 조건에 맞는 실행 작업이 없습니다\./)
+        assert.equal(screen.button('이전').props.disabled, true)
+        assert.equal(screen.button('다음').props.disabled, true)
+    } finally {
+        screen.cleanup()
+    }
+})
+
+test('서버가 줄어든 이력의 마지막 페이지로 보정하면 반환한 페이지 번호를 표시한다', async () => {
+    const queries = []
+    const screen = await mountScreen({
+        getModelRegistry: async () => registry,
+        getModelRuntime: async () => runtime,
+        getModelOperations: async (query) => {
+            queries.push(query)
+            return operationPage([{ id: 'last-result', action: 'MODEL_PROBE', status: 'PASSED' }], {
+                page: 0,
+                totalCount: queries.length === 1 ? 11 : 1,
+                totalPages: queries.length === 1 ? 2 : 1,
+            })
+        },
+    })
+    try {
+        await selectManagementTab(screen, '실행 작업 이력')
+        screen.button('다음').props.onClick()
+        await screen.settle()
+        assert.equal(queries[1].page, 1)
+        assert.match(screen.text(), /1\s*\/\s*1/)
+        assert.equal(screen.button('이전').props.disabled, true)
+        assert.equal(screen.button('다음').props.disabled, true)
+        assert.equal(operationRows(screen).length, 1)
+    } finally {
+        screen.cleanup()
+    }
+})
+
+test('진행 중인 작업의 자동 조회는 현재 검색 페이지 열 건으로 제한하고 화면이 숨겨지면 멈춘다', async (context) => {
+    context.mock.timers.enable({ apis: ['setTimeout'] })
+    const queries = []
+    const screen = await mountScreen({
+        getModelRegistry: async () => registry,
+        getModelRuntime: async () => runtime,
+        getModelOperations: async (query) => {
+            queries.push(query)
+            const operations =
+                query.page === 0
+                    ? [trainingOperation, ...Array.from({ length: 9 }, (_, index) => ({ id: `earlier-${index}`, action: 'MODEL_PROBE', status: 'PASSED' }))]
+                    : [trainingOperation]
+            return operationPage(operations, { page: query.page, totalCount: 11, totalPages: 2 })
+        },
+    })
+    try {
+        await selectManagementTab(screen, '실행 작업 이력')
+        await submitHistorySearch(screen, 'qwen')
+        screen.button('다음').props.onClick()
+        await screen.settle()
+        const beforePolling = queries.length
+        context.mock.timers.tick(5000)
+        await screen.settle()
+        assert.equal(queries.length, beforePolling + 1)
+        assert.deepEqual(queries.at(-1), { page: 1, size: 10, query: 'qwen', status: '' })
+        assert.equal(operationRows(screen).length, 1)
+        await screen.setHidden(true)
+        const beforeHidden = queries.length
+        context.mock.timers.tick(15000)
+        await screen.settle()
+        assert.equal(queries.length, beforeHidden)
+        await screen.setHidden(false)
+        assert.equal(queries.length, beforeHidden + 1)
+        assert.deepEqual(queries.at(-1), { page: 1, size: 10, query: 'qwen', status: '' })
+    } finally {
+        screen.cleanup()
+    }
+})
+
+test('페이지 정보를 보내지 않는 이전 서버에는 재시작 안내를 표시하고 전체 이력을 대신 노출하지 않는다', async () => {
+    const screen = await mountScreen({
+        getModelRegistry: async () => registry,
+        getModelRuntime: async () => runtime,
+        getModelOperations: async () => ({ operations: [trainingOperation], limit: 100 }),
+    })
+    try {
+        await selectManagementTab(screen, '실행 작업 이력')
+        assert.match(screen.text(), /백엔드를 재시작한 뒤 다시 조회/)
+        assert.equal(operationRows(screen).length, 0)
+        assert.ok(!screen.all().some((node) => node.type === 'button' && screen.text(node).trim() === '취소 요청'))
+    } finally {
+        screen.cleanup()
+    }
+})
+
+test('검색 응답이 늦게 돌아와도 더 최근에 제출한 조건의 목록과 페이지를 유지한다', async () => {
+    const pending = new Map()
+    const screen = await mountScreen({
+        getModelRegistry: async () => registry,
+        getModelRuntime: async () => runtime,
+        getModelOperations: (query) => (query.query ? new Promise((resolve) => pending.set(query.query, resolve)) : Promise.resolve(operationPage([]))),
+    })
+    try {
+        await selectManagementTab(screen, '실행 작업 이력')
+        await submitHistorySearch(screen, '첫 검색')
+        await submitHistorySearch(screen, '다음 검색')
+        assert.ok(pending.has('첫 검색'))
+        assert.ok(pending.has('다음 검색'))
+        pending.get('다음 검색')(operationPage([{ id: 'new-result', action: 'MODEL_PROBE', status: 'PASSED', afterModel: 'new-result-model' }]))
+        await screen.settle()
+        assert.match(screen.text(), /new-result-model/)
+        pending.get('첫 검색')(
+            operationPage([{ id: 'old-result', action: 'MODEL_PROBE', status: 'FAILED', afterModel: 'old-result-model' }], { totalCount: 21, totalPages: 3 })
+        )
+        await screen.settle()
+        assert.match(screen.text(), /new-result-model/)
+        assert.doesNotMatch(screen.text(), /old-result-model/)
+        assert.match(screen.text(), /1\s*\/\s*1/)
+    } finally {
+        screen.cleanup()
+    }
+})
+
+test('검색 조회 실패 뒤 남은 이전 목록으로 상세 조회와 학습 취소를 실행하지 않는다', async () => {
+    let details = 0,
+        cancellations = 0
+    const screen = await mountScreen({
+        getModelRegistry: async () => registry,
+        getModelRuntime: async () => runtime,
+        getModelOperations: async (query) => {
+            if (query.query) throw serverError('검색한 작업 이력을 조회하지 못했습니다.')
+            return operationPage([trainingOperation])
+        },
+        getModelOperation: async () => {
+            details += 1
+            return trainingOperation
+        },
+        cancelModelTraining: async () => {
+            cancellations += 1
+            return { status: 'SUCCEEDED' }
+        },
+    })
+    try {
+        await selectManagementTab(screen, '실행 작업 이력')
+        const priorDetail = screen.button('상세 보기')
+        const priorCancel = screen.button('취소 요청')
+        await submitHistorySearch(screen, '연결 실패')
+        assert.match(screen.text(), /검색한 작업 이력을 조회하지 못했습니다/)
+        for (const button of screen.all().filter((node) => node.type === 'button' && ['상세 보기', '취소 요청'].includes(screen.text(node).trim())))
+            assert.equal(button.props.disabled, true)
+        priorDetail.props.onClick()
+        priorCancel.props.onClick()
+        await screen.settle()
+        assert.equal(details, 0)
+        assert.equal(cancellations, 0)
+        assert.ok(!screen.all().some((node) => node.props.role === 'dialog'))
     } finally {
         screen.cleanup()
     }
@@ -1045,7 +1509,7 @@ test('실행 이력의 학습 취소는 대상 확인 전 호출하지 않고 �
     const screen = await mountScreen({
         getModelRegistry: async () => registry,
         getModelRuntime: async () => runtime,
-        getModelOperations: async () => ({ operations: [{ ...trainingOperation, status: cancelled ? 'CANCELLED' : 'TRAINING' }] }),
+        getModelOperations: async () => operationPage([{ ...trainingOperation, status: cancelled ? 'CANCELLED' : 'TRAINING' }]),
         cancelModelTraining: (id, body) => {
             cancellations.push({ id, body })
             return new Promise((resolve) => {
@@ -1087,7 +1551,7 @@ test('조회 권한만 있으면 학습 진행률과 완료 결과를 보되 취
         {
             getModelRegistry: async () => registry,
             getModelRuntime: async () => runtime,
-            getModelOperations: async () => ({ operations: [trainingOperation] }),
+            getModelOperations: async () => operationPage([trainingOperation]),
             cancelModelTraining: async () => {
                 cancellations += 1
             },
@@ -1110,7 +1574,7 @@ for (const uncertain of ['UNKNOWN', 'NETWORK']) {
         const screen = await mountScreen({
             getModelRegistry: async () => registry,
             getModelRuntime: async () => runtime,
-            getModelOperations: async () => ({ operations: [trainingOperation] }),
+            getModelOperations: async () => operationPage([trainingOperation]),
             cancelModelTraining: async (id, body) => {
                 cancellations.push({ id, body })
                 if (uncertain === 'NETWORK') throw new Error('응답 연결이 끊어졌습니다.')
@@ -1146,7 +1610,7 @@ test('모델 작업의 학습 화면에서 실행 이력으로 이동하면 모�
         getModelRuntime: async () => runtime,
         getModelOperations: async () => {
             listings += 1
-            return { operations: [trainingOperation] }
+            return operationPage([trainingOperation])
         },
     })
     try {
@@ -1574,12 +2038,13 @@ test('등록 응답 전에 화면을 숨겼다 돌아와도 중복 등록을 막
 })
 
 test('등록 완료 뒤 설치 목록 갱신이 실패해도 완료 결과를 보존하고 목록만 다시 조회한다', async () => {
-    let reloads = 0
+    let reloads = 0,
+        changes = 0
     const screen = await mountScreen(
         {
             getModelTraining: async () => ({ jobs: [completedTraining] }),
             getTrainedModelBuild: async () => ({ jobId: completedTraining.id, sourceModel: 'qwen3.8:27b', status: 'SUCCEEDED', available: true }),
-            getTrainedModelImport: async () => preparedModel,
+            getTrainedModelImport: async () => ({ ...preparedModel, historySyncRequired: true }),
             importTrainedModel: async () => {
                 throw new Error('완료한 모델을 다시 등록하면 안 됩니다.')
             },
@@ -1593,6 +2058,9 @@ test('등록 완료 뒤 설치 목록 갱신이 실패해도 완료 결과를 �
                 available: true,
                 canDeploy: true,
                 canTrain: true,
+                onChanged: () => {
+                    changes += 1
+                },
                 reload: async () => {
                     reloads += 1
                     if (reloads === 1) throw new Error('설치 목록 연결 실패')
@@ -1608,10 +2076,14 @@ test('등록 완료 뒤 설치 목록 갱신이 실패해도 완료 결과를 �
         await screen.settle()
         assert.match(screen.text(), /분석 서버 등록 완료/)
         assert.match(screen.text(), /새 모델 등록은 완료했지만 설치 목록을 갱신하지 못했습니다/)
+        assert.match(screen.text(), /모델 등록은 완료했지만 버전 기록을 저장하지 못했습니다/)
+        assert.match(screen.text(), /모델을 다시 등록할 필요는 없습니다/)
+        assert.equal(changes, 1)
         assert.equal(reloads, 1)
         screen.button('설치 목록 다시 확인').props.onClick()
         await screen.settle()
         assert.equal(reloads, 2)
+        assert.equal(changes, 1)
         assert.match(screen.text(), /분석 서버 등록 완료/)
         assert.doesNotMatch(screen.text(), /설치 목록을 갱신하지 못했습니다/)
     } finally {
@@ -1749,6 +2221,38 @@ test('학습 서버 변환 환경이 준비되지 않았거나 등록 응답이 
         await screen.settle()
         assert.equal(calls, 0)
         assert.match(screen.text(), /MODEL_BUILD_DISK_SPACE/)
+    } finally {
+        screen.cleanup()
+    }
+})
+
+test('목록 자동 조회가 실패해도 이미 연 작업 상세는 같은 식별자로 다시 조회한다', async () => {
+    const operation = { id: 'pending-detail', action: 'MODEL_ACTIVATE', status: 'UNKNOWN' }
+    const details = []
+    let listingFails = false
+    const screen = await mountScreen({
+        getModelRegistry: async () => registry,
+        getModelRuntime: async () => runtime,
+        getModelOperations: async () => {
+            if (listingFails) throw serverError('목록 조회를 완료하지 못했습니다.')
+            return operationPage([operation])
+        },
+        getModelOperation: async (id) => {
+            details.push(id)
+            return operation
+        },
+    })
+    try {
+        await selectManagementTab(screen, '실행 작업 이력')
+        screen.button('결과 다시 확인').props.onClick()
+        await screen.settle()
+        listingFails = true
+        screen.button('이력 새로고침').props.onClick()
+        await screen.settle()
+        assert.equal(screen.button('결과 다시 확인').props.disabled, true)
+        screen.button('이 작업 다시 조회').props.onClick()
+        await screen.settle()
+        assert.deepEqual(details, ['pending-detail', 'pending-detail'])
     } finally {
         screen.cleanup()
     }

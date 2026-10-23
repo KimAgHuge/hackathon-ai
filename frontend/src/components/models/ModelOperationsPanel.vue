@@ -2,7 +2,10 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { getModelOperations, getModelOperation, cancelModelTraining } from '@/api/modelApi'
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseInput from '@/components/base/BaseInput.vue'
 import BaseModal from '@/components/base/BaseModal.vue'
+import BaseSelect from '@/components/base/BaseSelect.vue'
+import BaseTable from '@/components/base/BaseTable.vue'
 import {
     activeTrainingStatuses,
     createTrainingPoller,
@@ -29,13 +32,61 @@ const cancelConfirmed = ref(false)
 const cancelBusy = ref(false)
 const cancelError = ref('')
 const pendingCancel = ref(null)
+const page = ref(0)
+const pageSize = 10
+const search = ref('')
+const appliedSearch = ref('')
+const statusFilter = ref('')
 let detailGeneration = 0
 let disposed = false
 const operations = computed(() => (Array.isArray(records.value?.operations) ? records.value.operations : []))
 const isTraining = (operation) => ['TRAINING_START', 'TRAIN'].includes(operation?.action)
 const sourceModel = (operation) => operation?.target?.sourceModel || operation?.sourceModel || '모델 미기록'
 const selectedModel = (operation) => operation?.target?.selectedModel || operation?.selectedModel || sourceModel(operation)
+const targetModel = (operation) =>
+    isTraining(operation) ? selectedModel(operation) : operation?.afterModel || operation?.model || operation?.target?.model || '모델 미기록'
 const hasActive = computed(() => operations.value.some((operation) => isTraining(operation) && activeTrainingStatuses.has(operation.status)))
+const totalPages = computed(() => Math.max(1, records.value?.totalPages || 0))
+const canUseRows = computed(() => Boolean(records.value) && !loading.value && !error.value)
+const columns = [
+    { key: 'createdAt', label: '실행 일시', minWidth: '170px' },
+    { key: 'action', label: '작업', minWidth: '140px' },
+    { key: 'target', label: '대상 모델', minWidth: '220px' },
+    { key: 'status', label: '상태', minWidth: '150px' },
+    {
+        key: 'actions',
+        label: '상세',
+        minWidth: '180px',
+        headerClass: 'sticky right-0 z-20 border-l border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800',
+        cellClass: 'sticky right-0 z-10 border-l border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900',
+    },
+]
+const statusOptions = [
+    { value: '', label: '전체 상태' },
+    ...['PENDING', 'PREPARING', 'TRAINING', 'VERIFYING', 'SUCCEEDED', 'FAILED', 'CANCELLED', 'PASSED', 'APPLIED', 'ROLLED_BACK', 'UNKNOWN'].map((value) => ({
+        value,
+        label: operationStatusLabel(value),
+    })),
+]
+const statusClass = (status) => {
+    if (status === 'FAILED') return 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300'
+    if (status === 'UNKNOWN') return 'bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200'
+    if (['SUCCEEDED', 'PASSED', 'APPLIED', 'ROLLED_BACK'].includes(status)) return 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
+    if (activeTrainingStatuses.has(status)) return 'bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300'
+    return 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
+}
+const validPage = (value) =>
+    Array.isArray(value?.operations) &&
+    value.operations.length <= pageSize &&
+    value.operations.every((operation) => operation && typeof operation.id === 'string' && operation.id.trim()) &&
+    Number.isSafeInteger(value.page) &&
+    value.page >= 0 &&
+    value.pageSize === pageSize &&
+    Number.isSafeInteger(value.totalCount) &&
+    value.totalCount >= value.operations.length &&
+    Number.isSafeInteger(value.totalPages) &&
+    value.totalPages === Math.ceil(value.totalCount / pageSize) &&
+    value.page < Math.max(1, value.totalPages)
 const progressValue = (value) =>
     value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value)) && Number(value) >= 0 && Number(value) <= 100 ? Number(value) : null
 const progressLabel = (value) => (progressValue(value) === null ? '미기록' : `${progressValue(value)}%`)
@@ -75,29 +126,57 @@ const detailItems = computed(() => [
           ]
         : [
               { label: '변경 전 모델', value: detail.value?.beforeModel },
-              { label: '변경 후 모델', value: detail.value?.afterModel },
+              { label: '변경 후 모델', value: detail.value?.afterModel || detail.value?.model },
+              { label: '접수 시각', value: formatOperationDate(detail.value?.createdAt) },
+              { label: '최근 갱신', value: formatOperationDate(detail.value?.updatedAt) },
           ]),
 ])
 const monitor = createTrainingPoller({
     async fetchStatus() {
-        const value = await getModelOperations()
-        return { ...value, jobs: (Array.isArray(value?.operations) ? value.operations : []).filter(isTraining) }
+        const value = await getModelOperations({ page: page.value, size: pageSize, query: appliedSearch.value, status: statusFilter.value })
+        if (!validPage(value)) throw new Error('MODEL_OPERATION_PAGINATION_REQUIRED')
+        return { ...value, jobs: value.operations.filter(isTraining) }
     },
     isHidden: () => document.hidden || !props.visible,
     applyStatus(value) {
         records.value = value
+        page.value = value.page
         loading.value = false
         error.value = ''
     },
     onError(failure) {
         loading.value = false
-        error.value = operationErrorMessage(failure, '작업 이력 조회에 실패해 자동 조회를 멈췄습니다. 수동으로 다시 불러와 주세요.')
+        error.value =
+            failure.message === 'MODEL_OPERATION_PAGINATION_REQUIRED'
+                ? '실행 이력의 페이지 정보를 확인하지 못했습니다. 백엔드를 재시작한 뒤 다시 조회해 주세요.'
+                : operationErrorMessage(failure, '작업 이력 조회에 실패해 자동 조회를 멈췄습니다. 수동으로 다시 불러와 주세요.')
     },
 })
 const refresh = async () => {
     if (document.hidden || !props.visible) return
     loading.value = true
     await monitor.refresh()
+}
+const loadPage = async (nextPage = 0) => {
+    monitor.pause()
+    page.value = nextPage
+    records.value = null
+    error.value = ''
+    detailGeneration += 1
+    detailOpen.value = false
+    await refresh()
+}
+const searchHistory = () => {
+    appliedSearch.value = search.value.trim()
+    return loadPage()
+}
+const filterStatus = (value) => {
+    statusFilter.value = value
+    return loadPage()
+}
+const movePage = (nextPage) => {
+    if (!canUseRows.value || nextPage < 0 || nextPage >= totalPages.value) return
+    return loadPage(nextPage)
 }
 const onVisibility = () => {
     if (document.hidden) monitor.pause()
@@ -118,8 +197,20 @@ const showDetail = async (id) => {
         if (!disposed && current === detailGeneration) detailLoading.value = false
     }
 }
+const openDetail = (id) => {
+    if (canUseRows.value && operations.value.some((operation) => operation.id === id)) return showDetail(id)
+}
 const openCancel = (operation) => {
-    if (!props.canTrain || cancelBusy.value || pendingCancel.value || !isTraining(operation) || !activeTrainingStatuses.has(operation.status)) return
+    if (
+        !canUseRows.value ||
+        !operations.value.some((current) => current.id === operation.id) ||
+        !props.canTrain ||
+        cancelBusy.value ||
+        pendingCancel.value ||
+        !isTraining(operation) ||
+        !activeTrainingStatuses.has(operation.status)
+    )
+        return
     cancelTarget.value = operation
     cancelOpen.value = true
     cancelConfirmed.value = false
@@ -147,6 +238,7 @@ const finishCancel = async (result) => {
 const submitCancel = async () => {
     if (!props.canTrain || cancelBusy.value || (!pendingCancel.value && !cancelConfirmed.value)) return
     if (!pendingCancel.value) {
+        if (!canUseRows.value) return
         const current = operations.value.find((operation) => operation.id === cancelTarget.value?.id)
         if (!current || !isTraining(current) || !activeTrainingStatuses.has(current.status)) {
             cancelConfirmed.value = false
@@ -232,102 +324,74 @@ onBeforeUnmount(() => {
                 <BaseButton size="small" variant="secondary" :disabled="cancelBusy || !canTrain" @click="submitCancel">같은 요청 수동 재시도</BaseButton>
             </div>
         </div>
-        <p v-if="records?.truncated" class="mb-4 text-xs text-amber-700 dark:text-amber-300">최근 {{ records.limit || 100 }}개 작업만 표시합니다.</p>
-        <p v-if="loading && !records" role="status" class="py-10 text-center text-sm text-slate-500">작업 이력을 불러오고 있습니다.</p>
-        <p
-            v-else-if="records && !operations.length"
-            class="rounded-xl border border-dashed border-slate-300 p-8 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400"
-        >
-            기록된 실행 작업이 없습니다.
+        <form class="mb-5 flex flex-wrap items-end gap-3" @submit.prevent="searchHistory">
+            <BaseInput
+                v-model="search"
+                label="작업 이력 검색"
+                wrapper-class="min-w-0 flex-1 basis-72"
+                placeholder="작업 종류, 모델명, 요청 식별자 검색"
+                maxlength="200"
+            />
+            <BaseSelect
+                :model-value="statusFilter"
+                label="작업 상태"
+                wrapper-class="w-full sm:w-44"
+                :options="statusOptions"
+                @update:model-value="filterStatus"
+            />
+            <BaseButton type="submit" variant="secondary">검색</BaseButton>
+        </form>
+        <p class="mb-4 text-xs leading-6 text-slate-500 dark:text-slate-400">
+            저장된 전체 이력을 검색하고 한 페이지에 10건씩 조회합니다. 진행률과 결과의 자세한 내용은 상세 보기에서 확인합니다.
         </p>
-        <div class="grid gap-4">
-            <article
-                v-for="operation in operations"
-                :key="operation.id"
-                class="min-w-0 rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-900"
-            >
-                <div class="flex flex-wrap items-start justify-between gap-3">
-                    <div class="min-w-0">
-                        <p class="text-sm font-bold">{{ operationActionLabel(operation.action) }} · {{ operationStatusLabel(operation.status) }}</p>
-                        <p class="mt-2 break-all text-xs text-slate-500 dark:text-slate-400">{{ operation.id }}</p>
-                    </div>
-                    <div class="flex shrink-0 flex-wrap gap-2">
-                        <BaseButton
-                            v-if="canTrain && isTraining(operation) && activeTrainingStatuses.has(operation.status)"
-                            size="small"
-                            variant="secondary"
-                            :disabled="cancelBusy || Boolean(pendingCancel)"
-                            @click="openCancel(operation)"
-                            >취소 요청</BaseButton
-                        >
-                        <BaseButton size="small" variant="secondary" @click="showDetail(operation.id)">{{
-                            operation.status === 'UNKNOWN' ? '결과 다시 확인' : '상세 보기'
-                        }}</BaseButton>
-                    </div>
-                </div>
-                <template v-if="isTraining(operation)">
-                    <p class="mt-5 break-all text-sm font-bold">학습 모델 · {{ selectedModel(operation) }}</p>
-                    <p v-if="selectedModel(operation) !== sourceModel(operation)" class="mt-1 break-all text-xs text-slate-500">
-                        승인 자료 출처 모델 · {{ sourceModel(operation) }}
-                    </p>
-                    <p v-if="operation.target?.baseModel" class="mt-2 break-all text-xs leading-6 text-slate-500 dark:text-slate-400">
-                        학습 기반 모델 · {{ operation.target.baseModel }}
-                    </p>
-                    <div class="mt-4">
-                        <div class="mb-2 flex items-center justify-between gap-3 text-xs">
-                            <span class="font-semibold text-slate-600 dark:text-slate-300">학습 진행률</span
-                            ><span class="font-bold text-blue-700 dark:text-blue-300">{{ progressLabel(operation.progress) }}</span>
-                        </div>
-                        <div
-                            role="progressbar"
-                            :aria-label="`${selectedModel(operation)} 학습 진행률`"
-                            aria-valuemin="0"
-                            aria-valuemax="100"
-                            :aria-valuenow="progressValue(operation.progress) ?? undefined"
-                            :aria-valuetext="progressLabel(operation.progress)"
-                            class="h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800"
-                        >
-                            <div
-                                class="h-full rounded-full bg-blue-600 transition-[width]"
-                                :style="{ width: `${progressValue(operation.progress) ?? 0}%` }"
-                            ></div>
-                        </div>
-                    </div>
-                    <dl class="mt-5 grid gap-4 border-t border-slate-100 pt-4 text-xs dark:border-slate-800 sm:grid-cols-3">
-                        <div>
-                            <dt class="text-slate-500 dark:text-slate-400">반복 횟수</dt>
-                            <dd class="mt-2 font-semibold">{{ operation.iterations ?? '미기록' }}<span v-if="operation.iterations != null">회</span></dd>
-                        </div>
-                        <div>
-                            <dt class="text-slate-500 dark:text-slate-400">접수 시각</dt>
-                            <dd class="mt-2">{{ formatOperationDate(operation.createdAt) }}</dd>
-                        </div>
-                        <div>
-                            <dt class="text-slate-500 dark:text-slate-400">최근 갱신</dt>
-                            <dd class="mt-2">{{ formatOperationDate(operation.updatedAt) }}</dd>
-                        </div>
-                    </dl>
-                </template>
-                <p class="mt-4 break-all text-sm leading-6">{{ operation.message || '안내 기록 없음' }}</p>
-                <p v-if="operation.errorCode" class="mt-2 break-all text-xs text-rose-700 dark:text-rose-300">오류 코드 · {{ operation.errorCode }}</p>
-                <div v-if="isTraining(operation) && operation.status === 'SUCCEEDED'" class="mt-4 rounded-xl bg-blue-50 p-4 dark:bg-blue-950/40">
-                    <p class="text-sm font-bold text-blue-900 dark:text-blue-100">추가 학습과 결과 저장 완료</p>
-                    <dl v-if="metricItems(operation).length" class="mt-4 grid gap-4 text-xs sm:grid-cols-2 lg:grid-cols-3">
-                        <div v-for="item in metricItems(operation)" :key="item.label">
-                            <dt class="text-slate-500 dark:text-slate-400">{{ item.label }}</dt>
-                            <dd class="mt-2 font-semibold">{{ item.value }}</dd>
-                        </div>
-                    </dl>
-                    <p class="mt-4 text-xs leading-6 text-blue-800 dark:text-blue-200">
-                        시험 학습 결과이며 독립 생성 평가와 업무 품질 평가는 수행하지 않았습니다. 모델 작업에서 이 결과로 새 모델을 생성·등록한 뒤 검증·적용할
-                        수 있습니다.
-                    </p>
-                </div>
-                <p v-if="!isTraining(operation)" class="mt-2 break-all text-xs text-slate-500 dark:text-slate-400">
-                    {{ operation.beforeModel || '기록 없음' }} → {{ operation.afterModel || '기록 없음' }} ·
-                    {{ formatOperationDate(operation.updatedAt || operation.createdAt) }}
+        <BaseTable
+            :columns="columns"
+            :rows="operations"
+            :loading="loading"
+            :empty-text="appliedSearch || statusFilter ? '검색 조건에 맞는 실행 작업이 없습니다.' : '기록된 실행 작업이 없습니다.'"
+        >
+            <template #cell-createdAt="{ row }">
+                <span class="whitespace-nowrap text-xs">{{ formatOperationDate(row.createdAt) }}</span>
+            </template>
+            <template #cell-action="{ row }">
+                <span class="text-sm font-semibold">{{ operationActionLabel(row.action) }}</span>
+                <p class="mt-1 max-w-56 break-all text-xs leading-5 text-slate-500 dark:text-slate-400">{{ row.id }}</p>
+            </template>
+            <template #cell-target="{ row }">
+                <p class="max-w-sm break-all text-sm font-semibold">{{ targetModel(row) }}</p>
+                <p v-if="isTraining(row) && selectedModel(row) !== sourceModel(row)" class="mt-1 max-w-sm break-all text-xs text-slate-500 dark:text-slate-400">
+                    승인 자료 출처 · {{ sourceModel(row) }}
                 </p>
-            </article>
+            </template>
+            <template #cell-status="{ row }">
+                <span class="inline-flex whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-bold" :class="statusClass(row.status)">{{
+                    operationStatusLabel(row.status)
+                }}</span>
+                <p v-if="isTraining(row)" class="mt-1 text-xs text-slate-500 dark:text-slate-400">진행률 · {{ progressLabel(row.progress) }}</p>
+            </template>
+            <template #cell-actions="{ row }">
+                <div class="flex flex-wrap gap-2">
+                    <BaseButton size="small" variant="secondary" :disabled="!canUseRows" @click="openDetail(row.id)">{{
+                        row.status === 'UNKNOWN' ? '결과 다시 확인' : '상세 보기'
+                    }}</BaseButton>
+                    <BaseButton
+                        v-if="canTrain && isTraining(row) && activeTrainingStatuses.has(row.status)"
+                        size="small"
+                        variant="secondary"
+                        :disabled="!canUseRows || cancelBusy || Boolean(pendingCancel)"
+                        @click="openCancel(row)"
+                        >취소 요청</BaseButton
+                    >
+                </div>
+            </template>
+        </BaseTable>
+        <div class="mt-4 flex flex-wrap items-center justify-between gap-3 text-xs text-slate-500 dark:text-slate-400">
+            <p>총 {{ (records?.totalCount || 0).toLocaleString('ko-KR') }}건 · 페이지당 10건</p>
+            <div class="flex items-center gap-3">
+                <BaseButton size="small" variant="secondary" :disabled="!canUseRows || page <= 0" @click="movePage(page - 1)">이전</BaseButton>
+                <span class="min-w-16 text-center font-bold">{{ page + 1 }} / {{ totalPages }}</span>
+                <BaseButton size="small" variant="secondary" :disabled="!canUseRows || page >= totalPages - 1" @click="movePage(page + 1)">다음</BaseButton>
+            </div>
         </div>
         <BaseModal
             v-model="detailOpen"

@@ -86,6 +86,7 @@ let installedGeneration = 0
 let timer = null
 let disposed = false
 let refreshedDigest = ''
+let notifiedDigest = ''
 const jobSelectedModel = (job) => job?.target?.selectedModel || job?.selectedModel || job?.target?.sourceModel || job?.sourceModel
 const jobSourceModel = (job) => job?.target?.sourceModel || job?.sourceModel
 const jobs = computed(() =>
@@ -185,7 +186,6 @@ const refreshInstalled = async (value = imported.value) => {
         if (!current(token, id)) return
         refreshedDigest = value.digest
         importSyncError.value = ''
-        emit('changed')
     } catch (failure) {
         if (current(token, id))
             importSyncError.value = operationErrorMessage(failure, '새 모델 등록은 완료했지만 설치 목록을 갱신하지 못했습니다. 설치 목록을 다시 확인해 주세요.')
@@ -197,6 +197,10 @@ const acceptImport = async (value) => {
     imported.value = value
     importUncertain.value = false
     importCheckedAt.value = new Date().toISOString()
+    if (value.status === 'READY' && value.digest !== notifiedDigest) {
+        notifiedDigest = value.digest
+        emit('changed')
+    }
     if (value.status === 'READY' && value.digest !== refreshedDigest) await refreshInstalled(value)
 }
 const refreshStatus = async () => {
@@ -323,6 +327,7 @@ watch(selectedJobId, () => {
     build.value = null
     imported.value = null
     refreshedDigest = ''
+    notifiedDigest = ''
     importCheckedAt.value = ''
     importUncertain.value = false
     importSyncError.value = ''
@@ -524,6 +529,13 @@ onBeforeUnmount(() => {
             </div>
             <p v-if="imported?.status === 'READY' && !synchronized" class="mt-4 text-xs leading-6 text-amber-700 dark:text-amber-300">
                 설치 목록에서 등록한 모델과 파일 식별값을 확인하지 못했습니다. 설치 목록을 새로고침해 주세요.
+            </p>
+            <p
+                v-if="imported?.status === 'READY' && imported.historySyncRequired"
+                role="alert"
+                class="mt-4 rounded-lg bg-amber-50 p-3 text-sm leading-6 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200"
+            >
+                모델 등록은 완료했지만 버전 기록을 저장하지 못했습니다. 모델 관리 기록의 기록 동기화로 보완해 주세요. 모델을 다시 등록할 필요는 없습니다.
             </p>
             <p
                 v-if="importSyncError"

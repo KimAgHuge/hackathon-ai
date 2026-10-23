@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { getModelRegistry, getModelRuntime, getModelVersion, registerModelVersion, recordModelEvaluation } from '@/api/modelApi'
+import { getModelRegistry, getModelRuntime, getModelVersion, registerModelVersion, recordModelEvaluation, synchronizeModelHistory } from '@/api/modelApi'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseInput from '@/components/base/BaseInput.vue'
 import BaseSelect from '@/components/base/BaseSelect.vue'
@@ -21,6 +21,8 @@ const registryAvailable = ref(false)
 const registryError = ref('')
 const runtimeError = ref('')
 const notice = ref('')
+const historySyncBusy = ref(false)
+const historySyncWarning = ref('')
 const activeTab = ref('versions')
 const search = ref('')
 const statusFilter = ref('')
@@ -44,6 +46,7 @@ let disposed = false
 const canRegister = computed(() => authStore.hasPermission('MODEL_TRAIN') || authStore.hasPermission('MODEL_DEPLOY'))
 const canEvaluate = computed(() => authStore.hasPermission('MODEL_EVALUATE'))
 const canDeploy = computed(() => authStore.hasPermission('MODEL_DEPLOY'))
+const canSynchronizeHistory = computed(() => canDeploy.value && registryAvailable.value && registry.value?.capabilities?.historySynchronization === true)
 const canRollback = computed(() => authStore.hasPermission('MODEL_ROLLBACK'))
 const canTrain = computed(() => authStore.hasPermission('MODEL_TRAIN'))
 const asList = (value) => (Array.isArray(value) ? value : [])
@@ -89,9 +92,6 @@ const filteredRows = computed(() => {
         return (!statusFilter.value || row.status === statusFilter.value) && (!keyword || text.includes(keyword))
     })
 })
-const executionReason = computed(
-    () => registry.value?.capabilities?.reason || '모델 버전 등록은 관리 정보를 저장합니다. 분석 모델 변경, 학습과 학습 결과 적용은 모델 작업에서 진행합니다.'
-)
 const truncated = computed(() => registry.value?.truncated?.[activeTab.value] === true)
 const versionColumns = [
     { key: 'version', label: '모델 / 버전', minWidth: '220px' },
@@ -113,7 +113,7 @@ const deploymentColumns = [
     { key: 'serverName', label: '배포 서버', minWidth: '200px' },
     { key: 'deploymentRole', label: '역할', minWidth: '130px' },
     { key: 'status', label: '저장된 상태', minWidth: '130px' },
-    { key: 'deployedAt', label: '배포 일시', minWidth: '170px' },
+    { key: 'deployedAt', label: '적용 확인 일시', minWidth: '170px' },
     {
         key: 'actions',
         label: '준비 상태',
@@ -169,7 +169,28 @@ const resetFilters = () => {
 }
 const refreshAfterOperation = () => {
     operationRefreshKey.value += 1
-    refreshModels()
+    return refreshModels()
+}
+const synchronizeHistory = async () => {
+    if (!canSynchronizeHistory.value || historySyncBusy.value) return
+    historySyncBusy.value = true
+    historySyncWarning.value = ''
+    notice.value = ''
+    try {
+        const result = await synchronizeModelHistory()
+        if (disposed) return
+        if (result.status === 'SUCCEEDED') notice.value = result.message || '완료한 모델 등록과 적용 기록을 동기화했습니다.'
+        else historySyncWarning.value = result.message || '기록 일부를 저장하지 못했습니다. 연결 상태를 확인한 뒤 기록 동기화를 다시 실행해 주세요.'
+        await Promise.all([refreshAfterOperation(), detailOpen.value ? refreshDetail() : Promise.resolve()])
+    } catch (error) {
+        if (!disposed)
+            historySyncWarning.value = errorMessage(
+                error,
+                '관리 기록을 동기화하지 못했습니다. 모델 실행 상태는 유지되며 기록 동기화만 다시 시도할 수 있습니다.'
+            )
+    } finally {
+        if (!disposed) historySyncBusy.value = false
+    }
 }
 const openRegister = () => {
     if (!canRegister.value || !registryAvailable.value || loading.value) return
@@ -224,7 +245,7 @@ const registerVersion = async (body) => {
     }
     if (!saved || disposed) return
     registerOpen.value = false
-    notice.value = '모델 버전 등록 정보를 서버에 저장했습니다. 파일 복사, 학습, 평가와 배포는 실행하지 않았습니다.'
+    notice.value = '외부 모델의 관리 정보를 저장했습니다. 파일 복사, 학습, 평가와 배포는 실행하지 않았습니다.'
     await Promise.all([refreshModels(), openDetail(saved.id, saved)])
 }
 const saveEvaluation = async (body) => {
@@ -266,9 +287,6 @@ onBeforeUnmount(() => {
                 >
             </template>
         </ViewHeading>
-        <p v-if="canRegister && !registryAvailable" class="mb-4 text-xs text-slate-500 dark:text-slate-400">
-            모델 목록을 정상적으로 불러온 뒤 버전을 등록할 수 있습니다.
-        </p>
         <div
             v-if="notice"
             role="status"
@@ -284,6 +302,13 @@ onBeforeUnmount(() => {
                 닫기
             </button>
         </div>
+        <p
+            v-if="historySyncWarning"
+            role="alert"
+            class="mb-5 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200"
+        >
+            {{ historySyncWarning }}
+        </p>
         <section
             class="overflow-hidden rounded-2xl border border-blue-200 bg-gradient-to-br from-[#071a38] via-[#123a76] to-[#1659b7] text-white shadow-lg shadow-blue-950/10 dark:border-blue-900"
         >
@@ -359,10 +384,11 @@ onBeforeUnmount(() => {
                 <div>
                     <h2 class="text-base font-extrabold text-slate-900 dark:text-slate-100">모델 관리 기록</h2>
                     <p class="mt-1 text-xs leading-6 text-slate-500 dark:text-slate-400">모델 버전과 배포 기록, 학습을 포함한 실행 작업 이력을 확인합니다.</p>
+                    <p v-if="historySyncBusy" role="status" class="mt-2 text-xs leading-6 text-blue-700 dark:text-blue-300">
+                        완료한 등록·적용 기록을 확인하고 있습니다. 학습이나 모델 전환을 다시 실행하지 않습니다.
+                    </p>
                 </div>
-                <BaseButton v-if="canRegister && activeTab === 'versions'" :disabled="!registryAvailable || loading || registerBusy" @click="openRegister"
-                    >모델 버전 등록</BaseButton
-                >
+                <BaseButton v-if="canSynchronizeHistory" variant="secondary" :loading="historySyncBusy" @click="synchronizeHistory">기록 동기화</BaseButton>
             </div>
             <div class="mb-6 flex flex-wrap gap-2 border-b border-slate-200 pb-4 dark:border-slate-700" aria-label="모델 관리 목록">
                 <button
@@ -412,9 +438,29 @@ onBeforeUnmount(() => {
                 관리 기록을 불러오지 못해 목록을 표시할 수 없습니다. 위의 다시 불러오기로 연결 상태를 확인해 주세요.
             </div>
             <template v-else-if="activeTab === 'versions'">
-                <p class="mb-4 text-xs leading-6 text-slate-500 dark:text-slate-400">
-                    등록 상태와 수동 평가 기록은 파일 검증이나 배포 준비 완료를 뜻하지 않습니다. 평가하지 않은 점수는 미측정으로 표시합니다.
-                </p>
+                <div class="mb-4 flex flex-wrap items-start justify-between gap-3">
+                    <p class="min-w-0 flex-1 text-xs leading-6 text-slate-500 dark:text-slate-400">
+                        학습 모델 등록이 완료되면 버전이 자동으로 저장됩니다. 평가하지 않은 점수는 미측정으로 표시합니다.
+                    </p>
+                    <details v-if="canRegister" class="relative shrink-0" aria-label="모델 버전 기타 관리">
+                        <summary
+                            class="cursor-pointer select-none rounded-lg px-3 py-1.5 text-xs font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+                        >
+                            기타 관리
+                        </summary>
+                        <div
+                            class="absolute right-0 z-30 mt-2 w-64 max-w-[calc(100vw-3rem)] rounded-xl border border-slate-200 bg-white p-3 shadow-lg dark:border-slate-700 dark:bg-slate-900"
+                        >
+                            <BaseButton variant="ghost" size="small" block :disabled="!registryAvailable || loading || registerBusy" @click="openRegister"
+                                >외부 모델 정보 등록</BaseButton
+                            >
+                            <p class="mt-2 px-2 text-xs leading-6 text-slate-500 dark:text-slate-400">별도로 준비한 모델의 관리 정보를 직접 추가합니다.</p>
+                            <p v-if="!registryAvailable" class="mt-2 px-2 text-xs leading-6 text-amber-700 dark:text-amber-300">
+                                목록을 정상적으로 불러온 뒤 등록할 수 있습니다.
+                            </p>
+                        </div>
+                    </details>
+                </div>
                 <div class="hidden md:block">
                     <BaseTable
                         :columns="versionColumns"
@@ -447,7 +493,7 @@ onBeforeUnmount(() => {
                         >
                     </BaseTable>
                 </div>
-                <div class="grid gap-3 md:hidden">
+                <div class="flex flex-col gap-3 md:hidden">
                     <p v-if="loading && !registry" role="status" class="py-10 text-center text-sm text-slate-500">모델 버전을 불러오고 있습니다.</p>
                     <div
                         v-else-if="!filteredRows.length"
@@ -481,14 +527,11 @@ onBeforeUnmount(() => {
             </template>
             <template v-else-if="activeTab === 'deployments'">
                 <div
-                    class="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200"
+                    class="mb-4 rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm leading-6 text-blue-900 dark:border-blue-800 dark:bg-blue-950/30 dark:text-blue-200"
                 >
-                    <p class="font-bold">배포 이력은 현재 실행 모델과 다를 수 있습니다.</p>
-                    <p class="mt-1">{{ executionReason }}</p>
-                    <div class="mt-3 flex flex-wrap gap-2">
-                        <BaseButton disabled size="small">등록 파일 직접 배포 불가</BaseButton>
-                    </div>
-                    <p class="mt-3 text-xs">모델 전환과 복구, 학습 결과 적용은 상단의 모델 작업에서 진행합니다.</p>
+                    <p class="font-bold">모델 적용과 복구가 성공하면 배포 이력이 자동으로 저장됩니다.</p>
+                    <p class="mt-1">모델 등록만으로는 배포 이력이 생기지 않습니다. 과거 완료 기록이 빠져 있으면 기록 동기화로 보완할 수 있습니다.</p>
+                    <p class="mt-3 text-xs">저장된 이력이며 현재 실행 상태와 다를 수 있습니다. 모델 전환과 복구는 상단의 모델 작업에서 진행합니다.</p>
                 </div>
                 <BaseTable
                     :columns="deploymentColumns"

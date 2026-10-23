@@ -49,6 +49,18 @@ test('조회 실패를 예시 데이터로 숨기거나 배포 명령으로 재�
     assert.deepEqual(calls, ['/models', '/models/runtime'])
 })
 
+test('기록 동기화는 빈 본문과 별도 제한 시간을 사용하고 모델 실행을 요청하지 않는다', async () => {
+    const calls = []
+    const api = createModelApi({
+        async post(path, body, options) {
+            calls.push({ path, body, options })
+            return { data: { status: 'PARTIAL' } }
+        },
+    })
+    assert.deepEqual(await api.synchronizeModelHistory(), { status: 'PARTIAL' })
+    assert.deepEqual(calls, [{ path: '/models/history/sync', body: {}, options: { timeout: 60000 } }])
+})
+
 test('모델 화면 API는 예시 모드와 무관하게 인증이 적용되는 공통 연결을 사용한다', () => {
     const source = readFileSync(new URL('../src/api/modelApi.js', import.meta.url), 'utf8')
     assert.match(source, /httpClient/)
@@ -68,6 +80,22 @@ test('설치 모델·학습·작업 이력은 실제 경로로 조회하고 식�
     await api.getModelOperations()
     await api.getModelOperation('a/b?x=1')
     assert.deepEqual(calls, ['/models/installed', '/models/training', '/models/operations', '/models/operations/a%2Fb%3Fx%3D1'])
+})
+
+test('실행 이력은 페이지와 검색 조건을 쿼리로 보내고 기본 조회도 열 건으로 제한한다', async () => {
+    const calls = []
+    const api = createModelApi({
+        async get(path, options) {
+            calls.push({ path, options })
+            return { data: { operations: [] } }
+        },
+    })
+    await api.getModelOperations()
+    await api.getModelOperations({ page: 2, size: 10, query: 'qwen:latest / 모델', status: 'FAILED' })
+    assert.deepEqual(calls, [
+        { path: '/models/operations', options: { params: { page: 0, size: 10, query: '', status: '' }, timeout: 30000 } },
+        { path: '/models/operations', options: { params: { page: 2, size: 10, query: 'qwen:latest / 모델', status: 'FAILED' }, timeout: 30000 } },
+    ])
 })
 
 test('검증은 긴 제한 시간을 사용하고 변경·학습 요청은 원본 식별자와 본문을 보존한다', async () => {

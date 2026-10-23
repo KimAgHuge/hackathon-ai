@@ -93,7 +93,7 @@ const submit = () => {
 <template>
     <BaseModal
         :model-value="modelValue"
-        title="모델 버전 등록"
+        title="외부 모델 정보 등록"
         :busy="busy"
         footer-text="등록 정보만 서버에 저장합니다. 파일 복사, 학습, 평가와 배포는 실행하지 않습니다."
         @update:model-value="emit('update:modelValue', $event)"
@@ -102,8 +102,8 @@ const submit = () => {
             <div
                 class="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm leading-6 text-blue-800 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-200"
             >
-                모델 파일의 위치와 버전을 관리 기록으로 등록합니다. 등록 상태는 파일 수신·해시 검증이나 배포 준비 완료를 뜻하지 않습니다. 비밀번호, 인증키와
-                접근 토큰은 입력하지 마세요.
+                별도로 준비한 모델의 이름·버전·파일 위치를 관리 기록으로 저장합니다. 학습 모델 등록에서 자동으로 생성된 버전은 다시 등록할 필요가 없습니다.
+                비밀번호, 인증키와 접근 토큰은 입력하지 마세요.
             </div>
             <fieldset class="grid min-w-0 gap-5" :disabled="busy">
                 <BaseSelect v-model="form.modelId" label="등록할 모델" :options="modelOptions" />

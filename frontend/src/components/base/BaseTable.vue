@@ -148,7 +148,7 @@ const handleSort = (column) => {
             <table class="w-full border-collapse text-left">
                 <thead class="bg-slate-50 text-slate-500 dark:bg-slate-800/80 dark:text-slate-400" :class="{ 'sticky top-0 z-10': stickyHeader }">
                     <tr class="border-b border-slate-200 dark:border-slate-700">
-                        <th v-if="selectable" class="w-12 px-4 py-3 text-center">
+                        <th v-if="selectable" scope="col" class="w-12 px-4 py-3 text-center">
                             <input
                                 type="checkbox"
                                 class="h-4 w-4 rounded border-slate-300 text-blue-600"
@@ -162,6 +162,7 @@ const handleSort = (column) => {
                         <th
                             v-for="column in visibleColumns"
                             :key="column.key"
+                            scope="col"
                             class="whitespace-nowrap px-5 py-3 text-xs font-bold"
                             :class="[getAlignmentClass(column.align), column.headerClass]"
                             :style="{

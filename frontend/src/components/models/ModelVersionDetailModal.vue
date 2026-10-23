@@ -44,6 +44,8 @@ const metricFields = [
 const evaluations = computed(() => (Array.isArray(props.version?.evaluations) ? props.version.evaluations : []))
 const deployments = computed(() => (Array.isArray(props.version?.deployments) ? props.version.deployments : []))
 const checks = computed(() => (Array.isArray(props.version?.readiness?.checks) ? props.version.readiness.checks : []))
+const automaticallyRecorded = computed(() => ['TRAINED_MODEL_IMPORT', 'RUNTIME_SELECTION'].includes(props.version?.historySource))
+const verifiedRegistration = computed(() => props.version?.registrationVerified === true)
 const artifactLabel = (value) => ({ BASE: '기반 모델', LORA: 'LoRA 어댑터', MERGED: '병합 모델', EXTERNAL: '외부 모델' })[value] || '기록 없음'
 const basicFields = computed(() => [
     ['모델 이름', props.version?.modelName],
@@ -52,6 +54,10 @@ const basicFields = computed(() => [
     ['파일 유형', artifactLabel(props.version?.artifactType)],
     ['학습 데이터셋', props.version?.datasetName],
     ['등록 일시', dateLabel(props.version?.createdAt)],
+    ['등록 경로', automaticallyRecorded.value ? '모델 작업 자동 기록' : '직접 등록'],
+    ...(props.version?.runtimeModel ? [['등록된 실행 모델', props.version.runtimeModel]] : []),
+    ...(props.version?.runtimeDigest ? [['실행 모델 식별값', props.version.runtimeDigest]] : []),
+    ...(props.version?.trainingJobId ? [['학습 작업 식별자', props.version.trainingJobId]] : []),
     ['모델 파일 위치', props.version?.artifactUri],
     ['어댑터 파일 위치', props.version?.adapterUri],
     ['SHA-256 해시', props.version?.checksum],
@@ -117,7 +123,7 @@ const submitEvaluation = () => {
         :model-value="modelValue"
         title="모델 버전 상세"
         :busy="busy"
-        footer-text="등록 파일의 관리 기록과 준비 상태를 조회합니다. 설치 모델 전환과 웹 학습은 메인 화면의 별도 영역에서 진행합니다."
+        footer-text="모델의 등록·평가·적용 기록을 조회합니다. 모델 전환과 학습은 모델 작업에서 진행합니다."
         @update:model-value="emit('update:modelValue', $event)"
     >
         <div v-if="loading" role="status" class="py-16 text-center text-sm text-slate-500 dark:text-slate-400">버전 상세를 불러오고 있습니다.</div>
@@ -133,7 +139,15 @@ const submitEvaluation = () => {
             <div class="flex flex-wrap items-start justify-between gap-3">
                 <div class="min-w-0">
                     <p class="break-all text-lg font-extrabold text-slate-900 dark:text-slate-100">{{ version.modelName }} · {{ version.version }}</p>
-                    <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">등록됨은 파일 검증이나 배포 준비 완료를 뜻하지 않습니다.</p>
+                    <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                        {{
+                            verifiedRegistration
+                                ? '실행 엔진 등록을 확인한 모델입니다. 실제 분석에 적용한 기록은 배포 이력에서 확인합니다.'
+                                : automaticallyRecorded
+                                  ? '모델 적용 과정에서 자동으로 저장된 기록입니다. 현재 실행 상태는 추론 서버 확인에서 확인합니다.'
+                                  : '직접 저장한 관리 정보입니다. 파일 검증과 실제 적용 여부는 별도로 확인해야 합니다.'
+                        }}
+                    </p>
                 </div>
                 <ModelStateBadge :status="version.status" />
             </div>
@@ -294,7 +308,7 @@ const submitEvaluation = () => {
                 <div
                     class="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200"
                 >
-                    <h3 class="font-bold">등록 파일을 직접 적용하는 기능은 지원하지 않습니다</h3>
+                    <h3 class="font-bold">{{ verifiedRegistration ? '실행 엔진에 등록된 모델입니다' : '실제 적용은 모델 작업에서 진행합니다' }}</h3>
                     <p class="mt-1">{{ version.readiness?.reason || '서버에서 실행 준비 상태를 확인하지 못했습니다.' }}</p>
                 </div>
                 <ul v-if="checks.length" class="grid gap-3 sm:grid-cols-2">
@@ -307,11 +321,8 @@ const submitEvaluation = () => {
                     </li>
                 </ul>
                 <div class="flex flex-col gap-3 rounded-xl bg-slate-50 p-4 dark:bg-slate-800/60">
-                    <div class="flex flex-wrap gap-2">
-                        <BaseButton disabled>등록 파일 직접 배포 불가</BaseButton>
-                    </div>
                     <p class="text-xs leading-5 text-slate-500 dark:text-slate-400">
-                        등록한 LoRA 파일과 Ollama 설치 모델은 별도입니다. 설치 모델 전환과 복구는 메인 화면에서 대상과 권한을 확인한 뒤 진행합니다.
+                        모델 작업에서 응답 검증 후 적용하거나 이전 모델로 복구할 수 있습니다. 적용·복구가 성공하면 배포 이력이 자동으로 저장됩니다.
                     </p>
                 </div>
                 <h3 class="mt-2 text-sm font-bold text-slate-900 dark:text-slate-100">이 버전의 배포 기록</h3>
@@ -326,7 +337,7 @@ const submitEvaluation = () => {
                         <ModelStateBadge :status="deployment.status" />
                     </div>
                     <p class="mt-2 break-all text-xs text-slate-500 dark:text-slate-400">
-                        {{ deployment.deploymentRole || '역할 기록 없음' }} · {{ dateLabel(deployment.deployedAt) }}
+                        {{ deployment.deploymentRole || '역할 기록 없음' }} · 적용 확인 일시 {{ dateLabel(deployment.deployedAt) }}
                     </p>
                 </article>
             </section>

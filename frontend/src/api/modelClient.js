@@ -3,6 +3,9 @@ export const createModelApi = (client) => ({
     async getModelRegistry() {
         return (await client.get('/models')).data
     },
+    async synchronizeModelHistory() {
+        return (await client.post('/models/history/sync', {}, { timeout: 60000 })).data
+    },
     async getModelRuntime() {
         return (await client.get('/models/runtime')).data
     },
@@ -54,8 +57,8 @@ export const createModelApi = (client) => ({
     async getTrainedModelImport(id) {
         return (await client.get(`/models/trained/${encodeURIComponent(id)}/import`)).data
     },
-    async getModelOperations() {
-        return (await client.get('/models/operations')).data
+    async getModelOperations({ page = 0, size = 10, query = '', status = '' } = {}) {
+        return (await client.get('/models/operations', { params: { page, size, query, status }, timeout: 30000 })).data
     },
     async getModelOperation(id) {
         return (await client.get(`/models/operations/${encodeURIComponent(id)}`)).data

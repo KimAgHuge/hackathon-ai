@@ -25,6 +25,7 @@ const pending = ref(null)
 const busy = ref('')
 const error = ref('')
 const message = ref('')
+const historyWarning = ref(false)
 const confirmMode = ref('')
 const confirmed = ref(false)
 const now = ref(Date.now())
@@ -46,6 +47,7 @@ watch(selectedName, () => {
     probe.value = null
     probeRequest.value = null
     message.value = ''
+    historyWarning.value = false
     error.value = ''
 })
 const verify = async () => {
@@ -89,6 +91,7 @@ const openConfirm = (mode) => {
 }
 const acceptResult = async (result) => {
     const status = result.operation?.status || result.status
+    historyWarning.value = result.historySyncRequired === true || result.operation?.historySyncRequired === true
     message.value = result.message || result.operation?.message || `작업 상태: ${operationStatusLabel(status)}`
     if (status === 'FAILED') {
         error.value = `${message.value}${result.errorCode ? ` · ${result.errorCode}` : ''}`
@@ -210,6 +213,14 @@ onBeforeUnmount(() => {
             <p v-if="!canDeploy" class="mt-3 text-xs text-slate-500 dark:text-slate-400">검증과 전환에는 MODEL_DEPLOY 권한이 필요합니다.</p>
             <p v-if="message" role="status" class="mt-4 rounded-lg bg-blue-50 p-3 text-sm leading-6 text-blue-800 dark:bg-blue-950/40 dark:text-blue-200">
                 {{ message }}
+            </p>
+            <p
+                v-if="historyWarning"
+                role="alert"
+                class="mt-4 rounded-lg bg-amber-50 p-3 text-sm leading-6 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200"
+            >
+                모델 작업 결과는 유지되었지만 관리 기록을 저장하지 못했습니다. 모델 관리 기록의 기록 동기화로 보완해 주세요. 모델 전환을 다시 요청할 필요는
+                없습니다.
             </p>
             <p v-if="error" role="alert" class="mt-4 rounded-lg bg-rose-50 p-3 text-sm leading-6 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">
                 {{ error }}
