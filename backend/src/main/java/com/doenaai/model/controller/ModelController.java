@@ -3,6 +3,8 @@ package com.doenaai.model.controller;
 import com.doenaai.model.dto.ModelEvaluationRequest;
 import com.doenaai.model.dto.ModelVersionCreateRequest;
 import com.doenaai.model.service.ModelCatalogService;
+import com.doenaai.model.service.ModelCatalogException;
+import com.doenaai.model.service.ModelHistorySyncService;
 import com.doenaai.model.service.ModelRuntimeClient;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.CacheControl;
@@ -23,6 +25,7 @@ import java.util.UUID;
 public class ModelController {
     private final ModelCatalogService catalog;
     private final ModelRuntimeClient runtime;
+    private final ModelHistorySyncService history;
 
     @GetMapping
     @PreAuthorize("@permissionChecker.has(authentication, 'MODEL_READ')")
@@ -34,6 +37,13 @@ public class ModelController {
     @PreAuthorize("@permissionChecker.has(authentication, 'MODEL_READ')")
     public ResponseEntity<Map<String, Object>> runtime() {
         return response(HttpStatus.OK, runtime.status());
+    }
+
+    @PostMapping("/history/sync")
+    @PreAuthorize("@permissionChecker.has(authentication, 'MODEL_DEPLOY')")
+    public ResponseEntity<Map<String, Object>> synchronizeHistory(@RequestBody Map<String, Object> body) {
+        if (body == null || !body.isEmpty()) throw new ModelCatalogException(HttpStatus.BAD_REQUEST, "기록 동기화 요청은 빈 객체만 사용할 수 있습니다.");
+        return response(HttpStatus.OK, history.synchronize());
     }
 
     @GetMapping("/versions/{id}")

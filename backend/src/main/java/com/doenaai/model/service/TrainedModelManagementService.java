@@ -29,6 +29,7 @@ public class TrainedModelManagementService {
     private static final Map<String, String> EXPORT_ARCHITECTURES = Map.of("llama", "llama", "mistral", "llama", "qwen2", "qwen2", "qwen3", "qwen3", "exaone4", "exaone4");
     private final ModelOperationRepository repository;
     private final ModelExecutionClient client;
+    private final ModelHistoryService history;
 
     public Map<String, Object> build(UUID id, String method, Map<String, Object> body) {
         empty(body);
@@ -52,19 +53,35 @@ public class TrainedModelManagementService {
             if (!"SUCCEEDED".equals(built.get("status"))) return unavailable(id, origin, "MODEL_BUILD_NOT_COMPLETE");
             var metadata = metadata(built.get("result"), id, origin);
             if (metadata == null) return unavailable(id, origin, "MODEL_BUILD_METADATA_INVALID");
-            Map<String, Object> imported;
-            try { imported = importValue(client.inference("POST", "/api/models/trained/import", metadata, false), id, origin); }
+            Map<String, Object> imported, remote;
+            try {
+                remote = client.inference("POST", "/api/models/trained/import", metadata, false);
+                imported = importValue(remote, id, origin);
+            }
             catch (ModelExecutionClient.RemoteFailure failure) { return importFailure(id, origin, failure); }
             if (imported.containsKey("manifestSha256") && !metadata.get("manifestSha256").equals(imported.get("manifestSha256")))
                 return importUnavailable(id, origin, "MODEL_IMPORT_METADATA_INVALID");
-            return imported;
+            return recordImport(origin, remote, imported);
         } catch (ModelExecutionClient.RemoteFailure failure) { return failure(id, origin, failure); }
     }
 
     public Map<String, Object> importStatus(UUID id) {
         var origin = origin(id);
-        try { return importValue(client.inference("GET", "/api/models/trained/imports/" + id, Map.of(), false), id, origin); }
+        try {
+            var remote = client.inference("GET", "/api/models/trained/imports/" + id, Map.of(), false);
+            return recordImport(origin, remote, importValue(remote, id, origin));
+        }
         catch (ModelExecutionClient.RemoteFailure failure) { return importFailure(id, origin, failure); }
+    }
+
+    private Map<String, Object> recordImport(Map<String, Object> origin, Map<String, Object> remote, Map<String, Object> result) {
+        if (!"READY".equals(result.get("status"))) return result;
+        try { history.registration(origin, remote); }
+        catch (RuntimeException failure) {
+            result.put("historySyncRequired", true);
+            result.put("message", "새 모델 등록은 완료했지만 모델 버전 기록을 저장하지 못했습니다. 기록 동기화로 보완해 주세요.");
+        }
+        return result;
     }
 
     private Map<String, Object> origin(UUID id) {

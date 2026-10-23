@@ -43,7 +43,7 @@ class ModelExecutionControllerSecurityTest {
     @Test void noPermissionDeniesAllEndpointsBeforeAnyServiceCall() {
         assertThatThrownBy(() -> controller.installed()).isInstanceOf(AccessDeniedException.class);
         assertThatThrownBy(() -> controller.training(null)).isInstanceOf(AccessDeniedException.class);
-        assertThatThrownBy(() -> controller.operations()).isInstanceOf(AccessDeniedException.class);
+        assertThatThrownBy(() -> controller.operations(0, 10, "", "")).isInstanceOf(AccessDeniedException.class);
         assertThatThrownBy(() -> controller.operation(id)).isInstanceOf(AccessDeniedException.class);
         assertThatThrownBy(() -> controller.probe(request, jwt)).isInstanceOf(AccessDeniedException.class);
         assertThatThrownBy(() -> controller.activate(request, jwt)).isInstanceOf(AccessDeniedException.class);
@@ -57,7 +57,7 @@ class ModelExecutionControllerSecurityTest {
         when(permissions.has(any(), eq("MODEL_READ"))).thenReturn(true);
         assertThat(controller.installed().getStatusCode().value()).isEqualTo(200);
         assertThat(controller.training(null).getStatusCode().value()).isEqualTo(200);
-        assertThat(controller.operations().getStatusCode().value()).isEqualTo(200);
+        assertThat(controller.operations(0, 10, "", "").getStatusCode().value()).isEqualTo(200);
         assertThatThrownBy(() -> controller.activate(request, jwt)).isInstanceOf(AccessDeniedException.class);
         assertThatThrownBy(() -> controller.train(request, jwt)).isInstanceOf(AccessDeniedException.class);
         assertThatThrownBy(() -> controller.rollback(request, jwt)).isInstanceOf(AccessDeniedException.class);

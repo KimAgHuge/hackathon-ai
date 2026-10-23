@@ -19,7 +19,7 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class ModelCatalogService {
     private static final int LIMIT = 100;
-    private static final String EXECUTION_REASON = "등록 파일의 자동 수신·변환·Ollama 등록과 직접 배포는 지원하지 않습니다. 설치된 Ollama 모델의 전환과 학습 실행은 별도 실행 영역을 사용해 주세요. 등록과 수동 평가는 관리 기록만 저장합니다.";
+    private static final String EXECUTION_REASON = "등록·적용 결과는 모델 버전과 배포 이력에 자동 기록합니다. 수동 버전 등록은 관리 정보 저장이며, 실제 모델 검증·적용·복구는 모델 작업에서 진행합니다.";
     private final ModelCatalogRepository repository;
 
     @Transactional(readOnly = true)
@@ -33,7 +33,7 @@ public class ModelCatalogService {
                 "truncated", Map.of("models", models.size() > LIMIT, "versions", versions.size() > LIMIT,
                     "trainingJobs", jobs.size() > LIMIT, "deployments", deployments.size() > LIMIT),
                 "capabilities", Map.of("trainingExecution", false, "deploymentExecution", false,
-                    "rollbackExecution", false, "reason", EXECUTION_REASON));
+                    "rollbackExecution", false, "historySynchronization", true, "reason", EXECUTION_REASON));
     }
 
     @Transactional(readOnly = true)
@@ -44,7 +44,21 @@ public class ModelCatalogService {
         value.put("evaluations", bounded(evaluations));
         value.put("deployments", bounded(deployments));
         value.put("detailTruncated", Map.of("evaluations", evaluations.size() > LIMIT, "deployments", deployments.size() > LIMIT));
-        value.put("readiness", Map.of("canDeploy", false, "canRollback", false, "reason", EXECUTION_REASON,
+        if (Boolean.TRUE.equals(value.get("registrationVerified"))) {
+            value.put("readiness", Map.of("canDeploy", false, "canRollback", false, "reason", EXECUTION_REASON,
+                    "checks", List.of(
+                            Map.of("key", "fileReceived", "label", "파일 수신", "status", "PASSED", "message", "분석 서버에 등록할 때 완성 모델 파일의 수신을 확인했습니다."),
+                            Map.of("key", "checksumVerified", "label", "파일 해시 검증", "status", "PASSED", "message", "등록할 때 서명·크기·전체 파일 해시를 확인했습니다."),
+                            Map.of("key", "compatibility", "label", "실행 환경 호환성", "status", "PASSED", "message", "분석 서버의 모델 실행 환경에 등록된 모델입니다."),
+                            check("automaticEvaluation", "업무 품질 평가", "파일 등록 성공은 업무 품질 평가 통과를 뜻하지 않습니다."),
+                            check("runtimeSwitch", "모델 적용", "모델 작업에서 응답을 검증하고 적용하세요. 실제 적용 결과는 배포 이력에서 확인할 수 있습니다."))));
+        } else if ("RUNTIME_SELECTION".equals(value.get("historySource"))) {
+            value.put("readiness", Map.of("canDeploy", false, "canRollback", false, "reason", EXECUTION_REASON,
+                    "checks", List.of(
+                            Map.of("key", "runtimeIdentity", "label", "실행 모델 확인", "status", "PASSED", "message", "실제 적용·복구 성공 결과에서 모델과 파일 식별값을 확인했습니다."),
+                            check("automaticEvaluation", "업무 품질 평가", "모델 적용 성공만으로 업무 품질을 승인하지 않습니다."),
+                            check("runtimeSwitch", "모델 적용", "새 적용이나 복구는 모델 작업에서 진행하고 배포 이력에서 결과를 확인하세요."))));
+        } else value.put("readiness", Map.of("canDeploy", false, "canRollback", false, "reason", EXECUTION_REASON,
                 "checks", List.of(
                     check("fileReceived", "파일 수신", "NAS 경로는 등록 정보이며 파일 존재와 수신 완료를 확인하지 않았습니다."),
                     check("checksumVerified", "파일 해시 검증", "입력한 해시를 실제 파일과 대조하는 기능이 연결되지 않았습니다."),

@@ -78,6 +78,20 @@ class ModelExecutionClientTest {
     }
 
     @Test
+    void deploymentIdentityIgnoresBackendInstanceAndNormalizesLoopbackAndDefaultPorts() {
+        var first = new ModelExecutionClient(mapper, "http://localhost:8000/", INTERNAL_KEY, "", TRANSFER_KEY, "first-instance");
+        var second = new ModelExecutionClient(mapper, "http://127.0.0.1:8000", INTERNAL_KEY, "", TRANSFER_KEY, "second-instance");
+        var ipv6 = new ModelExecutionClient(mapper, "http://[::1]:8000/", INTERNAL_KEY, "", TRANSFER_KEY, "third-instance");
+        assertThat(first.inferenceServerKey()).matches("[0-9a-f]{64}").isEqualTo(second.inferenceServerKey()).isEqualTo(ipv6.inferenceServerKey());
+        assertThat(first.targetKey(false)).isNotEqualTo(second.targetKey(false));
+        var defaultPort = new ModelExecutionClient(mapper, "https://example.test/", INTERNAL_KEY, "", TRANSFER_KEY, "first-instance");
+        var explicitPort = new ModelExecutionClient(mapper, "https://example.test:443", INTERNAL_KEY, "", TRANSFER_KEY, "second-instance");
+        assertThat(defaultPort.inferenceServerKey()).isEqualTo(explicitPort.inferenceServerKey());
+        var other = new ModelExecutionClient(mapper, "http://localhost:8001", INTERNAL_KEY, "", TRANSFER_KEY, "first-instance");
+        assertThat(other.inferenceServerKey()).isNotEqualTo(first.inferenceServerKey());
+    }
+
+    @Test
     void signsTrainingTimestampMethodPathAndExactUtf8Body() throws Exception {
         var requests = new ArrayList<Captured>();
         server.createContext("/api/training", exchange -> {

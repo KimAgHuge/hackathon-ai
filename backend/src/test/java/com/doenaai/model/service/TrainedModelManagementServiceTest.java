@@ -18,7 +18,8 @@ import static org.mockito.Mockito.*;
 class TrainedModelManagementServiceTest {
     private final ModelOperationRepository repository = mock(ModelOperationRepository.class);
     private final ModelExecutionClient client = mock(ModelExecutionClient.class);
-    private final TrainedModelManagementService service = new TrainedModelManagementService(repository, client);
+    private final ModelHistoryService history = mock(ModelHistoryService.class);
+    private final TrainedModelManagementService service = new TrainedModelManagementService(repository, client, history);
     private final UUID id = UUID.randomUUID();
     private final String source = "qwen3.8:27b", base = "mlx-community/Qwen3.8-27B-4bit";
     private final String revision = "a".repeat(40), manifestHash = "b".repeat(64), artifactHash = "c".repeat(64), engineHash = "d".repeat(64);
@@ -69,6 +70,35 @@ class TrainedModelManagementServiceTest {
             assertThat(service.register(id, Map.of())).containsEntry("status", "UNAVAILABLE").containsEntry("errorCode", "MODEL_BUILD_NOT_COMPLETE");
         }
         verify(client, never()).inference(anyString(), anyString(), anyMap(), anyBoolean());
+    }
+
+    @Test void readyRegistrationAndPollingRecordOnlyTheApprovedRemoteResult() {
+        service.register(id, Map.of());
+        service.importStatus(id);
+        verify(history, times(2)).registration(eq(origin()), eq(imported("READY")));
+        verify(client, never()).inference(anyString(), contains("activate"), anyMap(), anyBoolean());
+    }
+
+    @Test void historyFailureKeepsReadyAndOffersRepairWithoutExposingTheError() {
+        doThrow(new IllegalStateException("/private/history-error")).when(history).registration(anyMap(), anyMap());
+        for (var result : List.of(service.register(id, Map.of()), service.importStatus(id))) {
+            assertThat(result).containsEntry("status", "READY").containsEntry("historySyncRequired", true)
+                    .containsEntry("digest", engineHash);
+            assertThat(result.get("message").toString()).contains("기록 동기화");
+            assertThat(result.toString()).doesNotContain("/private/history-error");
+        }
+    }
+
+    @Test void incompleteOrMismatchedReadyResultsCannotWriteHistory() {
+        when(client.inference("GET", "/api/models/trained/imports/" + id, Map.of(), false)).thenReturn(imported("IMPORTING"));
+        service.importStatus(id);
+        var changed = new LinkedHashMap<>(imported("READY")); changed.put("sourceModel", "gemma4:26b");
+        when(client.inference("GET", "/api/models/trained/imports/" + id, Map.of(), false)).thenReturn(changed);
+        assertThat(service.importStatus(id)).containsEntry("status", "UNAVAILABLE");
+        changed = new LinkedHashMap<>(imported("READY")); changed.put("manifestSha256", "e".repeat(64));
+        when(client.inference(eq("POST"), eq("/api/models/trained/import"), anyMap(), eq(false))).thenReturn(changed);
+        assertThat(service.register(id, Map.of())).containsEntry("status", "UNAVAILABLE");
+        verifyNoInteractions(history);
     }
 
     @Test void changedTrainingIdentityOrMalformedArtifactNeverReachesTheInferenceServer() {

@@ -6,6 +6,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
+import java.text.Normalizer;
 import java.util.*;
 
 /** 원격 실행보다 DB 기록을 먼저 확정하며 통신 실패를 실제 실행 실패로 단정하지 않는다. */
@@ -16,6 +17,7 @@ public class ModelExecutionService {
     private static final Set<String> STATES = Set.of("PENDING", "PREPARING", "TRAINING", "VERIFYING", "SUCCEEDED", "FAILED", "CANCELLED", "APPLIED", "ROLLED_BACK", "PASSED");
     private final ModelOperationRepository repository;
     private final ModelExecutionClient client;
+    private final ModelHistoryService history;
 
     public Map<String, Object> installed() {
         try {
@@ -285,18 +287,38 @@ public class ModelExecutionService {
         return result;
     }
 
-    public Map<String, Object> operations() {
-        var rows = repository.recent(101);
-        // 전환 응답이 끊긴 요청은 동일 식별자로 원격 저장 결과를 조회한다. 재실행하지 않는다.
+    public Map<String, Object> operations() { return operations(0, 10, "", ""); }
+
+    public Map<String, Object> operations(int requestedPage, int size, String query, String status) {
+        String raw = query == null ? "" : query;
+        if (requestedPage < 0 || size < 1 || size > 50 || raw.length() > 200
+                || raw.codePoints().anyMatch(code -> Character.isISOControl(code) || Character.getType(code) == Character.FORMAT)) throw invalid();
+        String normalized = Normalizer.normalize(raw, Normalizer.Form.NFKC).strip();
+        String filter = status == null ? "" : status.strip();
+        if (normalized.length() > 200 || (!filter.isEmpty() && !STATES.contains(filter) && !"UNKNOWN".equals(filter))) throw invalid();
+        var page = repository.page(requestedPage, size, normalized, filter);
         int checked = 0;
-        var output = new ArrayList<Map<String, Object>>();
-        for (var row : rows.stream().limit(100).toList()) {
-            if (checked < 3 && Set.of("MODEL_ACTIVATE", "MODEL_ROLLBACK").contains(row.get("action")) && ACTIVE.contains(row.get("status"))) {
-                row = reconcile(row); checked++;
-            }
-            output.add(publicValue(row));
+        boolean rowsChanged = false;
+        var refreshed = new HashMap<String, Map<String, Object>>();
+        // 현재 페이지의 진행 작업만 최대 세 건 확인하며 조회 중 실행 요청을 다시 보내지 않는다.
+        for (var row : page.operations()) {
+            String action = String.valueOf(row.get("action"));
+            boolean candidate = Set.of("TRAINING_START", "MODEL_ACTIVATE", "MODEL_ROLLBACK").contains(action)
+                    && ACTIVE.contains(row.get("status"))
+                    && client.targetKey(action.startsWith("TRAINING_")).equals(row.get("targetKey"));
+            if (checked >= 3 || !candidate) continue;
+            checked++;
+            var current = reconcile(row);
+            refreshed.put((String) row.get("id"), current);
+            rowsChanged |= !row.equals(current);
         }
-        return Map.of("operations", output, "limit", 100, "truncated", rows.size() > 100);
+        // 상태나 모델 정보가 달라졌으면 검색 개수와 마지막 페이지를 함께 다시 계산한다.
+        if (rowsChanged) page = repository.page(requestedPage, size, normalized, filter);
+        var output = new ArrayList<Map<String, Object>>();
+        for (var row : page.operations()) output.add(publicValue(rowsChanged ? row : refreshed.getOrDefault(row.get("id"), row), false));
+        long totalPages = page.totalCount() == 0 ? 0 : (page.totalCount() - 1) / page.pageSize() + 1;
+        return Map.of("operations", output, "page", page.page(), "pageSize", page.pageSize(), "totalCount", page.totalCount(),
+                "totalPages", totalPages, "hasNext", page.page() + 1L < totalPages, "hasPrev", page.page() > 0);
     }
 
     public Map<String, Object> operation(UUID id) {
@@ -392,6 +414,10 @@ public class ModelExecutionService {
     }
 
     private Map<String, Object> publicValue(Map<String, Object> row) {
+        return publicValue(row, true);
+    }
+
+    private Map<String, Object> publicValue(Map<String, Object> row, boolean recoverRegistration) {
         var value = new LinkedHashMap<>(row);
         value.remove("request"); value.remove("targetKey");
         if (value.remove("result") instanceof Map<?, ?> result) result.forEach((key, item) -> { if (key instanceof String text) value.put(text, item); });
@@ -400,6 +426,18 @@ public class ModelExecutionService {
         if ("TRAINING_START".equals(row.get("action")) && !trainingSelection(row).isBlank()) value.put("selectedModel", trainingSelection(row));
         if (row.get("request") instanceof Map<?, ?> request && request.get("iterations") instanceof Number iterations) value.put("iterations", iterations);
         value.put("message", message((String) row.get("status"), (String) row.get("errorCode")));
+        if ((("MODEL_ACTIVATE".equals(row.get("action")) && "APPLIED".equals(row.get("status")))
+                || ("MODEL_ROLLBACK".equals(row.get("action")) && "ROLLED_BACK".equals(row.get("status"))))
+                && client.targetKey(false).equals(row.get("targetKey"))) {
+            try {
+                if (recoverRegistration) history.deployment(row);
+                else history.deploymentFromList(row);
+            }
+            catch (RuntimeException failure) {
+                value.put("historySyncRequired", true);
+                value.put("message", "모델 적용 결과는 확인했지만 배포 이력을 저장하지 못했습니다. 기록 동기화로 보완해 주세요.");
+            }
+        }
         return value;
     }
 

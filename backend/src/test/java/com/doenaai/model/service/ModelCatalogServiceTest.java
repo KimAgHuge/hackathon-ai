@@ -65,6 +65,16 @@ class ModelCatalogServiceTest {
         assertThat(value.get("detailTruncated")).isEqualTo(Map.of("evaluations", true, "deployments", false));
     }
 
+    @Test void automaticallyRegisteredVersionShowsVerifiedFilesWithoutClaimingQualityApproval() {
+        UUID id = UUID.randomUUID();
+        when(repository.version(id)).thenReturn(Optional.of(Map.of("id", id, "registrationVerified", true)));
+        var result = service.version(id);
+        var checks = (List<Map<String, Object>>) ((Map<?, ?>) result.get("readiness")).get("checks");
+        assertThat(checks.stream().filter(check -> "PASSED".equals(check.get("status"))).count()).isEqualTo(3);
+        assertThat(checks.stream().filter(check -> "automaticEvaluation".equals(check.get("key"))).findFirst().orElseThrow())
+                .containsEntry("status", "UNAVAILABLE");
+    }
+
     @Test void existingModelRegistrationNeverChangesLogicalModelInformation() {
         UUID modelId = UUID.randomUUID();
         when(repository.modelExists(modelId)).thenReturn(true);

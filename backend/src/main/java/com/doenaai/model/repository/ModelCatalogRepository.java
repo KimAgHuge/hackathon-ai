@@ -126,6 +126,14 @@ public class ModelCatalogRepository {
                     "createdAt", "latestEvaluationStatus", "latestEvaluationScore");
             var metadata = json(row.getString("metadata"));
             value.put("datasetName", metadata.get("datasetName") instanceof String text ? text : null);
+            if (metadata.get("historySource") instanceof String source
+                    && List.of("TRAINED_MODEL_IMPORT", "RUNTIME_SELECTION").contains(source)) {
+                value.put("historySource", source);
+                value.put("registrationVerified", Boolean.TRUE.equals(metadata.get("registrationVerified")));
+                value.put("runtimeModel", value.get("modelName"));
+                if (metadata.get("engineDigest") instanceof String digest && digest.matches("[0-9a-f]{64}")) value.put("runtimeDigest", digest);
+                if (metadata.get("trainingJobId") instanceof String job && job.matches("[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}")) value.put("trainingJobId", job);
+            }
             if (detail) {
                 value.putAll(fields(row, "description", "artifactUri", "adapterUri", "checksum"));
                 value.put("notes", metadata.get("notes") instanceof String text ? text : null);

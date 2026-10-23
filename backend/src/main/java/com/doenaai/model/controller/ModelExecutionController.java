@@ -62,7 +62,11 @@ public class ModelExecutionController {
 
     @GetMapping("/operations")
     @PreAuthorize("@permissionChecker.has(authentication, 'MODEL_READ')")
-    public ResponseEntity<Map<String, Object>> operations() { return response(execution.operations()); }
+    public ResponseEntity<Map<String, Object>> operations(@RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "10") int size, @RequestParam(defaultValue = "") String query,
+            @RequestParam(defaultValue = "") String status) {
+        return response(execution.operations(page, size, query, status));
+    }
 
     @GetMapping("/operations/{id}")
     @PreAuthorize("@permissionChecker.has(authentication, 'MODEL_READ')")

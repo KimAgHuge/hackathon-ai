@@ -46,6 +46,25 @@ class ModelCatalogRepositoryTest {
     }
 
     @SuppressWarnings("unchecked")
+    @Test void verifiedRuntimeMetadataExposesOnlyApprovedHistoryFields() throws Exception {
+        UUID id = UUID.randomUUID(), job = UUID.randomUUID();
+        ResultSet row = mock(ResultSet.class);
+        when(row.getObject("model_name")).thenReturn("doenaai-trained:web-" + job);
+        when(row.getString("metadata")).thenReturn("{\"historySource\":\"TRAINED_MODEL_IMPORT\",\"registrationVerified\":true,"
+                + "\"engineDigest\":\"" + "a".repeat(64) + "\",\"trainingJobId\":\"" + job
+                + "\",\"privatePath\":\"/private/model\",\"profile\":{\"command\":\"private-command\"}}");
+        when(jdbc.query(anyString(), any(RowMapper.class), eq(id))).thenAnswer(call -> {
+            RowMapper<Map<String, Object>> mapper = call.getArgument(1);
+            return List.of(mapper.mapRow(row, 0));
+        });
+        var value = repository.version(id).orElseThrow();
+        assertThat(value).containsEntry("historySource", "TRAINED_MODEL_IMPORT").containsEntry("registrationVerified", true)
+                .containsEntry("runtimeModel", "doenaai-trained:web-" + job).containsEntry("runtimeDigest", "a".repeat(64))
+                .containsEntry("trainingJobId", job.toString()).doesNotContainKeys("profile", "privatePath", "metadata");
+        assertThat(value.toString()).doesNotContain("/private/model", "private-command");
+    }
+
+    @SuppressWarnings("unchecked")
     @Test void everyCatalogQueryUsesBoundedParameterizedLimit() {
         when(jdbc.query(anyString(), any(RowMapper.class), eq(101))).thenReturn(List.of());
         repository.models(101);

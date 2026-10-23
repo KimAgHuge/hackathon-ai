@@ -55,6 +55,23 @@ public class ModelExecutionClient {
         } catch (Exception exception) { throw new IllegalStateException("서버 식별자를 만들지 못했습니다."); }
     }
 
+    /** 배포 이력의 서버 식별자는 백엔드 실행 장비와 관계없이 같은 추론 주소에 고정한다. */
+    public String inferenceServerKey() {
+        if (inference == null) throw new RemoteFailure("UNCONFIGURED", false, 503);
+        try {
+            String host = inference.getHost().toLowerCase(Locale.ROOT);
+            if (Set.of("localhost", "127.0.0.1", "::1", "[::1]").contains(host)) host = "localhost";
+            String scheme = inference.getScheme().toLowerCase(Locale.ROOT);
+            int port = inference.getPort();
+            if (("http".equals(scheme) && port == 80) || ("https".equals(scheme) && port == 443)) port = -1;
+            String path = inference.getPath() == null ? "" : inference.getPath().replaceAll("/+$", "");
+            String address = new URI(scheme, null, host, port, path, null, null).normalize().toASCIIString();
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(address.getBytes(StandardCharsets.UTF_8)));
+        } catch (Exception failure) {
+            throw new IllegalStateException("AI 분석/추론 서버 식별자를 만들지 못했습니다.");
+        }
+    }
+
     public Map<String, Object> inference(String method, String path, Map<String, Object> body, boolean probe) {
         return exchange(false, method, path, body, Duration.ofSeconds(probe ? 130 : path.startsWith("/api/models/operations/") ? 3 : 15));
     }

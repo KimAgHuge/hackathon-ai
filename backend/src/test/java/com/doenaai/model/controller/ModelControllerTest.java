@@ -3,6 +3,7 @@ package com.doenaai.model.controller;
 import com.doenaai.model.dto.ModelVersionCreateRequest;
 import com.doenaai.model.service.ModelCatalogException;
 import com.doenaai.model.service.ModelCatalogService;
+import com.doenaai.model.service.ModelHistorySyncService;
 import com.doenaai.model.service.ModelRuntimeClient;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -33,12 +34,13 @@ class ModelControllerTest {
     private final UUID actor = UUID.randomUUID();
     private final ModelCatalogService catalog = mock(ModelCatalogService.class);
     private final ModelRuntimeClient runtime = mock(ModelRuntimeClient.class);
+    private final ModelHistorySyncService history = mock(ModelHistorySyncService.class);
     private final JsonMapper mapper = JsonMapper.builder().build();
     private MockMvc mvc;
 
     @BeforeEach void setup() {
         var jwt = Jwt.withTokenValue("synthetic-token").header("alg", "none").subject(actor.toString()).build();
-        mvc = MockMvcBuilders.standaloneSetup(new ModelController(catalog, runtime))
+        mvc = MockMvcBuilders.standaloneSetup(new ModelController(catalog, runtime, history))
                 .setControllerAdvice(new ModelExceptionHandler())
                 .setCustomArgumentResolvers(new HandlerMethodArgumentResolver() {
                     public boolean supportsParameter(MethodParameter parameter) { return parameter.getParameterType() == Jwt.class; }
@@ -64,6 +66,25 @@ class ModelControllerTest {
                 .andExpect(status().isCreated()).andExpect(jsonPath("$.id").value(id.toString()))
                 .andExpect(jsonPath("$.readiness.canDeploy").value(false));
         verify(catalog).createVersion(argThat(value -> value.modelName().equals("분석 모델")), eq(actor));
+    }
+
+    @Test void synchronizesHistoryWithAnEmptyObjectAndNoStoreCachePolicy() throws Exception {
+        when(history.synchronize()).thenReturn(Map.of("status", "SUCCEEDED", "registrationsChecked", 1, "deploymentsChecked", 1));
+        mvc.perform(post("/api/models/history/sync").contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isOk()).andExpect(header().string("Cache-Control", "no-store"))
+                .andExpect(jsonPath("$.status").value("SUCCEEDED"))
+                .andExpect(jsonPath("$.registrationsChecked").value(1))
+                .andExpect(jsonPath("$.deploymentsChecked").value(1));
+        verify(history).synchronize();
+        verifyNoInteractions(catalog, runtime);
+    }
+
+    @Test void rejectsMissingNullOrNonemptySynchronizationBodiesBeforeCallingTheService() throws Exception {
+        for (String body : new String[]{"", "null", "{\"model\":\"qwen3.8:27b\"}", "{\"path\":\"/private/model\"}"}) {
+            mvc.perform(post("/api/models/history/sync").contentType(MediaType.APPLICATION_JSON).content(body))
+                    .andExpect(status().isBadRequest());
+        }
+        verifyNoInteractions(history);
     }
 
     @Test void storesManualEvaluationWithJwtActorAndReturnsDetail() throws Exception {

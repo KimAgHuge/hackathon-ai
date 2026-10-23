@@ -15,7 +15,8 @@ import static org.mockito.Mockito.*;
 class ModelExecutionServiceTest {
     private final ModelOperationRepository repository = mock(ModelOperationRepository.class);
     private final ModelExecutionClient client = mock(ModelExecutionClient.class);
-    private final ModelExecutionService service = new ModelExecutionService(repository, client);
+    private final ModelHistoryService history = mock(ModelHistoryService.class);
+    private final ModelExecutionService service = new ModelExecutionService(repository, client, history);
     private final UUID actor = UUID.randomUUID();
     private final UUID id = UUID.randomUUID();
     private final String digest = "a".repeat(64);
@@ -305,6 +306,113 @@ class ModelExecutionServiceTest {
         assertThat(result).containsEntry("provider", "ollama").containsEntry("trainedModel", true)
                 .containsEntry("trainingJobId", trainingId).containsEntry("sourceModel", "qwen3.8:27b").containsEntry("qualityEvaluated", false);
         assertThat(result.toString()).doesNotContain("/private/model", "qualityEvaluated=true");
+    }
+
+    @Test void operationPagesOnlyReadTheRequestedRowsAndPreservePaginationMetadata() {
+        var row = operationRow(id, "TRAINING_START", "SUCCEEDED", "training-target");
+        when(repository.page(4, 10, "Qwen 학습", "SUCCEEDED"))
+                .thenReturn(new ModelOperationRepository.Page(List.of(row), 4, 10, 137));
+        var result = service.operations(4, 10, "Ｑｗｅｎ 학습", "SUCCEEDED");
+        assertThat(result).containsEntry("page", 4).containsEntry("pageSize", 10).containsEntry("totalCount", 137L)
+                .containsEntry("totalPages", 14L).containsEntry("hasNext", true).containsEntry("hasPrev", true);
+        assertThat((List<?>) result.get("operations")).hasSize(1);
+        verify(repository).page(4, 10, "Qwen 학습", "SUCCEEDED");
+        verify(repository, never()).recent(anyInt());
+        verifyNoInteractions(history);
+    }
+
+    @Test void invalidPageSizeStatusOrSearchNeverReachesStorageOrRemoteServers() {
+        for (int page : new int[]{-1, Integer.MIN_VALUE})
+            assertThatThrownBy(() -> service.operations(page, 10, "", "")).isInstanceOf(ModelCatalogException.class);
+        for (int size : new int[]{0, -1, 51, Integer.MAX_VALUE})
+            assertThatThrownBy(() -> service.operations(0, size, "", "")).isInstanceOf(ModelCatalogException.class);
+        for (String query : List.of("a".repeat(201), "qwen\n학습", "qwen" + (char) 0, "qwen" + (char) 127, "qwen" + (char) 0x202e))
+            assertThatThrownBy(() -> service.operations(0, 10, query, "")).isInstanceOf(ModelCatalogException.class);
+        assertThatThrownBy(() -> service.operations(0, 10, "", "ANY")) .isInstanceOf(ModelCatalogException.class);
+        verifyNoInteractions(repository, client, history);
+    }
+
+    @Test void pageRefreshUsesAtMostThreeReadOnlyCallsForCurrentServerProgressRows() {
+        var rows = new ArrayList<Map<String, Object>>();
+        for (int index = 0; index < 4; index++) rows.add(operationRow(UUID.randomUUID(), "TRAINING_START", "TRAINING", "training-target"));
+        rows.add(operationRow(UUID.randomUUID(), "MODEL_ACTIVATE", "UNKNOWN", "foreign-target"));
+        when(repository.page(0, 10, "", "")).thenReturn(new ModelOperationRepository.Page(rows, 0, 10, 5));
+        when(client.training(eq("GET"), startsWith("/api/training/jobs/"), anyMap())).thenReturn(Map.of("status", "TRAINING", "progress", 7));
+        assertThat((List<?>) service.operations().get("operations")).hasSize(5);
+        verify(client, times(3)).training(eq("GET"), startsWith("/api/training/jobs/"), eq(Map.of()));
+        verify(client, never()).training(eq("POST"), anyString(), anyMap());
+        verify(client, never()).inference(anyString(), anyString(), anyMap(), anyBoolean());
+        verify(repository, times(2)).page(0, 10, "", "");
+    }
+
+    @Test void changedTrainingStatusRecountsTheFilteredPageAndClampsItsLastPage() {
+        var row = operationRow(id, "TRAINING_START", "TRAINING", "training-target");
+        when(repository.page(2, 10, "qwen", "TRAINING"))
+                .thenReturn(new ModelOperationRepository.Page(List.of(row), 2, 10, 21),
+                        new ModelOperationRepository.Page(List.of(), 1, 10, 20));
+        when(client.training("GET", "/api/training/jobs/" + id, Map.of())).thenReturn(Map.of("status", "SUCCEEDED"));
+        var result = service.operations(2, 10, "qwen", "TRAINING");
+        assertThat(result).containsEntry("page", 1).containsEntry("totalCount", 20L).containsEntry("hasNext", false);
+        verify(repository, times(2)).page(2, 10, "qwen", "TRAINING");
+        verify(client).training("GET", "/api/training/jobs/" + id, Map.of());
+        verify(client, never()).training(eq("POST"), anyString(), anyMap());
+    }
+
+    @Test void unknownStateIsAnAllowedFilterEvenWhenNoMatchingRowsExist() {
+        when(repository.page(0, 10, "", "UNKNOWN")).thenReturn(new ModelOperationRepository.Page(List.of(), 0, 10, 0));
+        assertThat(service.operations(0, 10, "", "UNKNOWN")).containsEntry("totalCount", 0L);
+        verify(repository).page(0, 10, "", "UNKNOWN");
+    }
+
+    @Test void unchangedStatusWithChangedModelMetadataStillRechecksSearchResults() {
+        var row = operationRow(id, "TRAINING_START", "TRAINING", "training-target");
+        when(repository.page(0, 10, "qwen", "TRAINING"))
+                .thenReturn(new ModelOperationRepository.Page(List.of(row), 0, 10, 1),
+                        new ModelOperationRepository.Page(List.of(), 0, 10, 0));
+        when(client.training("GET", "/api/training/jobs/" + id, Map.of())).thenReturn(Map.of("status", "TRAINING", "model", "gemma4:26b"));
+        assertThat(service.operations(0, 10, "qwen", "TRAINING")).containsEntry("totalCount", 0L);
+        verify(repository, times(2)).page(0, 10, "qwen", "TRAINING");
+    }
+
+    @Test void appliedAndRolledBackResultsRecordHistoryWithoutChangingTheirSuccessOnStorageFailure() {
+        for (var entry : Map.of("MODEL_ACTIVATE", "APPLIED", "MODEL_ROLLBACK", "ROLLED_BACK").entrySet()) {
+            var row = operationRow(id, entry.getKey(), entry.getValue(), "inference-target");
+            doThrow(new IllegalStateException("/private/history-error")).when(history).deployment(row);
+            var result = service.operation(id);
+            assertThat(result).containsEntry("status", entry.getValue()).containsEntry("historySyncRequired", true);
+            assertThat(result.get("message").toString()).contains("기록 동기화");
+            assertThat(result.toString()).doesNotContain("/private/history-error");
+            verify(history).deployment(row);
+        }
+        verify(client, never()).inference(anyString(), anyString(), anyMap(), anyBoolean());
+    }
+
+    @Test void foreignServerCompletedResultsDoNotCreateLocalDeploymentHistory() {
+        operationRow(id, "MODEL_ACTIVATE", "APPLIED", "foreign-target");
+        assertThat(service.operation(id)).containsEntry("status", "APPLIED").doesNotContainKey("historySyncRequired");
+        verifyNoInteractions(history);
+    }
+
+    @Test void operationListUsesBoundedHistoryRecordingWhileDetailCanRecoverRegistration() {
+        var row = operationRow(id, "MODEL_ACTIVATE", "APPLIED", "inference-target");
+        when(repository.page(0, 10, "", "")).thenReturn(new ModelOperationRepository.Page(List.of(row), 0, 10, 1));
+        doThrow(new IllegalStateException("등록 이력 보완 필요")).when(history).deploymentFromList(row);
+        var listed = (Map<?, ?>) ((List<?>) service.operations().get("operations")).getFirst();
+        assertThat(listed.get("status")).isEqualTo("APPLIED");
+        assertThat(listed.get("historySyncRequired")).isEqualTo(true);
+        verify(history).deploymentFromList(row);
+        verify(history, never()).deployment(anyMap());
+        assertThat(service.operation(id)).containsEntry("status", "APPLIED").doesNotContainKey("historySyncRequired");
+        verify(history).deployment(row);
+        verify(client, never()).inference(anyString(), anyString(), anyMap(), anyBoolean());
+    }
+
+    private Map<String, Object> operationRow(UUID key, String action, String status, String target) {
+        var row = new LinkedHashMap<String, Object>();
+        row.put("id", key.toString()); row.put("actorId", actor.toString()); row.put("action", action);
+        row.put("status", status); row.put("targetKey", target); row.put("request", Map.of()); row.put("result", Map.of());
+        records.put(key, row);
+        return row;
     }
 
     private static ModelExecutionRequest training(UUID id, int count) { return new ModelExecutionRequest(id, "qwen3.8:27b", "a".repeat(64), null, null, count); }
