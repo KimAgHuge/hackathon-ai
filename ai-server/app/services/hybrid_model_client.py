@@ -38,6 +38,9 @@ class HybridModelClient:
             return await self._adapter("show", model)
         return as_dict(await self.primary.show(model))
 
+    async def embed(self, **body):
+        return await self.primary.embed(**body)
+
     async def chat(self, **body):
         if self.adapters.owns(body.get("model")):
             return await self._adapter("chat", **body)

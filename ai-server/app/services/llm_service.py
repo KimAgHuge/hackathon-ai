@@ -14,6 +14,7 @@ from pydantic import ValidationError
 
 from app.config import Settings
 from app.services.stage_checkpoints import StageCheckpoints
+from app.services.evidence_retriever import EvidenceRetriever, EvidenceStore
 from app.services.model_runtime import ModelRuntimeError, normalized_digest
 from app.services.source_context import general_overview, source_context, supported_target_tables, explicit_requirement_text
 from app.services.database_scope import database_review_scope, metadata_checks, review_groups, database_input, database_source_context
@@ -141,9 +142,13 @@ class LlmService:
     """Ollama 호출과 응답 검증을 담당하며 원본 DB에는 접속하지 않는다."""
 
     def __init__(self, settings: Settings, client: Optional[AsyncClient] = None,
-                 checkpoints: Optional[StageCheckpoints] = None, runtime=None):
+                 checkpoints: Optional[StageCheckpoints] = None, runtime=None, retriever=None):
         self._settings = settings
         self._runtime = runtime
+        self._retriever = retriever
+        if client is None and retriever is None and settings.ai_rag_enabled:
+            index_path = settings.ai_rag_index_path or str(Path(__file__).resolve().parents[2] / ".rag-index" / "evidence.db")
+            self._retriever = EvidenceRetriever(EvidenceStore(index_path), None, settings.ai_embedding_model)
         self._request_model = ContextVar("analysis_model", default=None)
         self._checkpoints = checkpoints
         if client is None and checkpoints is None and settings.ai_checkpoints_enabled:
@@ -158,6 +163,8 @@ class LlmService:
         if client is None and runtime is not None and hasattr(runtime, "adapters"):
             from app.services.hybrid_model_client import HybridModelClient
             self._client = HybridModelClient(self._client, runtime.adapters)
+        if self._retriever is not None and self._retriever.embed is None and hasattr(self._client, "embed"):
+            self._retriever.embed = self._client.embed
 
     @property
     def _model(self):
@@ -264,6 +271,9 @@ class LlmService:
         Returns:
             공통 영향 분석과 databaseImpact를 합친 검증된 응답.
         """
+        # 전체 근거는 색인해 두고, 질문과 관련된 근거만 모델 입력으로 사용한다.
+        full_request = request
+        request = await self._retrieve(request)
         payload = self._general_overview(request)
         requirement = request.source_summary.get("changeRequirement")
         requirement_header = (
@@ -323,7 +333,7 @@ class LlmService:
                 impact = await self._analyze_database_impact(database_request, requirement, progress)
                 if (review_coverage and review_coverage["mode"] == "FOCUSED" and impact.status == DatabaseImpactStatus.UNKNOWN):
                     previous_scope = review_coverage["reviewedTables"]
-                    database_request, review_coverage = self._scope_request(request, general, force_full=True)
+                    database_request, review_coverage = self._scope_request(full_request, general, force_full=True)
                     review_coverage["expandedFrom"] = previous_scope
                     database_request.source_summary["databaseReviewScope"] = review_coverage
                     if progress:
@@ -389,6 +399,21 @@ class LlmService:
             "generalAnalysis": original_general,
             "databaseReviewCoverage": review_coverage,
         })
+
+    async def _retrieve(self, request: ProjectAnalysisRequest) -> ProjectAnalysisRequest:
+        """검색 저장소 오류는 분석을 막지 않고 기존처럼 전체 근거를 사용한다."""
+        if self._retriever is None:
+            return request
+        payload = request.model_dump(mode="json", by_alias=True)
+        try:
+            if not isinstance(request.source_summary.get("changeRequirement"), dict):
+                await self._retriever.index(payload)
+                return request
+            reduced = await self._retriever.retrieve(payload)
+            return request if reduced is payload else ProjectAnalysisRequest.model_validate(reduced)
+        except Exception:
+            logger.warning("evidence_retrieval_skipped")
+            return request
 
     @staticmethod
     def _scope_request(request, general, force_full=False):
