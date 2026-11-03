@@ -49,6 +49,22 @@ def query_text(requirement):
     return "\n".join(value for value in values if isinstance(value, str))
 
 
+def selection_mode(requirement):
+    """화면에서 고른 근거 전달 방식. 알 수 없는 값은 기존 동작인 AUTO로 본다."""
+    value = requirement.get("evidenceSelection") if isinstance(requirement, dict) else None
+    return value if value in {"ALWAYS", "OFF"} else "AUTO"
+
+
+def _without_option(payload):
+    """모델 입력에 설정값이 섞이지 않게 evidenceSelection만 뺀다. 값이 없으면 같은 객체를 돌려준다."""
+    requirement = payload.get("sourceSummary", {}).get("changeRequirement")
+    if not isinstance(requirement, dict) or "evidenceSelection" not in requirement:
+        return payload
+    cleaned = copy.deepcopy(payload)
+    cleaned["sourceSummary"]["changeRequirement"].pop("evidenceSelection", None)
+    return cleaned
+
+
 def _table_name(table):
     return f"{table.get('schema')}.{table.get('name')}"
 
@@ -186,15 +202,21 @@ class EvidenceRetriever:
         return key
 
     async def retrieve(self, payload):
-        """요구사항과 관련된 조각만 남긴 새 요청 JSON을 반환한다. 요구사항이 없거나 작으면 그대로 반환한다."""
+        """요구사항과 관련된 조각만 남긴 새 요청 JSON을 반환한다.
+
+        화면에서 고른 방식(changeRequirement.evidenceSelection)에 따라 달라진다.
+        AUTO(기본)는 근거가 작으면 그대로 두고, ALWAYS는 작아도 관련 조각만 고르며, OFF는 항상 전체를 보낸다.
+        """
         requirement = payload.get("sourceSummary", {}).get("changeRequirement")
+        mode = selection_mode(requirement)
         query = query_text(requirement)
-        if not query.strip():
-            return payload
+        if mode == "OFF" or not query.strip():
+            return _without_option(payload)
         key = await self.index(payload)
         chunks = await asyncio.to_thread(self.store.load, str(payload["projectId"]), key)
-        if not any(sum(1 for c in chunks if c["kind"] == kind) > limit for kind, limit in BUDGETS.items()):
-            return payload
+        over_budget = any(sum(1 for c in chunks if c["kind"] == kind) > limit for kind, limit in BUDGETS.items())
+        if mode == "AUTO" and not over_budget:
+            return _without_option(payload)
 
         scores = _bm25(tokenize(query), chunks)
         top = max(scores) or 1
@@ -207,7 +229,7 @@ class EvidenceRetriever:
         selected = set()
         for kind, limit in BUDGETS.items():
             ranked = [index for index, chunk in enumerate(chunks) if chunk["kind"] == kind]
-            if len(ranked) <= limit:
+            if len(ranked) <= limit and mode != "ALWAYS":
                 selected.update(ranked)
                 continue
             ranked.sort(key=lambda index: (-scores[index], index))
@@ -239,7 +261,7 @@ class EvidenceRetriever:
             if index in selected or keep.get(chunk["kind"], lambda item: False)(chunk["item"]):
                 kept[chunk["kind"]].append(chunk["item"])
 
-        reduced = copy.deepcopy(payload)
+        reduced = _without_option(copy.deepcopy(payload))
         source = reduced["sourceSummary"]
         source["components"] = kept["component"]
         reduced["relations"] = kept["tableRef"]

@@ -58,7 +58,8 @@ public class AnalysisJobController {
                         : request.requirementVersionId(),
                 getUserId(jwt),
                 request == null ? null : request.reuseFromJobId(),
-                request != null && Boolean.TRUE.equals(request.confirmedUnchanged())
+                request != null && Boolean.TRUE.equals(request.confirmedUnchanged()),
+                request == null ? null : request.evidenceSelection()
         );
     }
 

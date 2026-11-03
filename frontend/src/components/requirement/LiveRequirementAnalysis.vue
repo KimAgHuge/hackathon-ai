@@ -17,7 +17,7 @@ import ViewHeading from '@/components/common/ViewHeading.vue'
 import { useClientTable } from '@/composables/useClientTable'
 import { matchesCreatedDateRange } from '@/lib/changeRequestFilters'
 import { evidenceUnavailableReasonLabel } from '@/lib/evidenceReuse'
-import { buildRequirementPayload } from '@/lib/requirementWorkflow'
+import { buildRequirementPayload, EVIDENCE_SELECTION_OPTIONS } from '@/lib/requirementWorkflow'
 import { useAuthStore } from '@/stores/authStore'
 
 const router = useRouter()
@@ -39,6 +39,7 @@ const snapshotError = ref('')
 const evidenceMode = ref('VERIFY_CURRENT')
 const selectedSnapshotId = ref('')
 const confirmedUnchanged = ref(false)
+const evidenceSelection = ref('AUTO')
 const showCreateForm = ref(false)
 const errorMessage = ref('')
 const notice = ref('')
@@ -246,6 +247,7 @@ const prepareAnalysis = async (requirement) => {
     evidenceMode.value = 'VERIFY_CURRENT'
     selectedSnapshotId.value = ''
     confirmedUnchanged.value = false
+    evidenceSelection.value = 'AUTO'
     snapshotOptions.value = []
     unavailableSnapshots.value = []
     unavailableSnapshotCount.value = 0
@@ -293,7 +295,12 @@ const analyzeRequirement = async () => {
     analyzingRequirementId.value = requirement.id
     let createdJobId = ''
     try {
-        const job = await startProjectAnalysis(requirement.projectId, versionId, evidenceMode.value === 'SAVED' ? selectedSnapshotId.value : null)
+        const job = await startProjectAnalysis(
+            requirement.projectId,
+            versionId,
+            evidenceMode.value === 'SAVED' ? selectedSnapshotId.value : null,
+            evidenceSelection.value
+        )
         createdJobId = job.jobId
         await router.push({
             name: 'analysis-progress',
@@ -559,6 +566,13 @@ onMounted(() => {
                         <input v-model="confirmedUnchanged" type="checkbox" class="mt-1" />
                         선택한 시점 이후 Git 소스와 DB 구조가 변경되지 않았음을 확인했습니다.
                     </label>
+                </div>
+                <div class="mt-4 grid gap-1">
+                    <BaseSelect v-model="evidenceSelection" id="evidence-selection" label="AI에 보낼 근거" :options="EVIDENCE_SELECTION_OPTIONS" />
+                    <p class="text-xs text-slate-600 dark:text-slate-400">
+                        자동은 근거가 많을 때만 요구사항과 관련된 것을 골라 보냅니다. 작은 프로젝트에서도 골라 보내려면 두 번째를, 항상 전체를 보내려면 세
+                        번째를 선택하세요.
+                    </p>
                 </div>
                 <div class="mt-4 flex flex-col gap-2 sm:flex-row">
                     <BaseButton

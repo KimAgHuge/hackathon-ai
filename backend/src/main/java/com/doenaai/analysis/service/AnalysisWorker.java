@@ -390,6 +390,10 @@ public class AnalysisWorker {
                     .reduce((previous, latest) -> latest)
                     .ifPresent(item -> requirement.put("latestFollowUpQuestion", item.get("question")));
         }
+        // 화면에서 근거 전달 방식을 직접 고른 경우에만 AI 서버로 알린다. 기본(AUTO)은 값을 보내지 않는다.
+        if ("ALWAYS".equals(job.evidenceSelection()) || "OFF".equals(job.evidenceSelection())) {
+            requirement.put("evidenceSelection", job.evidenceSelection());
+        }
         summary.put("changeRequirement", requirement);
     }
 }

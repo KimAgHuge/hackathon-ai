@@ -47,6 +47,17 @@ public class AnalysisJobService {
             UUID projectId, UUID requirementVersionId, UUID userId, UUID reuseFromJobId,
             boolean confirmedUnchanged
     ) {
+        return createProjectScan(projectId, requirementVersionId, userId, reuseFromJobId, confirmedUnchanged, null);
+    }
+
+    /**
+     * @param evidenceSelection AI 모델에 보낼 근거 방식. null·빈 값·AUTO는 기존 동작(근거가 크면 관련 근거만, 작으면 전체)이다.
+     */
+    public AnalysisJobResponse createProjectScan(
+            UUID projectId, UUID requirementVersionId, UUID userId, UUID reuseFromJobId,
+            boolean confirmedUnchanged, String evidenceSelection
+    ) {
+        String selection = normalizeEvidenceSelection(evidenceSelection);
         projectService.assertCanManage(
                 projectId,
                 userId
@@ -74,8 +85,10 @@ public class AnalysisJobService {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                         "저장된 소스·DB 근거가 완전하지 않거나 수집 방식이 이전 버전입니다. 최신 Git·DB 확인으로 다시 수집하세요.");
             }
-            return analysisJobRepository.createFromSavedEvidence(projectId, requirementVersionId,
-                    userId, reuseFromJobId);
+            return selection == null
+                    ? analysisJobRepository.createFromSavedEvidence(projectId, requirementVersionId, userId, reuseFromJobId)
+                    : analysisJobRepository.createFromSavedEvidence(projectId, requirementVersionId, userId, reuseFromJobId,
+                    selection);
         }
 
         GitRepositoryConnectionResponse repository =
@@ -92,6 +105,17 @@ public class AnalysisJobService {
             );
         }
 
+        if (selection != null) {
+            return analysisJobRepository.createProjectScan(
+                    projectId,
+                    requirementVersionId,
+                    userId,
+                    repository.repositoryUrl(),
+                    repository.branch(),
+                    repository.commitSha(),
+                    selection
+            );
+        }
         return analysisJobRepository.createProjectScan(
                 projectId,
                 requirementVersionId,
@@ -100,6 +124,13 @@ public class AnalysisJobService {
                 repository.branch(),
                 repository.commitSha()
         );
+    }
+
+    /** 허용하지 않는 값은 거절하고, 기본 동작(AUTO)은 null로 돌려 기존 경로를 그대로 쓴다. */
+    private static String normalizeEvidenceSelection(String value) {
+        if (value == null || value.isBlank() || "AUTO".equals(value)) return null;
+        if ("ALWAYS".equals(value) || "OFF".equals(value)) return value;
+        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "근거 전달 방식은 AUTO, ALWAYS, OFF 중 하나여야 합니다.");
     }
 
     /** 작업 ID와 사용자 ID로 접근 권한을 확인하고 최신 진행 상태를 반환한다. */

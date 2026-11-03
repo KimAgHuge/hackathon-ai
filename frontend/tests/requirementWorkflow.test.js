@@ -36,6 +36,15 @@ test('rejects a requirement without content for the analysis prompt', () => {
     )
 })
 
+test('sends the evidence selection only when it is not automatic and a requirement is targeted', () => {
+    const versionId = 'd29a0057-6e7f-4c0c-8959-091db31699d9'
+    assert.deepEqual(buildAnalysisJobPayload(versionId, null, 'AUTO'), { requirementVersionId: versionId })
+    assert.deepEqual(buildAnalysisJobPayload(versionId, null, 'ALWAYS'), { requirementVersionId: versionId, evidenceSelection: 'ALWAYS' })
+    assert.deepEqual(buildAnalysisJobPayload(versionId, null, 'OFF'), { requirementVersionId: versionId, evidenceSelection: 'OFF' })
+    assert.deepEqual(buildAnalysisJobPayload(versionId, null, 'weird'), { requirementVersionId: versionId })
+    assert.equal(buildAnalysisJobPayload(null, null, 'ALWAYS'), undefined)
+})
+
 test('only targeted analysis sends a requirement version', () => {
     const versionId = 'd29a0057-6e7f-4c0c-8959-091db31699d9'
     const snapshotId = 'eb590190-a818-48a5-937d-64d35b4e3468'
