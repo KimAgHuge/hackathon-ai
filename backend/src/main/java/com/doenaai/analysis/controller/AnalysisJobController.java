@@ -5,6 +5,7 @@ import com.doenaai.analysis.dto.AnalysisJobResponse;
 import com.doenaai.analysis.dto.AnalysisHistoryPage;
 import com.doenaai.analysis.service.AnalysisJobService;
 import com.doenaai.analysis.service.AnalysisHistoryService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -28,13 +29,15 @@ public class AnalysisJobController {
             @RequestParam(required = false) UUID projectId,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "10") int size,
+            @RequestParam(defaultValue = "false") boolean reusableEvidenceOnly,
             @AuthenticationPrincipal Jwt jwt
     ) {
         if (page < 0 || size < 1 || size > 100 || (long) page * size > Integer.MAX_VALUE) {
             throw new org.springframework.web.server.ResponseStatusException(
                     HttpStatus.BAD_REQUEST, "페이지 범위가 올바르지 않습니다.");
         }
-        return analysisHistoryService.list(getUserId(jwt), projectId, page, size);
+        return reusableEvidenceOnly ? analysisHistoryService.list(getUserId(jwt), projectId, page, size, true)
+                : analysisHistoryService.list(getUserId(jwt), projectId, page, size);
     }
 
     /** projectId와 선택적 requirementVersionId를 받아 대기 작업을 생성한다. */
@@ -47,10 +50,18 @@ public class AnalysisJobController {
     @ResponseStatus(HttpStatus.CREATED)
     public AnalysisJobResponse createProjectScan(
             @PathVariable UUID projectId,
-            @RequestBody(required = false)
+            @Valid @RequestBody(required = false)
             AnalysisJobCreateRequest request,
             @AuthenticationPrincipal Jwt jwt
     ) {
+        if (request != null && request.evidenceSelection() != null) {
+            return analysisJobService.createProjectScan(
+                    projectId, request.requirementVersionId(), getUserId(jwt), request.reuseFromJobId(),
+                    Boolean.TRUE.equals(request.confirmedUnchanged()),
+                    !Boolean.FALSE.equals(request.thinkingEnabled()), request.thinkingEffort(),
+                    request.evidenceSelection()
+            );
+        }
         return analysisJobService.createProjectScan(
                 projectId,
                 request == null
@@ -59,7 +70,8 @@ public class AnalysisJobController {
                 getUserId(jwt),
                 request == null ? null : request.reuseFromJobId(),
                 request != null && Boolean.TRUE.equals(request.confirmedUnchanged()),
-                request == null ? null : request.evidenceSelection()
+                request == null || !Boolean.FALSE.equals(request.thinkingEnabled()),
+                request == null ? "medium" : request.thinkingEffort()
         );
     }
 

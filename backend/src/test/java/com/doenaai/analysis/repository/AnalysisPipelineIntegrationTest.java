@@ -23,6 +23,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.sql.SQLException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
@@ -39,7 +41,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * 폐기용 로컬 PostgreSQL에서만 실행하며 실제 앱 데이터소스는 사용하지 않는다.
  * DOENAAI_TEST_POSTGRES_URL=jdbc:postgresql://127.0.0.1:PORT/doenaai_worker_test로 명시해서 켠다.
  * 시험 계정은 postgres / doenaai-worker-test이며 이미 시험 테이블이 있으면 실행을 거부한다.
- * 마이그레이션 002·007·010에서 사용하는 컬럼과 제약을 반영한다.
+ * 마이그레이션 002·007·010·011·013·014에서 사용하는 컬럼과 제약을 반영한다.
  * 관련 없는 프로젝트·요구사항·모델·인증 테이블의 외래키와 행 접근 정책은 포함하지 않는다.
  */
 @EnabledIfEnvironmentVariable(named = "DOENAAI_TEST_POSTGRES_URL", matches = ".+")
@@ -110,6 +112,9 @@ class AnalysisPipelineIntegrationTest {
                             check (analysis_type in ('CHANGE_REQUEST', 'PROJECT_SCAN', 'PROJECT_SCAN_V2', 'REQUIREMENT', 'REANALYSIS')),
                         target_worker_id varchar(80),
                         claimed_by_worker_id varchar(80),
+                        thinking_enabled boolean default true,
+                        thinking_effort text default 'medium'
+                            check (thinking_effort is null or thinking_effort in ('low', 'medium', 'high')),
                         status varchar(20) not null default 'PENDING'
                             check (status in ('PENDING', 'RUNNING', 'COMPLETED', 'FAILED', 'CANCELLED')),
                         source_progress integer not null default 0 check (source_progress between 0 and 100),
@@ -197,6 +202,80 @@ class AnalysisPipelineIntegrationTest {
         assertThat(jobs.claimNext().orElseThrow().jobId()).isEqualTo(later.jobId());
         assertThat(jobs.claimNext()).isEmpty();
         assertThat(jobs.findById(ignored.jobId()).orElseThrow().status()).isEqualTo("PENDING");
+    }
+
+    @Test
+    void thinkingChoiceSurvivesStoredEvidenceAndWorkerRepositoryRecreation() {
+        var original = jobs.createProjectScan(PROJECT_ID, REQUIREMENT_VERSION_ID, USER_ID,
+                REPOSITORY_URL, BRANCH, COMMIT_SHA, false);
+        assertThat(original.thinkingEnabled()).isFalse();
+        assertThat(jobs.claimNext().orElseThrow().thinkingEnabled()).isFalse();
+        results.complete(original.jobId(), validResult(), validFacts());
+        var restarted = new AnalysisJobRepository(jdbc, JsonMapper.builder().build(),
+                new AnalysisNodeIdentity(true, "primary"));
+        assertThat(restarted.findById(original.jobId()).orElseThrow().thinkingEnabled()).isFalse();
+
+        var reused = restarted.createFromSavedEvidence(PROJECT_ID, REQUIREMENT_VERSION_ID, USER_ID,
+                original.jobId(), true);
+        assertThat(reused.thinkingEnabled()).isTrue();
+        var selected = restarted.claimNext().orElseThrow();
+        assertThat(selected.reuseFromJobId()).isEqualTo(original.jobId());
+        assertThat(selected.thinkingEnabled()).isTrue();
+        assertThat(restarted.findById(original.jobId()).orElseThrow().thinkingEnabled()).isFalse();
+    }
+
+    @Test
+    void legacyUnknownThinkingSettingIsNotPresentedOrClaimedAsEnabled() {
+        var legacy = newJob();
+        jdbc.update("update public.analysis_jobs set thinking_enabled = null where id = ?", legacy.jobId());
+
+        assertThat(jobs.findById(legacy.jobId()).orElseThrow().thinkingEnabled()).isNull();
+        assertThat(jobs.claimNext().orElseThrow().thinkingEnabled()).isNull();
+        var fresh = newJob();
+        assertThat(fresh.thinkingEnabled()).isTrue();
+    }
+
+    @Test
+    void selectedEffortSurvivesQueueRestartAndSavedEvidenceWithoutCopyingThePreviousChoice() {
+        for (String effort : List.of("low", "medium", "high")) {
+            var original = jobs.createProjectScan(PROJECT_ID, REQUIREMENT_VERSION_ID, USER_ID,
+                    REPOSITORY_URL, BRANCH, COMMIT_SHA, false, effort);
+            assertThat(original.thinkingEffort()).isEqualTo(effort);
+            assertThat(jobs.claimNext().orElseThrow().thinkingEffort()).isEqualTo(effort);
+            results.complete(original.jobId(), validResult(), validFacts());
+            var restarted = new AnalysisJobRepository(jdbc, JsonMapper.builder().build(),
+                    new AnalysisNodeIdentity(true, "primary"));
+            assertThat(restarted.findById(original.jobId()).orElseThrow().thinkingEffort()).isEqualTo(effort);
+
+            String nextEffort = "high".equals(effort) ? "low" : "high";
+            var reused = restarted.createFromSavedEvidence(PROJECT_ID, REQUIREMENT_VERSION_ID, USER_ID,
+                    original.jobId(), true, nextEffort);
+            assertThat(reused.thinkingEffort()).isEqualTo(nextEffort);
+            var selected = restarted.claimNext().orElseThrow();
+            assertThat(selected.reuseFromJobId()).isEqualTo(original.jobId());
+            assertThat(selected.thinkingEffort()).isEqualTo(nextEffort);
+            assertThat(restarted.findById(original.jobId()).orElseThrow().thinkingEffort()).isEqualTo(effort);
+            results.complete(reused.jobId(), validResult(), validFacts());
+        }
+    }
+
+    @Test
+    void migrationPreservesUnknownOldEffortAndAppliesDefaultAndConstraintOnlyToNewChoices() throws Exception {
+        var legacy = newJob();
+        jdbc.execute("alter table public.analysis_jobs drop column thinking_effort");
+        Path migration = Path.of("..", "supabase", "migrations", "014_analysis_thinking_effort.sql");
+        jdbc.execute(Files.readString(migration));
+
+        assertThat(jobs.findById(legacy.jobId()).orElseThrow().thinkingEffort()).isNull();
+        assertThat(jobs.claimNext().orElseThrow().thinkingEffort()).isNull();
+        UUID defaulted = jdbc.queryForObject("""
+                insert into public.analysis_jobs (project_id, target_worker_id, analysis_type)
+                values (?, 'primary', 'PROJECT_SCAN_V2') returning id
+                """, UUID.class, PROJECT_ID);
+        assertThat(jobs.findById(defaulted).orElseThrow().thinkingEffort()).isEqualTo("medium");
+        assertThatThrownBy(() -> jdbc.update("update public.analysis_jobs set thinking_effort = 'maximum' where id = ?", defaulted))
+                .isInstanceOf(DataIntegrityViolationException.class);
+        assertThat(jobs.findById(defaulted).orElseThrow().thinkingEffort()).isEqualTo("medium");
     }
 
     @Test
@@ -405,7 +484,7 @@ class AnalysisPipelineIntegrationTest {
     void outdatedLatestEvidenceDoesNotHideAnOlderCurrentSnapshotOrDeleteItsHistory() {
         var current = newJob();
         jobs.claimNext().orElseThrow();
-        var baseSource = Map.<String, Object>of("commitSha", COMMIT_SHA,
+        var baseSource = Map.<String, Object>of("commitSha", COMMIT_SHA, "components", List.of(),
                 "promptCoverage", Map.of("truncated", false), "scanMetrics", Map.of("truncated", false));
         var currentSource = new java.util.LinkedHashMap<>(baseSource);
         currentSource.put("collectorVersion", SourceEvidenceVersion.CURRENT);
@@ -420,7 +499,7 @@ class AnalysisPipelineIntegrationTest {
             if (version != null) oldSource.put("collectorVersion", version);
             results.complete(previous.jobId(), validResult(), Map.of("sourceSummary", oldSource, "databaseSummary", db, "relations", List.of()));
 
-            assertThat(results.findReusableEvidenceByJobId(PROJECT_ID, previous.jobId())).isEmpty();
+            assertThat(results.findReusableEvidenceByJobId(PROJECT_ID, previous.jobId())).isPresent();
             assertThat(results.findByJobId(previous.jobId())).isPresent();
             assertThat(results.findReusableEvidence(PROJECT_ID, COMMIT_SHA).orElseThrow().sourceJobId()).isEqualTo(current.jobId());
         }

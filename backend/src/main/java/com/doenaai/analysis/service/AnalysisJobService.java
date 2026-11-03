@@ -47,7 +47,7 @@ public class AnalysisJobService {
             UUID projectId, UUID requirementVersionId, UUID userId, UUID reuseFromJobId,
             boolean confirmedUnchanged
     ) {
-        return createProjectScan(projectId, requirementVersionId, userId, reuseFromJobId, confirmedUnchanged, null);
+        return createProjectScan(projectId, requirementVersionId, userId, reuseFromJobId, confirmedUnchanged, true);
     }
 
     /**
@@ -57,7 +57,36 @@ public class AnalysisJobService {
             UUID projectId, UUID requirementVersionId, UUID userId, UUID reuseFromJobId,
             boolean confirmedUnchanged, String evidenceSelection
     ) {
+        return createProjectScan(projectId, requirementVersionId, userId, reuseFromJobId,
+                confirmedUnchanged, true, "medium", evidenceSelection);
+    }
+
+    public AnalysisJobResponse createProjectScan(
+            UUID projectId, UUID requirementVersionId, UUID userId, UUID reuseFromJobId,
+            boolean confirmedUnchanged, boolean thinkingEnabled
+    ) {
+        return createProjectScan(projectId, requirementVersionId, userId, reuseFromJobId,
+                confirmedUnchanged, thinkingEnabled, "medium");
+    }
+
+    public AnalysisJobResponse createProjectScan(
+            UUID projectId, UUID requirementVersionId, UUID userId, UUID reuseFromJobId,
+            boolean confirmedUnchanged, boolean thinkingEnabled, String thinkingEffort
+    ) {
+        return createProjectScan(projectId, requirementVersionId, userId, reuseFromJobId,
+                confirmedUnchanged, thinkingEnabled, thinkingEffort, null);
+    }
+
+    public AnalysisJobResponse createProjectScan(
+            UUID projectId, UUID requirementVersionId, UUID userId, UUID reuseFromJobId,
+            boolean confirmedUnchanged, boolean thinkingEnabled, String thinkingEffort, String evidenceSelection
+    ) {
         String selection = normalizeEvidenceSelection(evidenceSelection);
+        if (thinkingEffort == null) thinkingEffort = "medium";
+        if (!java.util.Set.of("low", "medium", "high").contains(thinkingEffort)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "추론 강도는 low, medium, high 중에서 선택해야 합니다.");
+        }
         projectService.assertCanManage(
                 projectId,
                 userId
@@ -75,20 +104,22 @@ public class AnalysisJobService {
         if (reuseFromJobId != null) {
             if (!confirmedUnchanged) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                        "저장된 근거 사용에는 Git·DB 변경 없음 확인이 필요합니다.");
+                        "선택한 시점의 저장 근거를 사용한다는 확인이 필요합니다.");
             }
             var evidence = analysisResultRepository.findReusableEvidenceByJobId(projectId, reuseFromJobId)
                     .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST,
                             "선택한 분석의 저장 근거가 없거나 재사용할 수 없습니다. 최신 Git·DB 확인으로 다시 수집하세요."));
             if (!EvidenceReusePolicy.canUseSavedSnapshot(evidence,
-                    (String) evidence.sourceSummary().get("commitSha"))) {
+                    evidence.sourceSummary() != null && evidence.sourceSummary().get("commitSha") instanceof String sha ? sha : null)) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                        "저장된 소스·DB 근거가 완전하지 않거나 수집 방식이 이전 버전입니다. 최신 Git·DB 확인으로 다시 수집하세요.");
+                        "저장된 소스·DB 근거의 필수 구조나 커밋 정보를 확인할 수 없습니다. 최신 Git·DB 확인으로 다시 수집하세요.");
             }
-            return selection == null
-                    ? analysisJobRepository.createFromSavedEvidence(projectId, requirementVersionId, userId, reuseFromJobId)
-                    : analysisJobRepository.createFromSavedEvidence(projectId, requirementVersionId, userId, reuseFromJobId,
-                    selection);
+            if (selection != null) {
+                return analysisJobRepository.createFromSavedEvidence(projectId, requirementVersionId,
+                        userId, reuseFromJobId, thinkingEnabled, thinkingEffort, selection);
+            }
+            return analysisJobRepository.createFromSavedEvidence(projectId, requirementVersionId,
+                    userId, reuseFromJobId, thinkingEnabled, thinkingEffort);
         }
 
         GitRepositoryConnectionResponse repository =
@@ -113,6 +144,8 @@ public class AnalysisJobService {
                     repository.repositoryUrl(),
                     repository.branch(),
                     repository.commitSha(),
+                    thinkingEnabled,
+                    thinkingEffort,
                     selection
             );
         }
@@ -122,7 +155,9 @@ public class AnalysisJobService {
                 userId,
                 repository.repositoryUrl(),
                 repository.branch(),
-                repository.commitSha()
+                repository.commitSha(),
+                thinkingEnabled,
+                thinkingEffort
         );
     }
 

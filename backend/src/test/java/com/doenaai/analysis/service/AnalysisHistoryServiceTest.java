@@ -41,6 +41,49 @@ class AnalysisHistoryServiceTest {
         verifyNoInteractions(history);
     }
 
+    @Test void savedEvidenceFilterUsesOnlyVisibleProjectsAndKeepsPagination() {
+        UUID userId = UUID.randomUUID();
+        UUID firstProjectId = UUID.randomUUID();
+        UUID secondProjectId = UUID.randomUUID();
+        var visibleIds = List.of(firstProjectId, secondProjectId);
+        when(projects.getProjects(userId)).thenReturn(List.of(project(firstProjectId), project(secondProjectId)));
+        var response = new AnalysisHistoryPage(List.of(), 25, 1, 20);
+        when(history.find(visibleIds, 1, 20, true)).thenReturn(response);
+
+        assertThat(service.list(userId, null, 1, 20, true)).isSameAs(response);
+
+        verify(projects).getProjects(userId);
+        verify(history).find(visibleIds, 1, 20, true);
+        verifyNoMoreInteractions(history);
+    }
+
+    @Test void savedEvidenceFilterChecksTheSelectedProjectBeforeReadingHistory() {
+        UUID userId = UUID.randomUUID();
+        UUID projectId = UUID.randomUUID();
+        when(projects.getProject(projectId, userId)).thenReturn(project(projectId));
+        var response = new AnalysisHistoryPage(List.of(), 1, 0, 10);
+        when(history.find(List.of(projectId), 0, 10, true)).thenReturn(response);
+
+        assertThat(service.list(userId, projectId, 0, 10, true)).isSameAs(response);
+
+        var order = inOrder(projects, history);
+        order.verify(projects).getProject(projectId, userId);
+        order.verify(history).find(List.of(projectId), 0, 10, true);
+        verify(projects, never()).getProjects(any());
+    }
+
+    @Test void savedEvidenceFilterCannotBypassProjectAccess() {
+        UUID userId = UUID.randomUUID();
+        UUID projectId = UUID.randomUUID();
+        when(projects.getProject(projectId, userId)).thenThrow(new ResponseStatusException(
+                org.springframework.http.HttpStatus.NOT_FOUND, "프로젝트를 찾을 수 없습니다."));
+
+        assertThatThrownBy(() -> service.list(userId, projectId, 0, 10, true))
+                .isInstanceOf(ResponseStatusException.class);
+
+        verifyNoInteractions(history);
+    }
+
     private ProjectResponse project(UUID id) {
         return new ProjectResponse(id, UUID.randomUUID(), "테스트 프로젝트", null, null,
                 null, null, null, null, null, null, null);

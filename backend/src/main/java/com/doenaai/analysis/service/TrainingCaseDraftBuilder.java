@@ -44,6 +44,10 @@ final class TrainingCaseDraftBuilder {
         request.put("sourceSummary", source);
         request.put("databaseSummary", database);
         request.put("relations", relations);
+        if (facts.get("thinkingEnabled") instanceof Boolean enabled) request.put("thinkingEnabled", enabled);
+        if (facts.get("thinkingEffort") instanceof String effort && List.of("low", "medium", "high").contains(effort)) {
+            request.put("thinkingEffort", effort);
+        }
         reviewRequired.add("request: 개인정보·비밀값·고객 정보를 검토하고 비식별화해야 합니다.");
 
         var sourceRevision = source instanceof Map<?, ?> sourceMap ? sourceMap.get("commitSha") : null;

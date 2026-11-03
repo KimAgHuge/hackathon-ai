@@ -255,7 +255,8 @@ public class AiAnalysisClient {
         public String code() { return code; }
 
         private static String normalize(String code) {
-            return code != null && Set.of("MODEL_TIMEOUT", "MODEL_UNAVAILABLE", "MODEL_OUTPUT_LIMIT", "INVALID_MODEL_RESPONSE").contains(code)
+            return code != null && Set.of("MODEL_TIMEOUT", "MODEL_UNAVAILABLE", "MODEL_OUTPUT_LIMIT", "INVALID_MODEL_RESPONSE",
+                    "THINKING_NOT_SUPPORTED", "THINKING_MODE_MISMATCH", "THINKING_EFFORT_MISMATCH").contains(code)
                     ? code : "ANALYSIS_FAILED";
         }
 
@@ -265,6 +266,9 @@ public class AiAnalysisClient {
                 case "MODEL_UNAVAILABLE" -> "AI 모델에 연결하거나 모델을 실행하지 못했습니다.";
                 case "MODEL_OUTPUT_LIMIT" -> "AI 응답이 출력 한도에 도달했습니다. 잘린 응답은 저장하지 않았습니다.";
                 case "INVALID_MODEL_RESPONSE" -> "AI 응답이 분석 결과 형식 또는 근거 검사를 통과하지 못했습니다.";
+                case "THINKING_NOT_SUPPORTED" -> "선택한 모델은 요청한 추론 모드를 지원하지 않습니다. 추론 설정이나 모델을 확인해 주세요.";
+                case "THINKING_MODE_MISMATCH" -> "요청한 추론 모드와 AI 서버가 보고한 실행 설정이 달라 분석 결과를 저장하지 않았습니다.";
+                case "THINKING_EFFORT_MISMATCH" -> "요청한 추론 강도와 AI 서버가 보고한 실행 설정이 달라 분석 결과를 저장하지 않았습니다.";
                 default -> "AI 분석을 완료하지 못했습니다.";
             };
         }

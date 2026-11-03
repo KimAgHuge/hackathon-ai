@@ -90,4 +90,43 @@ class AnalysisPromptBuilderTest {
                 Map.of("schema", "public", "name", "users", "columns", List.of(Map.of("name", "password"))))), List.of()))
                 .doesNotThrowAnyException();
     }
+
+    @Test void rebuildingSavedInputsPreservesEarlierOmissionsCountsAndGraphLimits() {
+        var oldCoverage = Map.<String, Object>of("collectedComponents", 30, "collectedTables", 7,
+                "collectedRelations", 9, "omittedFrameworkEvidences", 2, "truncated", true);
+        var graph = Map.<String, Object>of("links", List.of(Map.of("file", "src/one.py", "targetFile", "src/two.py")),
+                "routes", List.of(), "unresolvedReferences", List.of(),
+                "collectedLinks", 12, "collectedRoutes", 6, "collectedUnresolvedReferences", 3, "truncated", true);
+        var source = Map.<String, Object>of("components", List.of(Map.of("path", "src/one.py")),
+                "promptCoverage", oldCoverage, "sourceConnections", graph,
+                "scanMetrics", Map.of("truncated", true), "collectorVersion", "source-evidence-v1");
+        var database = Map.<String, Object>of("tables", List.of(), "truncated", true, "warnings", List.of("이전 수집 경고입니다."));
+
+        var payload = builder.build(UUID.randomUUID(), source, database, List.of());
+
+        var sentSource = (Map<?, ?>) payload.get("sourceSummary");
+        var coverage = (Map<?, ?>) sentSource.get("promptCoverage");
+        assertThat(coverage.get("collectedComponents")).isEqualTo(30);
+        assertThat(coverage.get("collectedTables")).isEqualTo(7);
+        assertThat(coverage.get("collectedRelations")).isEqualTo(9);
+        assertThat(coverage.get("omittedFrameworkEvidences")).isEqualTo(2);
+        assertThat(coverage.get("includedComponents")).isEqualTo(1);
+        assertThat(coverage.get("truncated")).isEqualTo(true);
+        assertThat(coverage.get("upstreamTruncated")).isEqualTo(true);
+        assertThat(((Map<?, ?>) sentSource.get("sourceConnections")).get("collectedLinks")).isEqualTo(12);
+        assertThat(((Map<?, ?>) sentSource.get("sourceConnections")).get("collectedRoutes")).isEqualTo(6);
+        assertThat(((Map<?, ?>) sentSource.get("sourceConnections")).get("collectedUnresolvedReferences")).isEqualTo(3);
+        assertThat(sentSource.get("collectorVersion")).isEqualTo("source-evidence-v1");
+        assertThat(source.get("promptCoverage")).isSameAs(oldCoverage);
+        assertThat(payload.get("databaseSummary")).isEqualTo(database);
+    }
+
+    @Test void unknownSavedCoverageCannotBecomeACompleteSnapshot() {
+        var payload = builder.build(UUID.randomUUID(), Map.of("components", List.of(),
+                "promptCoverage", Map.of("upstreamCoverageUnknown", true)), Map.of("tables", List.of()), List.of());
+        var coverage = (Map<?, ?>) ((Map<?, ?>) payload.get("sourceSummary")).get("promptCoverage");
+
+        assertThat(coverage.get("upstreamCoverageUnknown")).isEqualTo(true);
+        assertThat(coverage.get("truncated")).isEqualTo(true);
+    }
 }

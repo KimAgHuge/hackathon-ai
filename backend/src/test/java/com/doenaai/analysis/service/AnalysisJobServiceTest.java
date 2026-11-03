@@ -116,7 +116,7 @@ class AnalysisJobServiceTest {
                 userId,
                 repository.repositoryUrl(),
                 repository.branch(),
-                repository.commitSha()
+                repository.commitSha(), true, "medium"
         )).thenReturn(saved);
 
         var response = analysisJobService.createProjectScan(
@@ -138,7 +138,7 @@ class AnalysisJobServiceTest {
                 userId,
                 repository.repositoryUrl(),
                 repository.branch(),
-                repository.commitSha()
+                repository.commitSha(), true, "medium"
         );
     }
 
@@ -202,7 +202,7 @@ class AnalysisJobServiceTest {
                 userId,
                 repository.repositoryUrl(),
                 repository.branch(),
-                repository.commitSha()
+                repository.commitSha(), true, "medium"
         )).thenReturn(saved);
 
         var response = analysisJobService.createProjectScan(
@@ -223,7 +223,7 @@ class AnalysisJobServiceTest {
         UUID userId = UUID.randomUUID();
         String sha = "a".repeat(40);
         var evidence = new ReusableEvidence(sourceJobId,
-                Map.of("commitSha", sha, "promptCoverage", Map.of("truncated", false),
+                Map.of("commitSha", sha, "components", List.of(), "promptCoverage", Map.of("truncated", false),
                         "collectorVersion", SourceEvidenceVersion.CURRENT,
                         "scanMetrics", Map.of("truncated", false)),
                 Map.of("truncated", false, "warnings", List.of(), "tables", List.of()), List.of());
@@ -231,7 +231,7 @@ class AnalysisJobServiceTest {
                 OffsetDateTime.now(ZoneOffset.UTC));
         when(analysisResultRepository.findReusableEvidenceByJobId(projectId, sourceJobId))
                 .thenReturn(Optional.of(evidence));
-        when(analysisJobRepository.createFromSavedEvidence(projectId, versionId, userId, sourceJobId))
+        when(analysisJobRepository.createFromSavedEvidence(projectId, versionId, userId, sourceJobId, true, "medium"))
                 .thenReturn(saved);
 
         assertThat(analysisJobService.createProjectScan(projectId, versionId, userId, sourceJobId, true))
@@ -254,7 +254,7 @@ class AnalysisJobServiceTest {
     }
 
     @Test
-    void oldSavedEvidenceReturnsARecollectionGuideWithoutCreatingAJob() {
+    void missingCoreSavedEvidenceReturnsARecollectionGuideWithoutCreatingAJob() {
         var projectId = UUID.randomUUID();
         var sourceJobId = UUID.randomUUID();
         when(analysisResultRepository.findReusableEvidenceByJobId(projectId, sourceJobId)).thenReturn(Optional.of(
@@ -268,14 +268,14 @@ class AnalysisJobServiceTest {
     }
 
     @Test
-    void savedEvidenceRequiresExplicitUnchangedConfirmation() {
+    void savedEvidenceRequiresExplicitSnapshotConfirmation() {
         UUID projectId = UUID.randomUUID();
         UUID sourceJobId = UUID.randomUUID();
 
         assertThatThrownBy(() -> analysisJobService.createProjectScan(projectId, null,
                 UUID.randomUUID(), sourceJobId, false))
                 .isInstanceOf(ResponseStatusException.class)
-                .hasMessageContaining("변경 없음 확인");
+                .hasMessageContaining("선택한 시점의 저장 근거를 사용한다는 확인");
         verifyNoInteractions(analysisResultRepository, gitService, analysisJobRepository);
     }
 

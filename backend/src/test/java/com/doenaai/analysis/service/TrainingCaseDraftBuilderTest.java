@@ -90,6 +90,46 @@ class TrainingCaseDraftBuilderTest {
         assertThat(((Map<?, ?>) answers.get("general")).get("databaseRelevance")).isNull();
     }
 
+    @Test void trainingRequestKeepsOnlyRecordedBooleanThinkingChoices() {
+        var original = legacyResult("NO_CHANGE");
+        var job = jobWithActivity(List.of());
+        var legacyDraft = TrainingCaseDraftBuilder.build(job, original, reviewerId).caseDraft();
+        assertThat(((Map<?, ?>) legacyDraft.get("request")).containsKey("thinkingEnabled")).isFalse();
+        for (Boolean enabled : new Boolean[]{true, false, null}) {
+            var facts = new java.util.LinkedHashMap<>(original.facts());
+            facts.put("thinkingEnabled", enabled);
+            var result = new AnalysisResultResponse(jobId, projectId, original.summary(), original.riskLevel(),
+                    original.riskScore(), original.result(), facts, now, "APPROVED", null, "검토", reviewerId, now);
+
+            var draft = TrainingCaseDraftBuilder.build(job, result, reviewerId).caseDraft();
+            var request = (Map<?, ?>) draft.get("request");
+
+            if (enabled == null) assertThat(request.containsKey("thinkingEnabled")).isFalse();
+            else assertThat(request.get("thinkingEnabled")).isEqualTo(enabled);
+        }
+    }
+
+    @Test void trainingRequestKeepsOnlyRecordedValidThinkingEffort() {
+        var original = legacyResult("NO_CHANGE");
+        var job = jobWithActivity(List.of());
+        var legacy = TrainingCaseDraftBuilder.build(job, original, reviewerId).caseDraft();
+        assertThat(((Map<?, ?>) legacy.get("request")).containsKey("thinkingEffort")).isFalse();
+        for (Object effort : new Object[]{"low", "medium", "high", null, "maximum", 42}) {
+            var facts = new java.util.LinkedHashMap<>(original.facts());
+            facts.put("thinkingEnabled", false);
+            facts.put("thinkingEffort", effort);
+            var result = new AnalysisResultResponse(jobId, projectId, original.summary(), original.riskLevel(),
+                    original.riskScore(), original.result(), facts, now, "APPROVED", null, "검토", reviewerId, now);
+
+            var request = (Map<?, ?>) TrainingCaseDraftBuilder.build(job, result, reviewerId).caseDraft().get("request");
+
+            assertThat(request.get("thinkingEnabled")).isEqualTo(false);
+            if (effort instanceof String value && List.of("low", "medium", "high").contains(value)) {
+                assertThat(request.get("thinkingEffort")).isEqualTo(value);
+            } else assertThat(request.containsKey("thinkingEffort")).isFalse();
+        }
+    }
+
     @Test void restoresDatabaseCollectionTimeOnlyFromMatchingCompletedActivity() {
         var events = List.of(new AnalysisActivityEvent("데이터베이스 구조 수집", "STARTED", now.toString()),
                 new AnalysisActivityEvent("데이터베이스 구조 수집", "COMPLETED", now.plusSeconds(3).toString()),

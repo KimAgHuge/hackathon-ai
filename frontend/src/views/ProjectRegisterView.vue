@@ -11,6 +11,7 @@ import { saveGitRepositoryConnection, saveProjectConnection, testDatabaseConnect
 import { createProject, updateProject } from '@/api/projectApi'
 import { useAuthStore } from '@/stores/authStore'
 import { useProjectWizardStore } from '@/stores/projectWizardStore'
+import { analysisThinkingError } from '@/lib/analysisThinking'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -31,6 +32,8 @@ const saving = ref(false)
 const testingRepository = ref(false)
 const testingConnection = ref(false)
 const startingAnalysis = ref(false)
+const thinkingEnabled = ref(true)
+const thinkingEffort = ref('medium')
 const notice = ref('')
 const noticeType = ref('success')
 const organizations = ref([])
@@ -105,7 +108,8 @@ const showNotice = (message, type = 'success') => {
     noticeType.value = type
 }
 
-const getErrorMessage = (error) => error?.response?.data?.message || error?.response?.data?.detail || error?.message || '요청을 처리하지 못했습니다.'
+const getErrorMessage = (error) =>
+    analysisThinkingError(error) || error?.response?.data?.message || error?.response?.data?.detail || error?.message || '요청을 처리하지 못했습니다.'
 
 const updateProjectForm = (value) => {
     Object.assign(project, value)
@@ -270,7 +274,7 @@ const handleNext = async () => {
         await saveGitRepositoryConnection(savedProject.id, buildRepositoryConnectionPayload())
         await saveProjectConnection(savedProject.id, { ...databaseSource })
 
-        const analysisJob = await startProjectAnalysis(savedProject.id)
+        const analysisJob = await startProjectAnalysis(savedProject.id, null, null, thinkingEnabled.value, thinkingEffort.value)
         wizardStore.setAnalysisJob(analysisJob)
 
         await router.push({
@@ -310,6 +314,8 @@ onMounted(loadOrganizations)
         </div>
 
         <ProjectConnectionStep
+            v-model:thinking-enabled="thinkingEnabled"
+            v-model:thinking-effort="thinkingEffort"
             :project="project"
             :organization-options="organizationOptions"
             :organizations-loading="organizationsLoading"

@@ -29,18 +29,28 @@ export const buildRequirementPayload = (form) => {
     }
 }
 
-/** 기본 분석은 최신 Git/DB를 확인하고, 저장 근거를 선택한 경우에만 해당 작업 ID를 보낸다. */
-export const buildAnalysisJobPayload = (requirementVersionId, reuseFromJobId = null, evidenceSelection = 'AUTO') =>
-    requirementVersionId || reuseFromJobId
-        ? {
-              ...(requirementVersionId ? { requirementVersionId } : {}),
-              ...(reuseFromJobId ? { reuseFromJobId, confirmedUnchanged: true } : {}),
-              // 자동(기본)이면 보내지 않아 서버가 기존 방식으로 동작한다.
-              ...(requirementVersionId && ['ALWAYS', 'OFF'].includes(evidenceSelection) ? { evidenceSelection } : {}),
-          }
-        : undefined
+/** 분석마다 추론 설정을 명시하고, 선택한 저장 근거와 요구사항의 근거 선택 방식을 함께 보낸다. */
+export const buildAnalysisJobPayload = (
+    requirementVersionId,
+    reuseFromJobId = null,
+    thinkingEnabled = true,
+    thinkingEffort = 'medium',
+    evidenceSelection = 'AUTO'
+) => {
+    if (!['low', 'medium', 'high'].includes(thinkingEffort)) {
+        throw new Error('추론 강도는 낮음, 보통, 높음 중에서 선택해 주세요.')
+    }
+    return {
+        thinkingEnabled: thinkingEnabled !== false,
+        thinkingEffort,
+        ...(requirementVersionId ? { requirementVersionId } : {}),
+        ...(reuseFromJobId ? { reuseFromJobId, confirmedUnchanged: true } : {}),
+        // 자동 선택은 서버 기본값을 사용하며 요구사항 분석에만 선택값을 보낸다.
+        ...(requirementVersionId && ['ALWAYS', 'OFF'].includes(evidenceSelection) ? { evidenceSelection } : {}),
+    }
+}
 
-/** AI 모델에 보낼 근거를 고르는 방식. 요구사항 영향 분석에서만 쓴다. */
+/** AI 모델에 보낼 근거를 고르는 방식이다. 요구사항 영향 분석에서만 사용한다. */
 export const EVIDENCE_SELECTION_OPTIONS = [
     { value: 'AUTO', label: '자동 (근거가 많을 때만 관련 근거 선택)' },
     { value: 'ALWAYS', label: '항상 관련 근거만 골라 보내기 (RAG)' },

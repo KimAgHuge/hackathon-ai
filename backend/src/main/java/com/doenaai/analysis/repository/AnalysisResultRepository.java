@@ -24,6 +24,31 @@ public class AnalysisResultRepository {
     private final ObjectMapper objectMapper;
     private static final TypeReference<Map<String, Object>> MAP = new TypeReference<>() {};
 
+    /** 수동 선택의 필수 구조와 커밋 조건을 목록과 실제 조회에 동일하게 적용한다. */
+    static final String SAVED_EVIDENCE_CONDITION = """
+            j.status = 'COMPLETED'
+            and jsonb_typeof(r.inference_metadata -> 'facts' -> 'sourceSummary') = 'object'
+            and jsonb_typeof(r.inference_metadata -> 'facts' -> 'databaseSummary') = 'object'
+            and jsonb_typeof(r.inference_metadata -> 'facts' -> 'sourceSummary' -> 'components') = 'array'
+            and jsonb_typeof(r.inference_metadata -> 'facts' -> 'databaseSummary' -> 'tables') = 'array'
+            and jsonb_typeof(r.inference_metadata -> 'facts' -> 'relations') = 'array'
+            and nullif(btrim(j.input_snapshot ->> 'commitSha'), '') is not null
+            and jsonb_typeof(r.inference_metadata -> 'facts' -> 'sourceSummary' -> 'commitSha') = 'string'
+            and (j.input_snapshot ->> 'commitSha') = (r.inference_metadata -> 'facts' -> 'sourceSummary' ->> 'commitSha')
+            and not exists (select 1 from jsonb_array_elements(
+                case when jsonb_typeof(r.inference_metadata -> 'facts' -> 'sourceSummary' -> 'components') = 'array'
+                then r.inference_metadata -> 'facts' -> 'sourceSummary' -> 'components' else '[]'::jsonb end) item
+                where jsonb_typeof(item) is distinct from 'object')
+            and not exists (select 1 from jsonb_array_elements(
+                case when jsonb_typeof(r.inference_metadata -> 'facts' -> 'databaseSummary' -> 'tables') = 'array'
+                then r.inference_metadata -> 'facts' -> 'databaseSummary' -> 'tables' else '[]'::jsonb end) item
+                where jsonb_typeof(item) is distinct from 'object')
+            and not exists (select 1 from jsonb_array_elements(
+                case when jsonb_typeof(r.inference_metadata -> 'facts' -> 'relations') = 'array'
+                then r.inference_metadata -> 'facts' -> 'relations' else '[]'::jsonb end) item
+                where jsonb_typeof(item) is distinct from 'object')
+            """;
+
     /** jobId의 상태와 result·AI에 실제 전달된 facts를 한 트랜잭션에 저장한다. */
     @Transactional
     public void complete(UUID jobId, Map<String, Object> result, Map<String, Object> facts) {
@@ -122,30 +147,19 @@ public class AnalysisResultRepository {
         }, projectId, commitSha, SourceEvidenceVersion.CURRENT).stream().findFirst();
     }
 
-    /** 사용자가 명시적으로 선택한 완료 작업의 완전한 입력 근거만 반환한다. */
+    /** 사용자가 고른 완료 작업의 유효 입력을 반환하고 수집 범위의 한계는 그대로 유지한다. */
     @SuppressWarnings("unchecked")
     public Optional<ReusableEvidence> findReusableEvidenceByJobId(UUID projectId, UUID sourceJobId) {
         return jdbcTemplate.query("""
                 select j.id, r.inference_metadata -> 'facts' as facts
                 from public.analysis_jobs j join public.analysis_results r on r.analysis_job_id = j.id
-                where j.id = ? and j.project_id = ? and j.status = 'COMPLETED'
-                  and (r.inference_metadata -> 'facts' -> 'sourceSummary' ->> 'collectorVersion') = ?
-                  and (j.input_snapshot ->> 'commitSha') is not null
-                  and (j.input_snapshot ->> 'commitSha') =
-                      (r.inference_metadata -> 'facts' -> 'sourceSummary' ->> 'commitSha')
-                  and (r.inference_metadata -> 'facts' -> 'sourceSummary'
-                      -> 'promptCoverage' ->> 'truncated') = 'false'
-                  and (r.inference_metadata -> 'facts' -> 'sourceSummary'
-                      -> 'scanMetrics' ->> 'truncated') = 'false'
-                  and (r.inference_metadata -> 'facts' -> 'databaseSummary' ->> 'truncated') = 'false'
-                  and (r.inference_metadata -> 'facts' -> 'databaseSummary' -> 'warnings') = '[]'::jsonb
-                  and jsonb_typeof(r.inference_metadata -> 'facts' -> 'relations') = 'array'
-                """, (rs, row) -> {
+                where j.id = ? and j.project_id = ? and
+                """ + SAVED_EVIDENCE_CONDITION, (rs, row) -> {
             Map<String, Object> facts = objectMapper.readValue(rs.getString("facts"), MAP);
             return new ReusableEvidence(rs.getObject("id", UUID.class),
                     (Map<String, Object>) facts.get("sourceSummary"),
                     (Map<String, Object>) facts.get("databaseSummary"),
                     (List<Map<String, Object>>) facts.get("relations"));
-        }, sourceJobId, projectId, SourceEvidenceVersion.CURRENT).stream().findFirst();
+        }, sourceJobId, projectId).stream().findFirst();
     }
 }

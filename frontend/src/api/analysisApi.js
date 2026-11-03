@@ -3,6 +3,7 @@ import { buildAnalysisJobPayload } from '@/lib/requirementWorkflow'
 
 const useMock = import.meta.env.VITE_USE_MOCK !== 'false'
 export const isAnalysisDemoMode = useMock
+const mockJobOptions = new Map()
 
 const mockDelay = async (data, delay = 250) => {
     await new Promise((resolve) => setTimeout(resolve, delay))
@@ -13,14 +14,35 @@ const mockDelay = async (data, delay = 250) => {
 /**
  * @param {string} projectId 분석할 프로젝트 ID
  * @param {string|null} requirementVersionId 변경 영향 분석 대상 버전; null이면 전체 구조 분석
+ * @param {string|null} reuseFromJobId 재사용할 저장 근거의 작업 ID
+ * @param {boolean} thinkingEnabled 추론 모드 사용 여부, 기본 켜짐
+ * @param {string} thinkingEffort 추론 강도 low, medium, high 중 선택, 기본 medium
+ * @param {string} evidenceSelection 관련 근거 선택 방식 AUTO, ALWAYS, OFF
  * @returns {Promise<object>} 생성된 작업 ID와 초기 상태
  */
-export const startProjectAnalysis = async (projectId, requirementVersionId = null, reuseFromJobId = null, evidenceSelection = 'AUTO') => {
+export const startProjectAnalysis = async (
+    projectId,
+    requirementVersionId = null,
+    reuseFromJobId = null,
+    thinkingEnabled = true,
+    thinkingEffort = 'medium',
+    evidenceSelection = 'AUTO'
+) => {
+    const payload = buildAnalysisJobPayload(requirementVersionId, reuseFromJobId, thinkingEnabled, thinkingEffort, evidenceSelection)
     if (useMock) {
+        const jobId = crypto.randomUUID()
+        mockJobOptions.set(jobId, {
+            thinkingEnabled: payload.thinkingEnabled,
+            thinkingEffort: payload.thinkingEffort,
+            evidenceSelection: payload.evidenceSelection ?? 'AUTO',
+        })
         return mockDelay({
-            jobId: crypto.randomUUID(),
+            jobId,
             projectId,
             requirementVersionId,
+            thinkingEnabled: payload.thinkingEnabled,
+            thinkingEffort: payload.thinkingEffort,
+            evidenceSelection: payload.evidenceSelection ?? 'AUTO',
             status: 'PENDING',
             sourceProgress: 0,
             databaseProgress: 0,
@@ -30,10 +52,7 @@ export const startProjectAnalysis = async (projectId, requirementVersionId = nul
         })
     }
 
-    const { data } = await httpClient.post(
-        `/projects/${projectId}/analysis-jobs`,
-        buildAnalysisJobPayload(requirementVersionId, reuseFromJobId, evidenceSelection)
-    )
+    const { data } = await httpClient.post(`/projects/${projectId}/analysis-jobs`, payload)
 
     return data
 }
@@ -49,6 +68,9 @@ export const getAnalysisJob = async (analysisJobId, options = {}) => {
         return mockDelay({
             jobId: analysisJobId,
             projectId: 'project-demo-001',
+            thinkingEnabled: mockJobOptions.get(analysisJobId)?.thinkingEnabled ?? null,
+            thinkingEffort: mockJobOptions.get(analysisJobId)?.thinkingEffort ?? null,
+            evidenceSelection: mockJobOptions.get(analysisJobId)?.evidenceSelection ?? null,
             status: 'COMPLETED',
             sourceProgress: 100,
             databaseProgress: 100,
@@ -77,7 +99,7 @@ export const getAnalysisJob = async (analysisJobId, options = {}) => {
 
 /** PENDING/RUNNING 작업의 서버 실행을 취소한다. 화면을 떠나는 동작과는 다르다. */
 export const cancelAnalysisJob = async (analysisJobId) => {
-    if (useMock) return mockDelay({ jobId: analysisJobId, status: 'CANCELLED' })
+    if (useMock) return mockDelay({ jobId: analysisJobId, status: 'CANCELLED', ...mockJobOptions.get(analysisJobId) })
     const { data } = await httpClient.post(`/analysis-jobs/${analysisJobId}/cancel`)
     return data
 }

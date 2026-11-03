@@ -112,6 +112,22 @@ class AiAnalysisClientTest {
     }
 
     @Test
+    void thinkingUnsupportedErrorIsClassifiedWithoutDowngradingTheRequestedMode() {
+        var failure = new AiAnalysisClient.ModelFailureException("THINKING_NOT_SUPPORTED");
+
+        assertThat(failure.code()).isEqualTo("THINKING_NOT_SUPPORTED");
+        assertThat(failure.getMessage()).contains("추론 모드를 지원하지 않습니다");
+    }
+
+    @Test
+    void thinkingEffortMismatchIsClassifiedWithoutExposingRemoteDetails() {
+        var failure = new AiAnalysisClient.ModelFailureException("THINKING_EFFORT_MISMATCH");
+
+        assertThat(failure.code()).isEqualTo("THINKING_EFFORT_MISMATCH");
+        assertThat(failure.getMessage()).contains("추론 강도", "분석 결과를 저장하지 않았습니다");
+    }
+
+    @Test
     void unauthorizedResponseFailsWithoutExposingRemoteBody() {
         serve(exchange -> respond(exchange, 401, "remote-body-secret-token"));
 

@@ -21,5 +21,29 @@ public record AnalysisHistoryItem(
         List<String> evidenceUnavailableReasons,
         String sourceCommit,
         OffsetDateTime createdAt,
-        OffsetDateTime completedAt
-) {}
+        OffsetDateTime completedAt,
+        Boolean thinkingEnabled,
+        String thinkingEffort,
+        List<String> evidenceWarnings
+) {
+    public AnalysisHistoryItem(UUID jobId, UUID projectId, String projectName, UUID requirementVersionId,
+                               String requirementTitle, String status, String riskLevel, String summary,
+                               boolean approved, String reviewStatus, UUID evidenceReusedFromJobId,
+                               boolean reusableEvidence, List<String> evidenceUnavailableReasons,
+                               String sourceCommit, OffsetDateTime createdAt, OffsetDateTime completedAt,
+                               Boolean thinkingEnabled, String thinkingEffort) {
+        this(jobId, projectId, projectName, requirementVersionId, requirementTitle, status, riskLevel,
+                summary, approved, reviewStatus, evidenceReusedFromJobId, reusableEvidence,
+                evidenceUnavailableReasons, sourceCommit, createdAt, completedAt, thinkingEnabled, thinkingEffort, List.of());
+    }
+
+    public AnalysisHistoryItem(UUID jobId, UUID projectId, String projectName, UUID requirementVersionId,
+                               String requirementTitle, String status, String riskLevel, String summary,
+                               boolean approved, String reviewStatus, UUID evidenceReusedFromJobId,
+                               boolean reusableEvidence, List<String> evidenceUnavailableReasons,
+                               String sourceCommit, OffsetDateTime createdAt, OffsetDateTime completedAt) {
+        this(jobId, projectId, projectName, requirementVersionId, requirementTitle, status, riskLevel,
+                summary, approved, reviewStatus, evidenceReusedFromJobId, reusableEvidence,
+                evidenceUnavailableReasons, sourceCommit, createdAt, completedAt, null, null, List.of());
+    }
+}

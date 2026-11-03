@@ -8,6 +8,8 @@ import TrainingDraftCompletion from '@/components/analysis/TrainingDraftCompleti
 import TrainingDataGuide from '@/components/analysis/TrainingDataGuide.vue'
 import AnalysisCorrectionEditor from '@/components/analysis/AnalysisCorrectionEditor.vue'
 import AnalysisJsonGuide from '@/components/analysis/AnalysisJsonGuide.vue'
+import AnalysisThinkingControl from '@/components/analysis/AnalysisThinkingControl.vue'
+import { analysisThinkingError, analysisThinkingLabel, analysisThinkingEffortLabel } from '@/lib/analysisThinking'
 import {
     cancelAnalysisJob,
     getAnalysisJob,
@@ -64,6 +66,8 @@ const followUpQuestion = ref('')
 const followUpBusy = ref(false)
 const followUpError = ref('')
 const followUpSavedVersionId = ref('')
+const followUpThinkingEnabled = ref(true)
+const followUpThinkingEffort = ref('medium')
 const previousQuestionJobId = ref('')
 const reviewNote = ref('')
 const reviewUseCorrection = ref(false)
@@ -176,6 +180,14 @@ watch(
         poller.start(jobId)
     },
     { immediate: true }
+)
+
+watch(
+    () => job.value?.jobId,
+    () => {
+        followUpThinkingEnabled.value = job.value?.thinkingEnabled !== false
+        followUpThinkingEffort.value = job.value?.thinkingEffort ?? 'medium'
+    }
 )
 
 watch(
@@ -541,7 +553,7 @@ const followUpQuestions = computed(() => asList(databaseImpact.value?.openQuesti
 const previousClarifications = computed(() => asList(source.value.changeRequirement?.clarifications))
 
 const beginFollowUpAnalysis = async (versionId) => {
-    const created = await startProjectAnalysis(route.params.projectId, versionId)
+    const created = await startProjectAnalysis(route.params.projectId, versionId, null, followUpThinkingEnabled.value, followUpThinkingEffort.value)
     await router.push({
         name: 'analysis-progress',
         params: { projectId: route.params.projectId, analysisJobId: created.jobId },
@@ -573,7 +585,7 @@ const submitFollowUp = async () => {
         followUpSavedVersionId.value = version.id
         await beginFollowUpAnalysis(version.id)
     } catch (error) {
-        const detail = error.response?.data?.message || error.response?.data?.detail || error.message
+        const detail = analysisThinkingError(error) || error.response?.data?.message || error.response?.data?.detail || error.message
         followUpError.value = followUpSavedVersionId.value
             ? `답변은 새 버전으로 저장됐지만 분석을 시작하지 못했습니다. 다시 시도해 주세요. ${detail}`
             : `추가 질문을 저장하지 못했습니다. ${detail}`
@@ -767,6 +779,14 @@ const evidenceEntries = (evidence) => (evidence && typeof evidence === 'object' 
                     <dd>{{ source.changeRequirement?.title || `버전 ${job.requirementVersionId}` }}</dd>
                 </div>
                 <div>
+                    <dt>추론 모드</dt>
+                    <dd>{{ analysisThinkingLabel(job.thinkingEnabled) }}</dd>
+                </div>
+                <div>
+                    <dt>추론 강도</dt>
+                    <dd>{{ analysisThinkingEffortLabel(job.thinkingEffort, job.thinkingEnabled) }}</dd>
+                </div>
+                <div>
                     <dt>요청</dt>
                     <dd>{{ formatDate(job.createdAt) }}</dd>
                 </div>
@@ -781,7 +801,7 @@ const evidenceEntries = (evidence) => (evidence && typeof evidence === 'object' 
             </dl>
             <div v-if="job.status === 'FAILED'" class="analysis-notice error-notice" role="alert">
                 <strong>분석 실패 사유</strong>
-                <p>{{ job.errorMessage || '서버가 상세 오류를 제공하지 않았습니다.' }}</p>
+                <p>{{ analysisThinkingError(job.errorMessage) || job.errorMessage || '서버가 상세 오류를 제공하지 않았습니다.' }}</p>
             </div>
             <RouterLink
                 v-if="previousQuestionJobId && ['FAILED', 'CANCELLED'].includes(job.status)"
@@ -1346,6 +1366,12 @@ const evidenceEntries = (evidence) => (evidence && typeof evidence === 'object' 
                 <p class="mt-2 text-xs text-slate-600 dark:text-slate-400">
                     소스·DB는 최신 상태를 다시 확인합니다. 답변이 실제 DB 구조를 증명하는 것은 아닙니다.
                 </p>
+                <AnalysisThinkingControl
+                    v-model="followUpThinkingEnabled"
+                    v-model:thinking-effort="followUpThinkingEffort"
+                    class="mt-4"
+                    :disabled="followUpBusy"
+                />
                 <p v-if="followUpError" role="alert" class="mt-3 break-words text-sm text-rose-700 dark:text-rose-300">{{ followUpError }}</p>
                 <div class="mt-4 flex flex-col gap-2 sm:flex-row">
                     <button type="button" class="button primary w-full sm:w-auto" :disabled="followUpBusy" @click="submitFollowUp">

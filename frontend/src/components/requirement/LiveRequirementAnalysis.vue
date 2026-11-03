@@ -12,12 +12,14 @@ import BasePagination from '@/components/base/BasePagination.vue'
 import BaseSelect from '@/components/base/BaseSelect.vue'
 import BaseTable from '@/components/base/BaseTable.vue'
 import BaseTextarea from '@/components/base/BaseTextarea.vue'
+import AnalysisThinkingControl from '@/components/analysis/AnalysisThinkingControl.vue'
 import StatusBadge from '@/components/common/StatusBadge.vue'
 import ViewHeading from '@/components/common/ViewHeading.vue'
 import { useClientTable } from '@/composables/useClientTable'
 import { matchesCreatedDateRange } from '@/lib/changeRequestFilters'
-import { evidenceUnavailableReasonLabel } from '@/lib/evidenceReuse'
+import { evidenceWarningLabel } from '@/lib/evidenceReuse'
 import { buildRequirementPayload, EVIDENCE_SELECTION_OPTIONS } from '@/lib/requirementWorkflow'
+import { analysisThinkingError } from '@/lib/analysisThinking'
 import { useAuthStore } from '@/stores/authStore'
 
 const router = useRouter()
@@ -32,13 +34,21 @@ const analyzingRequirementId = ref('')
 const analysisTarget = ref(null)
 const analysisPanel = ref(null)
 const snapshotOptions = ref([])
-const unavailableSnapshots = ref([])
-const unavailableSnapshotCount = ref(0)
 const snapshotLoading = ref(false)
 const snapshotError = ref('')
+const snapshotLoaded = ref(false)
+const snapshotRecords = ref([])
+const snapshotPage = ref(0)
+const snapshotTotal = ref(0)
+const snapshotPageSize = 20
+const snapshotAppendError = ref(false)
+const analysisError = ref('')
+let snapshotsRequestId = 0
 const evidenceMode = ref('VERIFY_CURRENT')
 const selectedSnapshotId = ref('')
 const confirmedUnchanged = ref(false)
+const thinkingEnabled = ref(true)
+const thinkingEffort = ref('medium')
 const evidenceSelection = ref('AUTO')
 const showCreateForm = ref(false)
 const errorMessage = ref('')
@@ -102,6 +112,10 @@ const selectedProject = computed(() => gitProjects.value.find((project) => proje
 const canCreate = computed(() => authStore.hasPermission('CHANGE_REQUEST_CREATE'))
 const canAnalyze = computed(() => authStore.hasPermission('PROJECT_UPDATE') && authStore.hasPermission('ANALYSIS_READ'))
 const busy = computed(() => creating.value || Boolean(analyzingRequirementId.value))
+const selectedSnapshot = computed(() => snapshotRecords.value.find((item) => item.jobId === selectedSnapshotId.value && item.reusableEvidence))
+const selectedSnapshotWarnings = computed(() => selectedSnapshot.value?.evidenceWarnings || [])
+const hasMoreSnapshots = computed(() => (snapshotPage.value + 1) * snapshotPageSize < snapshotTotal.value)
+const savedAnalysisBlocked = computed(() => snapshotLoading.value || !selectedSnapshot.value || !confirmedUnchanged.value)
 const projectById = computed(() => new Map(projects.value.map((project) => [project.id, project])))
 const tableRows = computed(() =>
     requirements.value.map((requirement) => ({
@@ -167,7 +181,8 @@ const resetFilters = () => {
     filterEndDate.value = ''
 }
 
-const getErrorMessage = (error) => error?.response?.data?.message || error?.response?.data?.detail || error?.message || '요청을 처리하지 못했습니다.'
+const getErrorMessage = (error) =>
+    analysisThinkingError(error) || error?.response?.data?.message || error?.response?.data?.detail || error?.message || '요청을 처리하지 못했습니다.'
 
 const formatDate = (value) => (value ? new Date(value).toLocaleString('ko-KR') : '—')
 
@@ -242,39 +257,78 @@ const createRequirement = async () => {
     }
 }
 
-const prepareAnalysis = async (requirement) => {
-    analysisTarget.value = requirement
-    evidenceMode.value = 'VERIFY_CURRENT'
-    selectedSnapshotId.value = ''
-    confirmedUnchanged.value = false
-    evidenceSelection.value = 'AUTO'
-    snapshotOptions.value = []
-    unavailableSnapshots.value = []
-    unavailableSnapshotCount.value = 0
+const loadSavedEvidence = async ({ append = false } = {}) => {
+    const target = analysisTarget.value
+    if (!target || snapshotLoading.value || busy.value) return
+    const requestId = ++snapshotsRequestId
+    const nextPage = append ? snapshotPage.value + 1 : 0
     snapshotError.value = ''
+    snapshotAppendError.value = false
     snapshotLoading.value = true
-    await nextTick()
-    analysisPanel.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    analysisError.value = ''
+    if (!append) {
+        snapshotLoaded.value = false
+        snapshotRecords.value = []
+        snapshotOptions.value = []
+        snapshotPage.value = 0
+        snapshotTotal.value = 0
+        selectedSnapshotId.value = ''
+        confirmedUnchanged.value = false
+    }
     try {
-        const response = await getAnalysisHistory({ projectId: requirement.projectId, page: 0, size: 100 })
-        if (analysisTarget.value?.id !== requirement.id) return
-        const historyItems = response.items || []
-        snapshotOptions.value = historyItems
-            .filter((item) => item.reusableEvidence)
-            .map((item) => ({
-                value: item.jobId,
-                label: `${new Date(item.createdAt).toLocaleString('ko-KR')} · ${item.sourceCommit?.slice(0, 8) || '커밋 정보 없음'}`,
-            }))
-        const unavailable = historyItems.filter((item) => !item.reusableEvidence)
-        unavailableSnapshotCount.value = unavailable.length
-        unavailableSnapshots.value = unavailable.slice(0, 5)
-        selectedSnapshotId.value = snapshotOptions.value[0]?.value || ''
+        const response = await getAnalysisHistory({ projectId: target.projectId, page: nextPage, size: snapshotPageSize, reusableEvidenceOnly: true })
+        if (requestId !== snapshotsRequestId || analysisTarget.value?.id !== target.id) return
+        const items = (response.items || []).filter((item) => item.reusableEvidence)
+        snapshotRecords.value = append ? [...new Map([...snapshotRecords.value, ...items].map((item) => [item.jobId, item])).values()] : items
+        snapshotOptions.value = snapshotRecords.value.map((item) => ({
+            value: item.jobId,
+            label: `${formatDate(item.createdAt)} · ${item.requirementTitle || '프로젝트 구조 분석'} · ${item.sourceCommit?.slice(0, 8) || '커밋 정보 없음'}`,
+            warnings: item.evidenceWarnings || [],
+        }))
+        snapshotPage.value = nextPage
+        snapshotTotal.value = response.total ?? snapshotRecords.value.length
+        if (!selectedSnapshot.value) selectedSnapshotId.value = snapshotOptions.value[0]?.value || ''
+        snapshotLoaded.value = true
     } catch (error) {
-        if (analysisTarget.value?.id === requirement.id) snapshotError.value = `저장 근거를 조회하지 못했습니다. ${getErrorMessage(error)}`
+        if (requestId === snapshotsRequestId && analysisTarget.value?.id === target.id) {
+            snapshotError.value = `저장된 분석 기준을 불러오지 못했습니다. ${getErrorMessage(error)}`
+            snapshotAppendError.value = append
+        }
     } finally {
-        if (analysisTarget.value?.id === requirement.id) snapshotLoading.value = false
+        if (requestId === snapshotsRequestId) snapshotLoading.value = false
     }
 }
+
+const prepareAnalysis = async (requirement) => {
+    snapshotsRequestId += 1
+    analysisTarget.value = requirement
+    evidenceMode.value = 'VERIFY_CURRENT'
+    thinkingEnabled.value = true
+    thinkingEffort.value = 'medium'
+    evidenceSelection.value = 'AUTO'
+    selectedSnapshotId.value = ''
+    confirmedUnchanged.value = false
+    snapshotRecords.value = []
+    snapshotOptions.value = []
+    snapshotError.value = ''
+    snapshotLoaded.value = false
+    snapshotPage.value = 0
+    snapshotTotal.value = 0
+    snapshotAppendError.value = false
+    snapshotLoading.value = false
+    analysisError.value = ''
+    await nextTick()
+    analysisPanel.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
+watch(evidenceMode, (mode) => {
+    analysisError.value = ''
+    if (mode === 'SAVED' && !snapshotLoaded.value && !snapshotLoading.value) loadSavedEvidence()
+})
+watch(selectedSnapshotId, () => {
+    confirmedUnchanged.value = false
+    analysisError.value = ''
+})
 
 // 선택한 근거 방식으로 새 AI 판단을 수행한다. 저장 근거 모드는 Git/DB 재확인을 생략한다.
 const analyzeRequirement = async () => {
@@ -282,14 +336,29 @@ const analyzeRequirement = async () => {
     if (!requirement) return
     const versionId = requirement.currentVersion?.id
     if (!versionId) {
-        errorMessage.value = '현재 요구사항 버전을 찾을 수 없습니다.'
+        analysisError.value = '현재 요구사항 버전을 찾을 수 없습니다.'
         return
     }
-    if (evidenceMode.value === 'SAVED' && (!selectedSnapshotId.value || !confirmedUnchanged.value)) {
-        errorMessage.value = '저장된 근거를 사용하려면 분석 기준과 변경 없음 확인을 완료해 주세요.'
-        return
+    if (evidenceMode.value === 'SAVED') {
+        if (snapshotLoading.value) {
+            analysisError.value = '저장된 분석 기준을 불러오는 중입니다. 조회가 끝난 뒤 다시 시도해 주세요.'
+            return
+        }
+        if (snapshotError.value && !selectedSnapshot.value) {
+            analysisError.value = '저장된 분석 기준을 다시 불러온 뒤 선택해 주세요.'
+            return
+        }
+        if (!selectedSnapshot.value) {
+            analysisError.value = '저장된 분석 기준을 선택해 주세요. 최신 Git·DB 확인으로 자동 전환하지 않습니다.'
+            return
+        }
+        if (!confirmedUnchanged.value) {
+            analysisError.value = '선택한 과거 시점을 기준으로 분석한다는 확인란을 선택해 주세요.'
+            return
+        }
     }
 
+    analysisError.value = ''
     errorMessage.value = ''
     notice.value = ''
     analyzingRequirementId.value = requirement.id
@@ -299,6 +368,8 @@ const analyzeRequirement = async () => {
             requirement.projectId,
             versionId,
             evidenceMode.value === 'SAVED' ? selectedSnapshotId.value : null,
+            thinkingEnabled.value,
+            thinkingEffort.value,
             evidenceSelection.value
         )
         createdJobId = job.jobId
@@ -307,7 +378,7 @@ const analyzeRequirement = async () => {
             params: { projectId: requirement.projectId, analysisJobId: createdJobId },
         })
     } catch (error) {
-        errorMessage.value = createdJobId
+        analysisError.value = createdJobId
             ? `분석 작업 ${createdJobId}은 시작됐지만 결과 화면으로 이동하지 못했습니다. ${getErrorMessage(error)}`
             : `영향 분석을 시작하지 못했습니다. ${getErrorMessage(error)}`
     } finally {
@@ -493,9 +564,9 @@ onMounted(() => {
             >
                 <div class="flex flex-wrap items-start justify-between gap-3">
                     <div>
-                        <h3 class="text-base font-bold text-slate-900 dark:text-slate-100">{{ analysisTarget.title }} · 분석 근거 선택</h3>
+                        <h3 class="text-base font-bold text-slate-900 dark:text-slate-100">{{ analysisTarget.title }} · 분석 설정</h3>
                         <p class="mt-1 text-sm text-slate-600 dark:text-slate-300">
-                            새 질문에 대해 AI 판단은 다시 실행합니다. 아래에서 Git·DB 수집 방식만 선택하세요.
+                            같은 요구사항도 새로 분석합니다. Git·DB 수집 방식, AI에 보낼 근거와 추론 모드·강도를 선택하세요.
                         </p>
                     </div>
                     <BaseButton size="small" variant="secondary" @click="analysisTarget = null">닫기</BaseButton>
@@ -504,7 +575,7 @@ onMounted(() => {
                     <label
                         class="flex cursor-pointer items-start gap-3 rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900"
                     >
-                        <input v-model="evidenceMode" type="radio" value="VERIFY_CURRENT" class="mt-1" />
+                        <input v-model="evidenceMode" type="radio" value="VERIFY_CURRENT" class="mt-1" :disabled="busy" />
                         <span
                             ><strong class="block text-sm">최신 Git·DB 확인</strong
                             ><span class="text-xs text-slate-600 dark:text-slate-400"
@@ -514,9 +585,8 @@ onMounted(() => {
                     </label>
                     <label
                         class="flex cursor-pointer items-start gap-3 rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900"
-                        :class="{ 'opacity-60': !snapshotOptions.length }"
                     >
-                        <input v-model="evidenceMode" type="radio" value="SAVED" class="mt-1" :disabled="!snapshotOptions.length" />
+                        <input v-model="evidenceMode" type="radio" value="SAVED" class="mt-1" :disabled="busy" />
                         <span
                             ><strong class="block text-sm">저장된 근거로 바로 분석</strong
                             ><span class="text-xs text-slate-600 dark:text-slate-400"
@@ -525,60 +595,103 @@ onMounted(() => {
                         >
                     </label>
                 </div>
-                <p v-if="snapshotLoading" class="mt-3 text-sm text-slate-600 dark:text-slate-400">재사용 가능한 저장 근거를 확인 중입니다.</p>
-                <p v-else-if="snapshotError" role="alert" class="mt-3 text-sm text-rose-700 dark:text-rose-300">{{ snapshotError }}</p>
-                <p v-else-if="!snapshotOptions.length" class="mt-3 text-sm text-slate-600 dark:text-slate-400">
-                    최근 분석 100건에서 재사용 가능한 완전한 근거를 찾지 못했습니다. 최신 상태 확인 방식은 계속 사용할 수 있습니다.
-                </p>
-                <div
-                    v-if="!snapshotLoading && !snapshotError && unavailableSnapshots.length"
-                    class="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm dark:border-amber-800 dark:bg-amber-950/30"
-                >
-                    <p class="font-semibold text-amber-900 dark:text-amber-200">최근 분석의 저장 근거를 재사용할 수 없는 이유</p>
-                    <ul class="mt-2 space-y-3">
-                        <li
-                            v-for="item in unavailableSnapshots"
-                            :key="item.jobId"
-                            class="min-w-0 border-t border-amber-200 pt-2 first:border-t-0 first:pt-0 dark:border-amber-800"
-                        >
-                            <p class="break-words font-medium text-slate-800 dark:text-slate-100">
-                                {{ formatDate(item.createdAt) }} · {{ item.requirementTitle || '프로젝트 구조 분석' }}
-                            </p>
-                            <ul class="mt-1 list-disc space-y-1 pl-5 text-slate-700 dark:text-slate-300">
-                                <li
-                                    v-for="reason in item.evidenceUnavailableReasons?.length
-                                        ? item.evidenceUnavailableReasons
-                                        : ['EVIDENCE_FORMAT_UNSUPPORTED']"
-                                    :key="reason"
-                                >
-                                    {{ evidenceUnavailableReasonLabel(reason) }}
-                                </li>
-                            </ul>
-                        </li>
-                    </ul>
-                    <p v-if="unavailableSnapshotCount > unavailableSnapshots.length" class="mt-2 text-xs text-slate-600 dark:text-slate-400">
-                        최근 5건만 표시합니다. 그 외 {{ unavailableSnapshotCount - unavailableSnapshots.length }}건도 재사용할 수 없습니다.
+                <div v-if="evidenceMode === 'SAVED'" class="mt-4 rounded-lg border border-blue-100 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
+                    <div class="flex flex-wrap items-center justify-between gap-2">
+                        <h4 class="text-sm font-semibold text-slate-900 dark:text-slate-100">저장된 분석 기준 선택</h4>
+                        <BaseButton size="small" variant="secondary" :disabled="busy || snapshotLoading" @click="loadSavedEvidence()">
+                            {{ snapshotLoading ? '불러오는 중…' : '다시 불러오기' }}
+                        </BaseButton>
+                    </div>
+                    <p v-if="snapshotLoading" role="status" class="mt-3 text-sm text-slate-600 dark:text-slate-400">
+                        이 프로젝트의 저장된 분석 기준을 불러오는 중입니다.
                     </p>
-                </div>
-                <div v-if="evidenceMode === 'SAVED'" class="mt-4 grid gap-3">
-                    <BaseSelect v-model="selectedSnapshotId" label="분석 기준 시점 · Git 커밋" :options="snapshotOptions" />
-                    <label class="flex items-start gap-2 text-sm text-slate-700 dark:text-slate-300">
-                        <input v-model="confirmedUnchanged" type="checkbox" class="mt-1" />
-                        선택한 시점 이후 Git 소스와 DB 구조가 변경되지 않았음을 확인했습니다.
-                    </label>
+                    <div v-if="snapshotError" role="alert" class="mt-3 space-y-2 text-sm text-rose-700 dark:text-rose-300">
+                        <p>{{ snapshotError }}</p>
+                        <BaseButton
+                            size="small"
+                            variant="secondary"
+                            :disabled="busy || snapshotLoading"
+                            @click="loadSavedEvidence({ append: snapshotAppendError })"
+                            >조회 다시 시도</BaseButton
+                        >
+                    </div>
+                    <div
+                        v-if="snapshotLoaded && !snapshotLoading && !snapshotError && !snapshotOptions.length"
+                        class="mt-3 space-y-3 text-sm text-slate-600 dark:text-slate-400"
+                    >
+                        <p>이 프로젝트에 선택할 수 있는 저장 근거가 없습니다. 최신 Git·DB 확인으로 먼저 한 번 분석하면 이 프로젝트의 저장 근거가 생깁니다.</p>
+                        <BaseButton size="small" variant="secondary" :disabled="busy" @click="evidenceMode = 'VERIFY_CURRENT'"
+                            >최신 Git·DB 확인으로 분석하기</BaseButton
+                        >
+                    </div>
+                    <div v-if="snapshotOptions.length" class="mt-4 grid gap-3">
+                        <BaseSelect
+                            v-model="selectedSnapshotId"
+                            label="분석 기준 시점 · Git 커밋"
+                            :options="snapshotOptions"
+                            :disabled="busy || snapshotLoading"
+                        />
+                        <div class="flex flex-wrap items-center justify-between gap-2">
+                            <p class="text-xs text-slate-600 dark:text-slate-400">저장된 기준 {{ snapshotTotal }}건 중 {{ snapshotRecords.length }}건 표시</p>
+                            <BaseButton
+                                v-if="hasMoreSnapshots"
+                                size="small"
+                                variant="secondary"
+                                :disabled="busy || snapshotLoading"
+                                @click="loadSavedEvidence({ append: true })"
+                                >이전 기준 더 보기</BaseButton
+                            >
+                        </div>
+                        <div
+                            v-if="selectedSnapshotWarnings.length"
+                            class="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm dark:border-amber-800 dark:bg-amber-950/30"
+                        >
+                            <p class="font-semibold text-amber-900 dark:text-amber-200">이 기준에 저장된 자료의 범위</p>
+                            <ul class="mt-2 list-disc space-y-1 pl-5 text-amber-900 dark:text-amber-200">
+                                <li v-for="warning in selectedSnapshotWarnings" :key="warning">{{ evidenceWarningLabel(warning) }}</li>
+                            </ul>
+                        </div>
+                        <p class="text-xs leading-5 text-slate-600 dark:text-slate-400">
+                            선택한 시점에 저장한 소스·DB 자료로 분석합니다. 그 이후 변경은 이번 분석에 포함되지 않습니다.
+                        </p>
+                        <label class="flex items-start gap-2 text-sm text-slate-700 dark:text-slate-300">
+                            <input v-model="confirmedUnchanged" type="checkbox" class="mt-1" :disabled="busy || snapshotLoading" />
+                            최신 상태와 다를 수 있음을 이해하고 선택한 과거 시점을 기준으로 분석합니다.
+                        </label>
+                    </div>
                 </div>
                 <div class="mt-4 grid gap-1">
-                    <BaseSelect v-model="evidenceSelection" id="evidence-selection" label="AI에 보낼 근거" :options="EVIDENCE_SELECTION_OPTIONS" />
+                    <BaseSelect
+                        v-model="evidenceSelection"
+                        id="evidence-selection"
+                        label="AI에 보낼 근거"
+                        :options="EVIDENCE_SELECTION_OPTIONS"
+                        :disabled="busy"
+                    />
                     <p class="text-xs text-slate-600 dark:text-slate-400">
                         자동은 근거가 많을 때만 요구사항과 관련된 것을 골라 보냅니다. 작은 프로젝트에서도 골라 보내려면 두 번째를, 항상 전체를 보내려면 세
                         번째를 선택하세요.
                     </p>
                 </div>
+                <AnalysisThinkingControl v-model="thinkingEnabled" v-model:thinking-effort="thinkingEffort" class="mt-4" :disabled="busy" />
+                <p
+                    v-if="analysisError"
+                    role="alert"
+                    class="mt-4 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-300"
+                >
+                    {{ analysisError }}
+                </p>
+                <p
+                    v-else-if="evidenceMode === 'SAVED' && !snapshotLoading && !snapshotError && !selectedSnapshot"
+                    class="mt-4 text-sm text-slate-600 dark:text-slate-400"
+                >
+                    저장된 분석 기준을 선택해야 분석을 시작할 수 있습니다.
+                </p>
                 <div class="mt-4 flex flex-col gap-2 sm:flex-row">
                     <BaseButton
                         class="w-full sm:w-auto"
                         :loading="Boolean(analyzingRequirementId)"
-                        :disabled="busy || (evidenceMode === 'SAVED' && (!selectedSnapshotId || !confirmedUnchanged))"
+                        :disabled="busy || (evidenceMode === 'SAVED' && savedAnalysisBlocked)"
                         @click="analyzeRequirement"
                         >분석 시작</BaseButton
                     >

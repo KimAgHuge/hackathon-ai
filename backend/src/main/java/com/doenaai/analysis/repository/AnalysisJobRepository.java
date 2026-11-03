@@ -47,6 +47,31 @@ public class AnalysisJobRepository {
             String branch,
             String commitSha
     ) {
+        return createProjectScan(projectId, requirementVersionId, requestedBy, repositoryUrl, branch, commitSha, true);
+    }
+
+    public AnalysisJobResponse createProjectScan(
+            UUID projectId, UUID requirementVersionId, UUID requestedBy, String repositoryUrl,
+            String branch, String commitSha, boolean thinkingEnabled
+    ) {
+        return createProjectScan(projectId, requirementVersionId, requestedBy, repositoryUrl,
+                branch, commitSha, thinkingEnabled, "medium");
+    }
+
+    public AnalysisJobResponse createProjectScan(
+            UUID projectId, UUID requirementVersionId, UUID requestedBy, String repositoryUrl,
+            String branch, String commitSha, boolean thinkingEnabled, String thinkingEffort
+    ) {
+        return createProjectScan(projectId, requirementVersionId, requestedBy, repositoryUrl,
+                branch, commitSha, thinkingEnabled, thinkingEffort, null);
+    }
+
+    /** 근거 전달 방식과 추론 설정을 작업 생성과 함께 저장해 워커가 선점하기 전에 반영한다. */
+    public AnalysisJobResponse createProjectScan(
+            UUID projectId, UUID requirementVersionId, UUID requestedBy, String repositoryUrl,
+            String branch, String commitSha, boolean thinkingEnabled, String thinkingEffort,
+            String evidenceSelection
+    ) {
         return jdbcTemplate.queryForObject(
                 """
                 insert into public.analysis_jobs (
@@ -56,7 +81,10 @@ public class AnalysisJobRepository {
                     analysis_type,
                     status,
                     target_worker_id,
-                    input_snapshot
+                    thinking_enabled,
+                    thinking_effort,
+                    input_snapshot,
+                    analysis_options
                 )
                 values (
                     ?,
@@ -65,12 +93,16 @@ public class AnalysisJobRepository {
                     'PROJECT_SCAN_V2',
                     'PENDING',
                     ?,
+                    ?,
+                    ?,
                     jsonb_build_object(
                         'sourceType', 'GIT',
                         'repositoryUrl', ?,
                         'branch', ?,
                         'commitSha', ?
-                    )
+                    ),
+                    case when ?::text is null then '{}'::jsonb
+                         else jsonb_build_object('evidenceSelection', ?::text) end
                 )
                 returning
                     id,
@@ -81,64 +113,68 @@ public class AnalysisJobRepository {
                     database_progress,
                     relation_progress,
                     created_at, error_message, started_at, completed_at,
-                    analysis_options -> 'activityLog' as activity_log
+                    analysis_options -> 'activityLog' as activity_log, thinking_enabled, thinking_effort
                 """,
                 this::mapRow,
                 projectId,
                 requirementVersionId,
                 requestedBy,
                 nodeIdentity.instanceId(),
+                thinkingEnabled,
+                thinkingEffort,
                 repositoryUrl,
                 branch,
-                commitSha
+                commitSha,
+                evidenceSelection,
+                evidenceSelection
         );
     }
 
-    /** 근거 전달 방식(ALWAYS·OFF)을 작업을 만드는 같은 SQL 안에서 옵션에 저장한다. 워커가 선점하기 전에 항상 반영된다. */
     public AnalysisJobResponse createProjectScan(
             UUID projectId, UUID requirementVersionId, UUID requestedBy,
             String repositoryUrl, String branch, String commitSha, String evidenceSelection
     ) {
-        return jdbcTemplate.queryForObject(
-                """
-                insert into public.analysis_jobs (
-                    project_id, requirement_version_id, requested_by, analysis_type, status,
-                    target_worker_id, input_snapshot, analysis_options
-                )
-                values (
-                    ?, ?, ?, 'PROJECT_SCAN_V2', 'PENDING', ?,
-                    jsonb_build_object('sourceType', 'GIT', 'repositoryUrl', ?, 'branch', ?, 'commitSha', ?),
-                    jsonb_build_object('evidenceSelection', ?::text)
-                )
-                returning
-                    id, project_id, requirement_version_id, status,
-                    source_progress, database_progress, relation_progress,
-                    created_at, error_message, started_at, completed_at,
-                    analysis_options -> 'activityLog' as activity_log
-                """,
-                this::mapRow,
-                projectId, requirementVersionId, requestedBy, nodeIdentity.instanceId(),
-                repositoryUrl, branch, commitSha, evidenceSelection
-        );
+        return createProjectScan(projectId, requirementVersionId, requestedBy, repositoryUrl,
+                branch, commitSha, true, "medium", evidenceSelection);
     }
 
     /** 기존 완료 작업의 고정 입력 스냅샷으로 새 PENDING 분석을 생성한다. 원격 Git/DB는 조회하지 않는다. */
     public AnalysisJobResponse createFromSavedEvidence(UUID projectId, UUID requirementVersionId,
                                                        UUID requestedBy, UUID sourceJobId) {
-        return createFromSavedEvidence(projectId, requirementVersionId, requestedBy, sourceJobId, null);
+        return createFromSavedEvidence(projectId, requirementVersionId, requestedBy, sourceJobId, true);
     }
 
     /** 저장 근거 작업을 만들면서 근거 전달 방식(ALWAYS·OFF)도 함께 저장한다. null이면 기본 동작이다. */
     public AnalysisJobResponse createFromSavedEvidence(UUID projectId, UUID requirementVersionId,
                                                        UUID requestedBy, UUID sourceJobId, String evidenceSelection) {
+        return createFromSavedEvidence(projectId, requirementVersionId, requestedBy, sourceJobId,
+                true, "medium", evidenceSelection);
+    }
+
+    public AnalysisJobResponse createFromSavedEvidence(UUID projectId, UUID requirementVersionId,
+                                                       UUID requestedBy, UUID sourceJobId, boolean thinkingEnabled) {
+        return createFromSavedEvidence(projectId, requirementVersionId, requestedBy, sourceJobId,
+                thinkingEnabled, "medium");
+    }
+
+    public AnalysisJobResponse createFromSavedEvidence(UUID projectId, UUID requirementVersionId,
+                                                       UUID requestedBy, UUID sourceJobId, boolean thinkingEnabled,
+                                                       String thinkingEffort) {
+        return createFromSavedEvidence(projectId, requirementVersionId, requestedBy, sourceJobId,
+                thinkingEnabled, thinkingEffort, null);
+    }
+
+    public AnalysisJobResponse createFromSavedEvidence(UUID projectId, UUID requirementVersionId,
+                                                       UUID requestedBy, UUID sourceJobId, boolean thinkingEnabled,
+                                                       String thinkingEffort, String evidenceSelection) {
         return jdbcTemplate.queryForObject("""
                 insert into public.analysis_jobs (
                     project_id, requirement_version_id, requested_by, analysis_type, status,
-                    target_worker_id,
+                    target_worker_id, thinking_enabled, thinking_effort,
                     input_snapshot, analysis_options
                 )
-                select j.project_id, ?, ?, 'PROJECT_SCAN_V2', 'PENDING', ?, j.input_snapshot,
-                       jsonb_build_object('reuseMode', 'STORED', 'userConfirmedUnchanged', true,
+                select j.project_id, ?, ?, 'PROJECT_SCAN_V2', 'PENDING', ?, ?, ?, j.input_snapshot,
+                       jsonb_build_object('reuseMode', 'STORED', 'userConfirmedSavedSnapshot', true,
                                           'reuseFromJobId', j.id::text,
                                           'evidenceReusedFromJobId', j.id::text)
                        || case when ?::text is null then '{}'::jsonb
@@ -148,9 +184,9 @@ public class AnalysisJobRepository {
                 returning id, project_id, requirement_version_id, status,
                     source_progress, database_progress, relation_progress,
                     created_at, error_message, started_at, completed_at,
-                    analysis_options -> 'activityLog' as activity_log
-                """, this::mapRow, requirementVersionId, requestedBy, nodeIdentity.instanceId(),
-                evidenceSelection, evidenceSelection, sourceJobId, projectId);
+                    analysis_options -> 'activityLog' as activity_log, thinking_enabled, thinking_effort
+                """, this::mapRow, requirementVersionId, requestedBy, nodeIdentity.instanceId(), thinkingEnabled,
+                thinkingEffort, evidenceSelection, evidenceSelection, sourceJobId, projectId);
     }
 
     public Optional<AnalysisJobResponse> findById(
@@ -167,7 +203,7 @@ public class AnalysisJobRepository {
                     database_progress,
                     relation_progress,
                     created_at, error_message, started_at, completed_at,
-                    analysis_options -> 'activityLog' as activity_log
+                    analysis_options -> 'activityLog' as activity_log, thinking_enabled, thinking_effort
                 from public.analysis_jobs
                 where id = ?
                 """,
@@ -207,7 +243,9 @@ public class AnalysisJobRepository {
                 resultSet.getObject("started_at", java.time.OffsetDateTime.class),
                 resultSet.getObject("completed_at", java.time.OffsetDateTime.class),
                 resultSet.getString("activity_log") == null
-                        ? List.of() : objectMapper.readValue(resultSet.getString("activity_log"), ACTIVITY_LOG)
+                        ? List.of() : objectMapper.readValue(resultSet.getString("activity_log"), ACTIVITY_LOG),
+                resultSet.getObject("thinking_enabled", Boolean.class),
+                resultSet.getString("thinking_effort")
         );
     }
 
@@ -231,12 +269,14 @@ public class AnalysisJobRepository {
                     j.input_snapshot ->> 'branch' as branch,
                     j.input_snapshot ->> 'commitSha' as commit_sha,
                     j.analysis_options ->> 'reuseFromJobId' as reuse_from_job_id,
+                    j.thinking_enabled, j.thinking_effort,
                     j.analysis_options ->> 'evidenceSelection' as evidence_selection
                 """, (rs, row) -> new AnalysisWorkItem(
                 rs.getObject("id", UUID.class), rs.getObject("project_id", UUID.class),
                 rs.getObject("requirement_version_id", UUID.class), rs.getObject("requested_by", UUID.class),
                 rs.getString("repository_url"), rs.getString("branch"), rs.getString("commit_sha"),
                 rs.getString("reuse_from_job_id") == null ? null : UUID.fromString(rs.getString("reuse_from_job_id")),
+                rs.getObject("thinking_enabled", Boolean.class), rs.getString("thinking_effort"),
                 rs.getString("evidence_selection")
         ), nodeIdentity.instanceId(), nodeIdentity.instanceId()).stream().findFirst();
     }

@@ -75,6 +75,8 @@ class AnalysisWorkerTest {
             assertThat(checkout).doesNotExist();
             var request = (Map<?, ?>) call.getArgument(0);
             assertThat(request.get("projectId")).isEqualTo(job.projectId().toString());
+            assertThat(request.get("thinkingEnabled")).isEqualTo(true);
+            assertThat(request.get("thinkingEffort")).isEqualTo("medium");
             assertThat(request.toString()).doesNotContain("repositoryUrl", "username", "password");
             @SuppressWarnings("unchecked")
             var progress = (java.util.function.Consumer<AiAnalysisClient.ProgressEvent>) call.getArgument(1);
@@ -385,7 +387,7 @@ class AnalysisWorkerTest {
     @Test void explicitlySavedEvidenceSkipsGitAndDatabaseButRunsNewModelAnalysis() throws Exception {
         UUID sourceJobId = UUID.randomUUID();
         var savedJob = new AnalysisWorkItem(job.jobId(), job.projectId(), null, job.requestedBy(),
-                job.repositoryUrl(), job.branch(), job.commitSha(), sourceJobId);
+                job.repositoryUrl(), job.branch(), job.commitSha(), sourceJobId, false, "high");
         var db = Map.<String, Object>of("type", "POSTGRESQL", "tables", List.of(),
                 "warnings", List.of(), "truncated", false);
         var sourceFacts = Map.<String, Object>of("commitSha", job.commitSha(), "components", List.of(),
@@ -393,13 +395,96 @@ class AnalysisWorkerTest {
                 "promptCoverage", Map.of("truncated", false), "scanMetrics", Map.of("truncated", false));
         when(results.findReusableEvidenceByJobId(job.projectId(), sourceJobId)).thenReturn(java.util.Optional.of(
                 new ReusableEvidence(sourceJobId, sourceFacts, db, List.of())));
-        when(ai.analyzeWithProgress(anyMap(), any())).thenReturn(Map.of("summary", "새 질문의 답", "riskLevel", "UNKNOWN", "riskScore", 0));
+        when(ai.analyzeWithProgress(anyMap(), any())).thenReturn(Map.of("summary", "새 질문의 답", "riskLevel", "UNKNOWN",
+                "riskScore", 0, "analysisThinkingEnabled", false));
 
         worker.process(savedJob);
 
         verifyNoInteractions(git, database, source);
-        verify(ai).analyzeWithProgress(anyMap(), any());
-        verify(results).complete(eq(job.jobId()), anyMap(), anyMap());
+        verify(ai).analyzeWithProgress(argThat(payload -> Boolean.FALSE.equals(payload.get("thinkingEnabled"))
+                && "high".equals(payload.get("thinkingEffort"))), any());
+        verify(results).complete(eq(job.jobId()), argThat(result -> !result.containsKey("analysisThinkingEnabled")),
+                argThat(facts -> Boolean.FALSE.equals(facts.get("thinkingEnabled"))
+                        && Boolean.FALSE.equals(facts.get("analysisThinkingEnabled"))
+                        && "high".equals(facts.get("thinkingEffort")) && !facts.containsKey("analysisThinkingEffort")));
+    }
+
+    @Test void legacyUnknownThinkingSettingReachesModelAsNullAndStaysUnknownInFacts() throws Exception {
+        var legacyJob = new AnalysisWorkItem(job.jobId(), job.projectId(), null, job.requestedBy(),
+                job.repositoryUrl(), job.branch(), job.commitSha(), null, null);
+        var db = Map.<String, Object>of("tables", List.of());
+        when(database.collect(job.projectId())).thenReturn(db);
+        when(source.collect(checkout, db)).thenReturn(new SourceEvidenceCollector.ScanResult(Map.of(), List.of()));
+        when(ai.analyzeWithProgress(anyMap(), any())).thenReturn(Map.of("summary", "완료", "riskLevel", "UNKNOWN", "riskScore", 0));
+
+        worker.process(legacyJob);
+
+        verify(ai).analyzeWithProgress(argThat(payload -> payload.containsKey("thinkingEnabled")
+                && payload.get("thinkingEnabled") == null && payload.containsKey("thinkingEffort")
+                && payload.get("thinkingEffort") == null), any());
+        verify(results).complete(eq(job.jobId()), anyMap(), argThat(facts -> facts.containsKey("thinkingEnabled")
+                && facts.get("thinkingEnabled") == null && facts.containsKey("thinkingEffort")
+                && facts.get("thinkingEffort") == null));
+        verify(jobs, never()).fail(any(), anyString());
+    }
+
+    @Test void requestedAndReportedThinkingEffortAreStoredAsFactsOutsideThePublicResult() throws Exception {
+        var selectedJob = new AnalysisWorkItem(job.jobId(), job.projectId(), null, job.requestedBy(),
+                job.repositoryUrl(), job.branch(), job.commitSha(), null, true, "high");
+        var db = Map.<String, Object>of("tables", List.of());
+        when(database.collect(job.projectId())).thenReturn(db);
+        when(source.collect(checkout, db)).thenReturn(new SourceEvidenceCollector.ScanResult(Map.of(), List.of()));
+        when(ai.analyzeWithProgress(anyMap(), any())).thenReturn(Map.of("summary", "완료", "riskLevel", "UNKNOWN",
+                "riskScore", 0, "analysisThinkingEnabled", true, "analysisThinkingEffort", "high"));
+
+        worker.process(selectedJob);
+
+        verify(ai).analyzeWithProgress(argThat(payload -> "high".equals(payload.get("thinkingEffort"))), any());
+        verify(results).complete(eq(job.jobId()), argThat(result -> !result.containsKey("analysisThinkingEffort")),
+                argThat(facts -> "high".equals(facts.get("thinkingEffort"))
+                        && "high".equals(facts.get("analysisThinkingEffort"))));
+        verify(jobs, never()).fail(any(), anyString());
+    }
+
+    @Test void conflictingServerThinkingEffortRejectsTheResultInsteadOfMisreportingTheSelectedEffort() throws Exception {
+        var db = Map.<String, Object>of("tables", List.of());
+        when(database.collect(job.projectId())).thenReturn(db);
+        when(source.collect(checkout, db)).thenReturn(new SourceEvidenceCollector.ScanResult(Map.of(), List.of()));
+        when(ai.analyzeWithProgress(anyMap(), any())).thenReturn(Map.of("summary", "완료", "riskLevel", "UNKNOWN",
+                "riskScore", 0, "analysisThinkingEnabled", true, "analysisThinkingEffort", "high"));
+
+        worker.process(job);
+
+        verify(results, never()).complete(any(), anyMap(), anyMap());
+        verify(jobs).fail(eq(job.jobId()), argThat(message -> message.contains("THINKING_EFFORT_MISMATCH")
+                && message.contains("분석 결과를 저장하지 않았습니다")));
+    }
+
+    @Test void invalidServerThinkingEffortRejectsTheResult() throws Exception {
+        var db = Map.<String, Object>of("tables", List.of());
+        when(database.collect(job.projectId())).thenReturn(db);
+        when(source.collect(checkout, db)).thenReturn(new SourceEvidenceCollector.ScanResult(Map.of(), List.of()));
+        when(ai.analyzeWithProgress(anyMap(), any())).thenReturn(Map.of("summary", "완료", "riskLevel", "UNKNOWN",
+                "riskScore", 0, "analysisThinkingEffort", 42));
+
+        worker.process(job);
+
+        verify(results, never()).complete(any(), anyMap(), anyMap());
+        verify(jobs).fail(eq(job.jobId()), contains("THINKING_EFFORT_MISMATCH"));
+    }
+
+    @Test void conflictingServerThinkingModeRejectsTheResultInsteadOfRecordingTheRequestedModeAsExecuted() throws Exception {
+        var db = Map.<String, Object>of("tables", List.of());
+        when(database.collect(job.projectId())).thenReturn(db);
+        when(source.collect(checkout, db)).thenReturn(new SourceEvidenceCollector.ScanResult(Map.of(), List.of()));
+        when(ai.analyzeWithProgress(anyMap(), any())).thenReturn(Map.of("summary", "완료", "riskLevel", "UNKNOWN",
+                "riskScore", 0, "analysisThinkingEnabled", false));
+
+        worker.process(job);
+
+        verify(results, never()).complete(any(), anyMap(), anyMap());
+        verify(jobs).fail(eq(job.jobId()), argThat(message -> message.contains("THINKING_MODE_MISMATCH")
+                && message.contains("분석 결과를 저장하지 않았습니다")));
     }
 
     @Test void oldCollectorFactsAreRecollectedEvenWhenCommitAndDatabaseAreUnchanged() throws Exception {
@@ -425,7 +510,7 @@ class AnalysisWorkerTest {
         verify(results).complete(eq(job.jobId()), anyMap(), anyMap());
     }
 
-    @Test void queuedSavedAnalysisRejectsOldCollectorFactsBeforeRemoteCalls() {
+    @Test void queuedSavedAnalysisRejectsMissingCoreFactsBeforeRemoteCalls() {
         var sourceJobId = UUID.randomUUID();
         var savedJob = new AnalysisWorkItem(job.jobId(), job.projectId(), null, job.requestedBy(),
                 job.repositoryUrl(), job.branch(), job.commitSha(), sourceJobId);
@@ -438,6 +523,40 @@ class AnalysisWorkerTest {
         verifyNoInteractions(git, database, source, ai);
         verify(jobs).fail(eq(job.jobId()), contains("선택한 저장 근거 확인"));
         verify(results, never()).complete(any(), anyMap(), anyMap());
+    }
+
+    @Test void explicitlySelectedPartialLegacyFactsKeepTheirLimitsWithoutCollectingCurrentState() throws Exception {
+        UUID sourceJobId = UUID.randomUUID();
+        var savedJob = new AnalysisWorkItem(job.jobId(), job.projectId(), null, job.requestedBy(),
+                job.repositoryUrl(), job.branch(), job.commitSha(), sourceJobId, false, "high", "ALWAYS");
+        var sourceFacts = Map.<String, Object>of("commitSha", job.commitSha(), "components", List.of(Map.of("path", "src/stored.py")),
+                "collectorVersion", "source-evidence-v1", "promptCoverage", Map.of("collectedComponents", 30, "truncated", true),
+                "scanMetrics", Map.of("truncated", true));
+        var databaseFacts = Map.<String, Object>of("tables", List.of(), "truncated", true,
+                "warnings", List.of("일부 구조만 수집한 자료입니다."));
+        when(results.findReusableEvidenceByJobId(job.projectId(), sourceJobId)).thenReturn(java.util.Optional.of(
+                new ReusableEvidence(sourceJobId, sourceFacts, databaseFacts, List.of())));
+        when(ai.analyzeWithProgress(anyMap(), any())).thenReturn(Map.of("summary", "저장 시점의 부분 근거로 분석했습니다.",
+                "riskLevel", "UNKNOWN", "riskScore", 0));
+
+        worker.process(savedJob);
+
+        verifyNoInteractions(git, database, source);
+        verify(ai).analyzeWithProgress(argThat(payload -> {
+            var sentSource = (Map<?, ?>) payload.get("sourceSummary");
+            var coverage = (Map<?, ?>) sentSource.get("promptCoverage");
+            var saved = (Map<?, ?>) sentSource.get("savedEvidence");
+            return Integer.valueOf(30).equals(coverage.get("collectedComponents"))
+                    && Boolean.TRUE.equals(coverage.get("truncated"))
+                    && Boolean.FALSE.equals(saved.get("currentStateVerified"))
+                    && ((List<?>) saved.get("warnings")).containsAll(List.of("SOURCE_COLLECTOR_OUTDATED", "SOURCE_PROMPT_TRUNCATED",
+                    "SOURCE_SCAN_TRUNCATED", "DATABASE_TRUNCATED", "DATABASE_WARNINGS_PRESENT"))
+                    && "source-evidence-v1".equals(sentSource.get("collectorVersion"));
+        }), any());
+        verify(results).complete(eq(job.jobId()), anyMap(), anyMap());
+        verify(jobs, never()).fail(any(), anyString());
+        assertThat(sourceFacts).doesNotContainKey("savedEvidence");
+        assertThat(((Map<?, ?>) sourceFacts.get("promptCoverage")).get("truncated")).isEqualTo(true);
     }
 
     @Test void alreadyCancelledJobNeverStartsRemoteWork() {

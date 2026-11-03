@@ -45,7 +45,7 @@ export const getChangeRequests = async () => {
     return data
 }
 
-export const getAnalysisHistory = async ({ page = 0, size = 10, projectId = null, ...options } = {}) => {
+export const getAnalysisHistory = async ({ page = 0, size = 10, projectId = null, reusableEvidenceOnly = false, ...options } = {}) => {
     if (useMock) {
         const rows = analysisHistoryMock.map((item) => ({
             jobId: item.id,
@@ -60,11 +60,14 @@ export const getAnalysisHistory = async ({ page = 0, size = 10, projectId = null
             createdAt: item.analyzedAt,
             completedAt: item.analyzedAt,
         }))
-        const filtered = projectId ? rows.filter((item) => item.projectId === projectId) : rows
+        const filtered = rows.filter((item) => (!projectId || item.projectId === projectId) && (!reusableEvidenceOnly || item.reusableEvidence))
         return mockResponse({ items: filtered.slice(page * size, (page + 1) * size), total: filtered.length, page, size })
     }
 
-    const { data } = await httpClient.get('/analysis-jobs', { ...options, params: { page, size, ...(projectId ? { projectId } : {}) } })
+    const { data } = await httpClient.get('/analysis-jobs', {
+        ...options,
+        params: { page, size, ...(projectId ? { projectId } : {}), ...(reusableEvidenceOnly ? { reusableEvidenceOnly: true } : {}) },
+    })
     return data
 }
 

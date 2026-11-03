@@ -110,12 +110,19 @@ public class AnalysisWorker {
                 var saved = results.findReusableEvidenceByJobId(job.projectId(), job.reuseFromJobId())
                         .orElseThrow(() -> new IllegalStateException("저장 근거를 재사용할 수 없습니다. 최신 Git·DB 확인으로 다시 수집하세요."));
                 if (!EvidenceReusePolicy.canUseSavedSnapshot(saved, job.commitSha())) {
-                    throw new IllegalStateException("Saved evidence is incomplete.");
+                    throw new IllegalStateException("저장 근거의 필수 구조나 커밋 정보를 확인할 수 없습니다.");
                 }
                 databaseSummary = saved.databaseSummary();
                 var sourceSummary = new LinkedHashMap<>(saved.sourceSummary());
                 sourceSummary.remove("changeRequirement");
-                sourceSummary.remove("promptCoverage");
+                var savedWarnings = EvidenceReusePolicy.savedSnapshotWarnings(saved);
+                sourceSummary.put("savedEvidence", Map.of("sourceJobId", saved.sourceJobId().toString(),
+                        "currentStateVerified", false, "warnings", savedWarnings));
+                var savedCoverage = sourceSummary.get("promptCoverage") instanceof Map<?, ?> existing
+                        ? new LinkedHashMap<String, Object>((Map<String, Object>) existing) : new LinkedHashMap<String, Object>();
+                savedCoverage.put("upstreamCoverageUnknown", savedWarnings.contains("SOURCE_PROMPT_COVERAGE_MISSING")
+                        || Boolean.TRUE.equals(savedCoverage.get("upstreamCoverageUnknown")));
+                sourceSummary.put("promptCoverage", savedCoverage);
                 sourceSummary.put("analysisScope", job.requirementVersionId() == null
                         ? "PROJECT_STRUCTURE_SCAN" : "REQUIREMENT_IMPACT");
                 addRequirement(job, sourceSummary);
@@ -191,6 +198,9 @@ public class AnalysisWorker {
                 }
                 completeStage(jobId, stage, stageStartedNanos);
             }
+            payload = new LinkedHashMap<>(payload);
+            payload.put("thinkingEnabled", job.thinkingEnabled());
+            payload.put("thinkingEffort", job.thinkingEffort());
             stage = "AI 분석 요청 (AI 분석/추론 서버·내부 API 키·모델·시간 제한 확인)";
             stageStartedNanos = startStage(jobId, stage);
             if (jobs.isCancelled(jobId)) throw new CancellationException("Analysis cancelled.");
@@ -204,6 +214,16 @@ public class AnalysisWorker {
             } finally {
                 waiting.cancel(false);
             }
+            if (result.get("analysisThinkingEnabled") instanceof Boolean reportedThinking
+                    && job.thinkingEnabled() != null && !job.thinkingEnabled().equals(reportedThinking)) {
+                throw new AiAnalysisClient.ModelFailureException("THINKING_MODE_MISMATCH");
+            }
+            var reportedEffort = result.get("analysisThinkingEffort");
+            if (reportedEffort != null && (!(reportedEffort instanceof String effort)
+                    || !List.of("low", "medium", "high").contains(effort)
+                    || job.thinkingEffort() != null && !job.thinkingEffort().equals(effort))) {
+                throw new AiAnalysisClient.ModelFailureException("THINKING_EFFORT_MISMATCH");
+            }
             completeStage(jobId, stage, stageStartedNanos);
             stage = "AI 분석 진행률 기록";
             jobs.progress(job.jobId(), 100, 100, 90);
@@ -212,7 +232,13 @@ public class AnalysisWorker {
             // 실제 모델 입력과 원래 일반 분석 응답을 보존하되 최종 검토 결과의 형식은 유지한다.
             Map<String, Object> facts = new LinkedHashMap<>(Map.of("sourceSummary", payload.get("sourceSummary"),
                     "databaseSummary", payload.get("databaseSummary"), "relations", payload.get("relations")));
+            facts.put("thinkingEnabled", job.thinkingEnabled());
+            facts.put("thinkingEffort", job.thinkingEffort());
             var finalResult = new LinkedHashMap<>(result);
+            var analysisThinking = finalResult.remove("analysisThinkingEnabled");
+            if (analysisThinking instanceof Boolean enabled) facts.put("analysisThinkingEnabled", enabled);
+            var analysisEffort = finalResult.remove("analysisThinkingEffort");
+            if (analysisEffort instanceof String effort) facts.put("analysisThinkingEffort", effort);
             var analysisModel = finalResult.remove("analysisModel");
             if (analysisModel instanceof String name && name.matches("[A-Za-z0-9][A-Za-z0-9._:/@+\\-]{0,199}")) facts.put("analysisModel", name);
             var sourceModel = finalResult.remove("analysisSourceModel");

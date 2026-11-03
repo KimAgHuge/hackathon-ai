@@ -22,14 +22,20 @@ public class AnalysisHistoryRepository {
 
     /** 이미 접근 검증된 프로젝트의 작업만 페이지 단위로 읽는다. */
     public AnalysisHistoryPage find(List<UUID> projectIds, int page, int size) {
+        return find(projectIds, page, size, false);
+    }
+
+    /** 저장 자료 후보는 SQL에서 먼저 골라 이전 자료도 페이지 단위로 조회한다. */
+    public AnalysisHistoryPage find(List<UUID> projectIds, int page, int size, boolean reusableEvidenceOnly) {
         if (projectIds.isEmpty()) return new AnalysisHistoryPage(List.of(), 0, page, size);
         var params = new MapSqlParameterSource("projectIds", projectIds)
-                .addValue("collectorVersion", SourceEvidenceVersion.CURRENT)
                 .addValue("limit", size).addValue("offset", page * size);
+        String evidenceFilter = reusableEvidenceOnly ? " and " + AnalysisResultRepository.SAVED_EVIDENCE_CONDITION : "";
         Long total = jdbc.queryForObject("""
                 select count(*) from public.analysis_jobs j
+                left join public.analysis_results r on r.analysis_job_id = j.id
                 where j.project_id in (:projectIds)
-                """, params, Long.class);
+                """ + evidenceFilter, params, Long.class);
         List<AnalysisHistoryItem> items = jdbc.query("""
                 select j.id, j.project_id, p.name as project_name, j.requirement_version_id,
                        rv.title as requirement_title, j.status, r.risk_level, r.summary,
@@ -39,28 +45,29 @@ public class AnalysisHistoryRepository {
                        r.analysis_job_id as result_job_id,
                        r.inference_metadata -> 'facts' -> 'sourceSummary' ->> 'commitSha' as facts_commit,
                        r.inference_metadata -> 'facts' -> 'sourceSummary' ->> 'collectorVersion' as collector_version,
-                       r.inference_metadata -> 'facts' -> 'sourceSummary' -> 'promptCoverage' ->> 'truncated' as prompt_truncated,
-                       r.inference_metadata -> 'facts' -> 'sourceSummary' -> 'scanMetrics' ->> 'truncated' as scan_truncated,
-                       r.inference_metadata -> 'facts' -> 'databaseSummary' ->> 'truncated' as database_truncated,
+                       case when jsonb_typeof(r.inference_metadata -> 'facts' -> 'sourceSummary' -> 'promptCoverage' -> 'truncated') = 'boolean'
+                         then r.inference_metadata -> 'facts' -> 'sourceSummary' -> 'promptCoverage' ->> 'truncated' end as prompt_truncated,
+                       case when jsonb_typeof(r.inference_metadata -> 'facts' -> 'sourceSummary' -> 'scanMetrics' -> 'truncated') = 'boolean'
+                         then r.inference_metadata -> 'facts' -> 'sourceSummary' -> 'scanMetrics' ->> 'truncated' end as scan_truncated,
+                       case when jsonb_typeof(r.inference_metadata -> 'facts' -> 'databaseSummary' -> 'truncated') = 'boolean'
+                         then r.inference_metadata -> 'facts' -> 'databaseSummary' ->> 'truncated' end as database_truncated,
                        (r.inference_metadata -> 'facts' -> 'databaseSummary' -> 'warnings') = '[]'::jsonb as database_warnings_empty,
+                       jsonb_typeof(r.inference_metadata -> 'facts' -> 'databaseSummary' -> 'warnings') as database_warnings_type,
+                       jsonb_typeof(r.inference_metadata -> 'facts' -> 'sourceSummary') as source_summary_type,
+                       jsonb_typeof(r.inference_metadata -> 'facts' -> 'databaseSummary') as database_summary_type,
+                       jsonb_typeof(r.inference_metadata -> 'facts' -> 'sourceSummary' -> 'components') as components_type,
+                       jsonb_typeof(r.inference_metadata -> 'facts' -> 'databaseSummary' -> 'tables') as tables_type,
                        jsonb_typeof(r.inference_metadata -> 'facts' -> 'relations') as relations_type,
-                       (j.status = 'COMPLETED'
-                         and (r.inference_metadata -> 'facts' -> 'sourceSummary' ->> 'collectorVersion') = :collectorVersion
-                         and (j.input_snapshot ->> 'commitSha') is not null
-                         and (j.input_snapshot ->> 'commitSha') =
-                             (r.inference_metadata -> 'facts' -> 'sourceSummary' ->> 'commitSha')
-                         and (r.inference_metadata -> 'facts' -> 'sourceSummary' -> 'promptCoverage' ->> 'truncated') = 'false'
-                         and (r.inference_metadata -> 'facts' -> 'sourceSummary' -> 'scanMetrics' ->> 'truncated') = 'false'
-                         and (r.inference_metadata -> 'facts' -> 'databaseSummary' ->> 'truncated') = 'false'
-                         and (r.inference_metadata -> 'facts' -> 'databaseSummary' -> 'warnings') = '[]'::jsonb
-                         and jsonb_typeof(r.inference_metadata -> 'facts' -> 'relations') = 'array'
+                       (
+                """ + AnalysisResultRepository.SAVED_EVIDENCE_CONDITION + """
                        ) as reusable_evidence,
-                       j.created_at, j.completed_at
+                       j.created_at, j.completed_at, j.thinking_enabled, j.thinking_effort
                 from public.analysis_jobs j
                 join public.projects p on p.id = j.project_id
                 left join public.requirement_versions rv on rv.id = j.requirement_version_id
                 left join public.analysis_results r on r.analysis_job_id = j.id
                 where j.project_id in (:projectIds)
+                """ + evidenceFilter + """
                 order by j.created_at desc, j.id desc
                 limit :limit offset :offset
                 """, params, this::mapRow);
@@ -78,10 +85,12 @@ public class AnalysisHistoryRepository {
                 reused == null ? null : UUID.fromString(reused),
                 reusable, reusable ? List.of() : evidenceUnavailableReasons(rs), rs.getString("source_commit"),
                 rs.getObject("created_at", OffsetDateTime.class),
-                rs.getObject("completed_at", OffsetDateTime.class));
+                rs.getObject("completed_at", OffsetDateTime.class),
+                rs.getObject("thinking_enabled", Boolean.class), rs.getString("thinking_effort"),
+                reusable ? evidenceWarnings(rs) : List.of());
     }
 
-    /** SQL의 재사용 조건별 결손 사유를 코드로 돌려준다. 화면에서는 이 코드를 사용자 언어로 표시한다. */
+    /** 실제 사용을 막는 필수 구조와 커밋 정보의 결손만 반환한다. */
     static List<String> evidenceUnavailableReasons(ResultSet rs) throws SQLException {
         List<String> reasons = new ArrayList<>();
         if (!"COMPLETED".equals(rs.getString("status"))) {
@@ -95,25 +104,35 @@ public class AnalysisHistoryRepository {
 
         String sourceCommit = rs.getString("source_commit");
         String factsCommit = rs.getString("facts_commit");
-        if (!SourceEvidenceVersion.CURRENT.equals(rs.getString("collector_version"))) reasons.add("SOURCE_COLLECTOR_OUTDATED");
-        if (sourceCommit == null) reasons.add("SOURCE_COMMIT_MISSING");
-        if (factsCommit == null) reasons.add("SAVED_COMMIT_MISSING");
+        if (sourceCommit == null || sourceCommit.isBlank()) reasons.add("SOURCE_COMMIT_MISSING");
+        if (factsCommit == null || factsCommit.isBlank()) reasons.add("SAVED_COMMIT_MISSING");
         if (sourceCommit != null && factsCommit != null && !sourceCommit.equals(factsCommit)) {
             reasons.add("SOURCE_COMMIT_MISMATCH");
         }
-        addTruncationReason(reasons, rs.getString("prompt_truncated"), "SOURCE_PROMPT_COVERAGE_MISSING", "SOURCE_PROMPT_TRUNCATED");
-        addTruncationReason(reasons, rs.getString("scan_truncated"), "SOURCE_SCAN_STATUS_MISSING", "SOURCE_SCAN_TRUNCATED");
-        addTruncationReason(reasons, rs.getString("database_truncated"), "DATABASE_COVERAGE_MISSING", "DATABASE_TRUNCATED");
-        Boolean warningsEmpty = rs.getObject("database_warnings_empty", Boolean.class);
-        if (warningsEmpty == null) reasons.add("DATABASE_WARNINGS_MISSING");
-        else if (!warningsEmpty) reasons.add("DATABASE_WARNINGS_PRESENT");
+        if (!"object".equals(rs.getString("source_summary_type"))) reasons.add("SOURCE_EVIDENCE_MISSING");
+        if (!"object".equals(rs.getString("database_summary_type"))) reasons.add("DATABASE_EVIDENCE_MISSING");
+        if (!"array".equals(rs.getString("components_type"))) reasons.add("SOURCE_COMPONENTS_MISSING");
+        if (!"array".equals(rs.getString("tables_type"))) reasons.add("DATABASE_TABLES_MISSING");
         if (!"array".equals(rs.getString("relations_type"))) reasons.add("RELATIONS_MISSING");
         if (reasons.isEmpty()) reasons.add("EVIDENCE_FORMAT_UNSUPPORTED");
         return reasons;
     }
 
+    /** 부분 수집과 이전 수집 방식은 선택 가능한 자료의 검토 한계로 안내한다. */
+    static List<String> evidenceWarnings(ResultSet rs) throws SQLException {
+        var warnings = new ArrayList<String>();
+        if (!SourceEvidenceVersion.CURRENT.equals(rs.getString("collector_version"))) warnings.add("SOURCE_COLLECTOR_OUTDATED");
+        addTruncationReason(warnings, rs.getString("prompt_truncated"), "SOURCE_PROMPT_COVERAGE_MISSING", "SOURCE_PROMPT_TRUNCATED");
+        addTruncationReason(warnings, rs.getString("scan_truncated"), "SOURCE_SCAN_STATUS_MISSING", "SOURCE_SCAN_TRUNCATED");
+        addTruncationReason(warnings, rs.getString("database_truncated"), "DATABASE_COVERAGE_MISSING", "DATABASE_TRUNCATED");
+        Boolean warningsEmpty = rs.getObject("database_warnings_empty", Boolean.class);
+        if (!"array".equals(rs.getString("database_warnings_type")) || warningsEmpty == null) warnings.add("DATABASE_WARNINGS_MISSING");
+        else if (!warningsEmpty) warnings.add("DATABASE_WARNINGS_PRESENT");
+        return warnings;
+    }
+
     private static void addTruncationReason(List<String> reasons, String value, String missingCode, String truncatedCode) {
-        if (value == null) reasons.add(missingCode);
-        else if (!"false".equals(value)) reasons.add(truncatedCode);
+        if (!"true".equals(value) && !"false".equals(value)) reasons.add(missingCode);
+        else if ("true".equals(value)) reasons.add(truncatedCode);
     }
 }

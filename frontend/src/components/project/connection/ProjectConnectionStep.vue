@@ -1,6 +1,7 @@
 <script setup>
 import { computed } from 'vue'
 import BaseButton from '@/components/base/BaseButton.vue'
+import AnalysisThinkingControl from '@/components/analysis/AnalysisThinkingControl.vue'
 import DatabaseConnectionStatus from './DatabaseConnectionStatus.vue'
 import DatabaseSourceForm from './DatabaseSourceForm.vue'
 import ProjectSourceForm from './ProjectSourceForm.vue'
@@ -90,12 +91,22 @@ const props = defineProps({
         type: Boolean,
         default: false,
     },
+    thinkingEnabled: {
+        type: Boolean,
+        default: true,
+    },
+    thinkingEffort: {
+        type: String,
+        default: 'medium',
+    },
 })
 
 const emit = defineEmits([
     'update:project',
     'update:repositoryConnection',
     'update:databaseSource',
+    'update:thinkingEnabled',
+    'update:thinkingEffort',
     'create-organization',
     'save',
     'test-repository',
@@ -197,6 +208,14 @@ const updateRepositoryConnection = (repositoryConnection) => {
             </div>
         </div>
 
+        <AnalysisThinkingControl
+            class="mt-6"
+            :model-value="thinkingEnabled"
+            :thinking-effort="thinkingEffort"
+            :disabled="startingAnalysis"
+            @update:model-value="emit('update:thinkingEnabled', $event)"
+            @update:thinking-effort="emit('update:thinkingEffort', $event)"
+        />
         <div class="mt-6 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:justify-end">
             <BaseButton
                 class="w-full sm:w-auto"

@@ -45,8 +45,9 @@ public class AnalysisPromptBuilder {
         var links = (List<?>) connections.getOrDefault("links", new ArrayList<>());
         var routes = (List<?>) connections.getOrDefault("routes", new ArrayList<>());
         var unresolved = (List<?>) connections.getOrDefault("unresolvedReferences", new ArrayList<>());
-        int totalLinks = links.size(), totalRoutes = routes.size();
-        int totalUnresolved = unresolved.size();
+        int totalLinks = collectedCount(connections.get("collectedLinks"), links.size());
+        int totalRoutes = collectedCount(connections.get("collectedRoutes"), routes.size());
+        int totalUnresolved = collectedCount(connections.get("collectedUnresolvedReferences"), unresolved.size());
         trim(unresolved, 30);
         connections.put("collectedUnresolvedReferences", totalUnresolved);
         connections.put("includedUnresolvedReferences", unresolved.size());
@@ -78,11 +79,15 @@ public class AnalysisPromptBuilder {
         trim(components, 150);
         trim(references, 200);
         trim(tables, 40);
-        Map<String, Object> coverage = new LinkedHashMap<>();
-        coverage.put("collectedTables", totalTables);
-        coverage.put("collectedRelations", totalRelations);
-        coverage.put("collectedComponents", totalComponents);
-        coverage.put("omittedFrameworkEvidences", omittedFrameworkEvidences);
+        Map<String, Object> coverage = sourceCopy.get("promptCoverage") instanceof Map<?, ?> existing
+                ? new LinkedHashMap<>((Map<String, Object>) existing) : new LinkedHashMap<>();
+        coverage.put("upstreamTruncated", Boolean.TRUE.equals(coverage.get("truncated"))
+                || Boolean.TRUE.equals(coverage.get("upstreamTruncated")));
+        preserveCollectedCount(coverage, "collectedTables", totalTables);
+        preserveCollectedCount(coverage, "collectedRelations", totalRelations);
+        preserveCollectedCount(coverage, "collectedComponents", totalComponents);
+        coverage.put("omittedFrameworkEvidences", omittedFrameworkEvidences
+                + (coverage.get("omittedFrameworkEvidences") instanceof Number count ? count.intValue() : 0));
         coverage.put("notice", "수집 및 모델 입력 범위만 분석합니다. 누락된 관계가 없다는 보장은 아닙니다.");
         sourceCopy.put("promptCoverage", coverage);
         updateConnections(connections, totalLinks, totalRoutes, links, routes, connectionsAlreadyTruncated);
@@ -145,7 +150,17 @@ public class AnalysisPromptBuilder {
                 || !coverage.get("collectedRelations").equals(relations.size())
                 || !coverage.get("collectedComponents").equals(components.size())
                 || !coverage.get("omittedFrameworkEvidences").equals(0)
-                || Boolean.TRUE.equals(coverage.get("sourceConnectionsTruncated")));
+                || Boolean.TRUE.equals(coverage.get("sourceConnectionsTruncated"))
+                || Boolean.TRUE.equals(coverage.get("upstreamTruncated"))
+                || Boolean.TRUE.equals(coverage.get("upstreamCoverageUnknown")));
+    }
+
+    private void preserveCollectedCount(Map<String, Object> coverage, String key, int current) {
+        coverage.put(key, collectedCount(coverage.get(key), current));
+    }
+
+    private int collectedCount(Object previous, int current) {
+        return previous instanceof Number count ? Math.max(count.intValue(), current) : current;
     }
 
     private void trim(List<?> values, int max) {

@@ -8,6 +8,7 @@ import BaseSelect from '@/components/base/BaseSelect.vue'
 import BaseTable from '@/components/base/BaseTable.vue'
 import ViewHeading from '@/components/common/ViewHeading.vue'
 import { riskLevelLabel } from '@/lib/riskLevel'
+import { analysisThinkingLabel, analysisThinkingEffortLabel } from '@/lib/analysisThinking'
 
 const route = useRoute()
 const router = useRouter()
@@ -36,6 +37,8 @@ const projectOptions = computed(() => [
 const columns = [
     { key: 'requirementTitle', label: '분석 대상', minWidth: '190px' },
     { key: 'status', label: '상태', width: '110px' },
+    { key: 'thinkingEnabled', label: '추론 모드', width: '115px' },
+    { key: 'thinkingEffort', label: '추론 강도', width: '115px' },
     { key: 'riskLevel', label: '위험도', width: '110px' },
     { key: 'reviewStatus', label: '검토', width: '100px' },
     { key: 'evidenceReusedFromJobId', label: '근거', width: '100px' },
@@ -153,6 +156,8 @@ onMounted(loadProjects)
         >
             <template #cell-requirementTitle="{ row }">{{ row.requirementTitle || '프로젝트 구조 분석' }}</template>
             <template #cell-riskLevel="{ value }">{{ riskLevelLabel(value) }}</template>
+            <template #cell-thinkingEnabled="{ value }">{{ analysisThinkingLabel(value) }}</template>
+            <template #cell-thinkingEffort="{ row }">{{ analysisThinkingEffortLabel(row.thinkingEffort, row.thinkingEnabled) }}</template>
             <template #cell-reviewStatus="{ row }">{{
                 row.status === 'COMPLETED' ? { APPROVED: '승인', REJECTED: '반려' }[row.reviewStatus] || '검토 대기' : '—'
             }}</template>
