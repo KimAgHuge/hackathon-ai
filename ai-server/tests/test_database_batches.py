@@ -48,7 +48,7 @@ def test_every_table_is_reviewed_without_disabling_thinking_and_cross_table_keys
     assert ("DATABASE_BATCH_COMPLETED", 2) in events
     assert ("DATABASE_MERGE_COMPLETED", 1) in events
     for call in client.chat_kwargs:
-        assert "think" not in call
+        assert call["think"] == "medium"
         assert call["options"] == {"temperature": 0}
 
 

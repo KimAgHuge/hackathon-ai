@@ -19,7 +19,7 @@ def test_only_the_invalid_field_is_regenerated_and_full_result_is_validated():
     assert result.summary == initial["summary"]
     assert initial == original
     assert "previousOutput" in client.chat_kwargs[1]["messages"][-1]["content"]
-    assert "think" not in client.chat_kwargs[1]
+    assert client.chat_kwargs[1]["think"] == "medium"
 
 
 @pytest.mark.parametrize("patch", [{"summary": "교체해서는 안 되는 내용"},

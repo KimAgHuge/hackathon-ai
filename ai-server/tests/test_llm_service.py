@@ -26,7 +26,8 @@ def settings(**overrides):
         "ai_requirement_fast_path_enabled": False,
     }
     values.update(overrides)
-    return Settings(**values)
+    # 개발 환경의 모델·로그 설정이 자동 검사에 섞이지 않게 한다.
+    return Settings(_env_file=None, **values)
 
 
 def analysis_request():
@@ -72,11 +73,103 @@ def presentation_requirement_request():
     return ProjectAnalysisRequest.model_validate(payload)
 
 
+def _fixture_database_facts_review(facts):
+    """기존 응답 예시에 실제 입력으로부터 새 내부 구조 확인값만 보완한다."""
+    return [{
+        "table": table["table"],
+        "columnsAvailable": table["columnsAvailable"],
+        "collectedColumnCount": table["collectedColumnCount"],
+        "includedColumnNames": [column["name"] for column in table["columns"]],
+        "allCollectedColumnsIncluded": table["allCollectedColumnsIncluded"],
+        "indexesAvailable": table["indexesAvailable"],
+        "collectedIndexCount": table["collectedIndexCount"],
+        "includedIndexes": [{key: index.get(key) for key in ("name", "columns", "unique")}
+                            for index in table["indexes"]],
+        "allCollectedIndexesIncluded": table["allCollectedIndexesIncluded"],
+    } for table in facts["tables"]]
+
+
+def _enrich_internal_fixture(content, kwargs):
+    """이전 예시의 공개 판단은 유지하고 새 종합 응답 형식에서만 내부값을 보완한다."""
+    properties = kwargs.get("format", {}).get("properties", {})
+    is_final = "databaseNarrative" in properties
+    is_merge = "conditionalActions" in properties and "databaseFactsReview" in properties
+    if not (is_final or is_merge):
+        return content
+    try:
+        result = json.loads(content)
+    except (TypeError, ValueError):
+        return content
+    if not isinstance(result, dict):
+        return content
+    facts_key = "reconciliationFacts" if is_final else "databaseFacts"
+    payload = None
+    # 재시도 안내보다 먼저 전달된 실제 입력을 읽는다.
+    for message in kwargs.get("messages", []):
+        if message.get("role") != "user":
+            continue
+        try:
+            candidate = json.loads(message.get("content", ""))
+        except (TypeError, ValueError):
+            continue
+        if isinstance(candidate, dict) and isinstance(candidate.get(facts_key), dict):
+            payload = candidate
+            break
+    if payload is None:
+        return content
+    if is_final:
+        # 예전 전체 일반 응답 예시에서 새 최종 수정 형식에 속하지 않는 공개 필드만 제거한다.
+        # DB 관련성을 일부러 바꾼 잘못된 예시는 그대로 남겨 검증에서 거부하도록 한다.
+        if any(key in result for key in ("frameworks", "riskLevel", "riskScore")):
+            for key in ("frameworks", "riskLevel", "riskScore", "databaseRelevanceReason", "databaseReviewPlan"):
+                result.pop(key, None)
+            if result.get("databaseRelevance") == payload.get("generalAnalysis", {}).get("databaseRelevance"):
+                result.pop("databaseRelevance", None)
+        if "databaseNarrative" not in result:
+            impact = payload["databaseImpact"]
+            result["databaseNarrative"] = {
+                key: impact[key] for key in ("explanation", "conditionalPaths", "openQuestions")
+            }
+        if "conditionalActionsReview" in properties:
+            result.setdefault("conditionalActionsReview", payload.get("conditionalActions", []))
+    else:
+        result.setdefault("conditionalActions", [
+            {"pathIndex": index, "actions": []}
+            for index, _ in enumerate(result.get("conditionalPaths", []))
+        ])
+        if "confirmedActions" in properties and "confirmedActions" not in result:
+            from app.services.database_synthesis import _explicit_target
+            requirement = payload.get("changeRequirement", {})
+            evidence = requirement.get("refinedContent") or requirement.get("title")
+            changes = result.get("proposedChanges", [])
+            new_tables = {change["targetTable"] for change in changes if change.get("changeType") == "CREATE_TABLE"}
+            actions = []
+            for change in changes:
+                target = change["targetTable"]
+                mapping = ("NEW_TABLE" if target in new_tables else "VERIFIED"
+                           if target in payload.get("supportedTargetTables", []) or _explicit_target(target, requirement)
+                           else "UNVERIFIED")
+                actions.append({
+                    **{key: change.get(key) for key in ("changeType", "targetTable", "targetColumn", "necessity")},
+                    "basis": "REQUIREMENT", "requirementEvidence": evidence, "targetMapping": mapping,
+                })
+            result["confirmedActions"] = actions
+    if "databaseFactsReview" in properties and "databaseFactsReview" not in result:
+        result["databaseFactsReview"] = _fixture_database_facts_review(payload[facts_key])
+    if "dataVerificationReview" in properties:
+        result.setdefault("dataVerificationReview", {
+            "rowValues": "UNVERIFIED", "runtimeUsage": "UNVERIFIED",
+            "performance": "UNVERIFIED", "jsonInternalKeys": "UNVERIFIED",
+        })
+    return json.dumps(result, ensure_ascii=False)
+
+
 class FakeClient:
-    def __init__(self, chat_responses=None, list_response=None, exception=None):
+    def __init__(self, chat_responses=None, list_response=None, exception=None, enrich_internal_responses=True):
         self.chat_responses = list(chat_responses or [])
         self.list_response = list_response
         self.exception = exception
+        self.enrich_internal_responses = enrich_internal_responses
         self.chat_calls = 0
         self.chat_kwargs = []
 
@@ -85,8 +178,11 @@ class FakeClient:
         self.chat_kwargs.append(kwargs)
         if self.exception:
             raise self.exception
+        content = self.chat_responses.pop(0)
+        if self.enrich_internal_responses:
+            content = _enrich_internal_fixture(content, kwargs)
         return SimpleNamespace(
-            message=SimpleNamespace(content=self.chat_responses.pop(0))
+            message=SimpleNamespace(content=content)
         )
 
     async def list(self):
@@ -248,7 +344,7 @@ def test_final_reconciliation_updates_summary_but_preserves_original_training_st
     assert result.general_analysis.summary == json.loads(REQUIREMENT_GENERAL_MODEL_JSON)["summary"]
     assert "RECONCILIATION_STARTED" in events and "RECONCILIATION_COMPLETED" in events
     assert client.chat_calls == 3
-    assert all("think" not in call and "num_predict" not in call.get("options", {}) for call in client.chat_kwargs)
+    assert all(call["think"] == "medium" and "num_predict" not in call.get("options", {}) for call in client.chat_kwargs)
 
 
 @pytest.mark.parametrize("unrelated", [True, False])
@@ -343,13 +439,13 @@ def test_general_stage_uses_table_overview_and_database_stage_keeps_details():
     assert request.database_summary["tables"] == original_tables
 
 
-def test_database_keeps_model_thinking_and_generation_defaults_without_dropping_facts(caplog):
+def test_database_enables_thinking_by_default_without_dropping_facts(caplog):
     client = FakeClient(chat_responses=[REQUIREMENT_GENERAL_MODEL_JSON, db_only(AMBIGUOUS_DB_JSON)])
     with caplog.at_level("INFO", logger="app.services.llm_service"):
         asyncio.run(LlmService(settings(), client=client).analyze(requirement_request()))
-    assert "think" not in client.chat_kwargs[0]
+    assert client.chat_kwargs[0]["think"] == "medium"
     assert client.chat_kwargs[0]["options"] == {"temperature": 0}
-    assert "think" not in client.chat_kwargs[1]
+    assert client.chat_kwargs[1]["think"] == "medium"
     assert client.chat_kwargs[1]["options"] == {"temperature": 0}
     database_input = json.loads(client.chat_kwargs[1]["messages"][1]["content"])
     assert len(database_input["tables"]) == len(requirement_request().database_summary["tables"])
@@ -361,7 +457,7 @@ def test_database_validation_retry_does_not_disable_thinking_or_cap_generation()
     client = FakeClient(chat_responses=[REQUIREMENT_GENERAL_MODEL_JSON, "{}", db_only(AMBIGUOUS_DB_JSON)])
     asyncio.run(LlmService(settings(), client=client).analyze(requirement_request()))
     for call in client.chat_kwargs[1:]:
-        assert "think" not in call
+        assert call["think"] == "medium"
         assert call["options"] == {"temperature": 0}
 
 

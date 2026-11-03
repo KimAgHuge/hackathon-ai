@@ -8,6 +8,7 @@ from app.services.llm_service import (
     ModelTimeoutError,
     ModelOutputLimitError,
     ModelUnavailableError,
+    ModelThinkingUnsupportedError,
 )
 
 VALID_REQUEST = {
@@ -65,6 +66,23 @@ def test_analysis_rejects_sensitive_fields_before_model_call(
 
     assert response.status_code == 422
     assert "must-not-reach-model" not in response.text
+    assert fake_llm_service.analysis_calls == 0
+
+
+def test_unsupported_thinking_has_a_safe_http_and_stream_code(client, fake_llm_service):
+    fake_llm_service.analysis_exception = ModelThinkingUnsupportedError("선택 모델이 추론 모드를 지원하지 않습니다.")
+    headers = {"X-Internal-Api-Key": TEST_API_KEY}
+    response = client.post("/api/analysis/project", json=VALID_REQUEST, headers=headers)
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "THINKING_NOT_SUPPORTED"
+    streamed = client.post("/api/analysis/project/stream", json=VALID_REQUEST, headers=headers)
+    assert json.loads(streamed.text.splitlines()[-1]) == {"type": "error", "code": "THINKING_NOT_SUPPORTED"}
+
+
+def test_analysis_rejects_non_boolean_thinking_before_model_call(client, fake_llm_service):
+    response = client.post("/api/analysis/project", json={**VALID_REQUEST, "thinkingEnabled": "false"},
+                           headers={"X-Internal-Api-Key": TEST_API_KEY})
+    assert response.status_code == 422
     assert fake_llm_service.analysis_calls == 0
 
 

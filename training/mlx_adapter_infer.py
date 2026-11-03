@@ -32,7 +32,15 @@ def infer(model_path, adapter_path, request):
         messages[0]["content"] += "\n\n" + instruction
     else:
         messages.insert(0, {"role": "system", "content": instruction})
-    prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True, enable_thinking=False)
+    thinking = request.get("thinkingEnabled", False)
+    if type(thinking) is not bool:
+        raise ValueError("추론 모드 설정을 확인하지 못했습니다.")
+    generation = {"enable_thinking": thinking}
+    if request.get("thinkingEffort") is not None:
+        if request["thinkingEffort"] not in {"low", "medium", "high"}:
+            raise ValueError("추론 강도 설정을 확인하지 못했습니다.")
+        generation["reasoning_effort"] = "xhigh" if request["thinkingEffort"] == "high" else request["thinkingEffort"]
+    prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True, **generation)
     if len(tokenizer.encode(prompt)) > 32768:
         raise ValueError("추론 입력이 허용된 토큰 수를 초과했습니다.")
     fragments = []
@@ -42,7 +50,13 @@ def infer(model_path, adapter_path, request):
         final = response
     if final is None or final.finish_reason not in {"stop", "length"}:
         raise ValueError("추론 종료 상태를 확인하지 못했습니다.")
-    return {"content": "".join(fragments), "finishReason": final.finish_reason,
+    content = "".join(fragments)
+    # 대화 형식이 시작한 추론 영역은 끝 표시 뒤의 답변만 전달한다.
+    if thinking and "</think>" in content:
+        content = content.split("</think>", 1)[1].strip()
+    elif thinking and "<think>" in content and final.finish_reason != "length":
+        raise ValueError("추론이 끝나기 전에 모델 응답이 종료됐습니다.")
+    return {"content": content, "finishReason": final.finish_reason,
             "promptTokens": final.prompt_tokens, "generationTokens": final.generation_tokens}
 
 

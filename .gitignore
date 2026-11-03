@@ -77,6 +77,7 @@ htmlcov/
 /training/datasets/
 /training/adapters/
 /ai-server/.analysis-checkpoints/
+/ai-server/.rag-index/
 
 *.safetensors
 *.gguf

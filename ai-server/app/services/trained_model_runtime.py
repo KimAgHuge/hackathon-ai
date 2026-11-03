@@ -6,6 +6,7 @@ import asyncio
 import fcntl
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -34,6 +35,20 @@ HASH = re.compile(r"[0-9a-f]{64}\Z")
 METADATA = {"jobId", "version", "manifestSha256", "sourceModel", "baseModel", "baseRevision", "model",
             "artifactSha256", "artifactSize", "quantization"}
 MAX_WEIGHTS = 64 * 1024 ** 3
+FORMAT_IDENTIFIER = re.compile(r"[A-Za-z0-9_.-]{1,100}\Z")
+PARAMETER_NUMBER = re.compile(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?\Z")
+INTEGER_PARAMETERS = {
+    "num_ctx": (1, 2 ** 31 - 1), "num_predict": (-2, 2 ** 31 - 1),
+    "seed": (-1, 2 ** 63 - 1), "top_k": (0, 2 ** 31 - 1),
+    "repeat_last_n": (-1, 2 ** 31 - 1), "num_keep": (-1, 2 ** 31 - 1), "mirostat": (0, 2),
+}
+FLOAT_PARAMETERS = {
+    "temperature": (0, None), "repeat_penalty": (0, None),
+    "top_p": (0, 1), "min_p": (0, 1), "typical_p": (0, 1), "tfs_z": (0, 1),
+    "presence_penalty": (None, None), "frequency_penalty": (None, None),
+    "mirostat_tau": (0, None), "mirostat_eta": (0, None),
+}
+INHERITED_PARAMETERS = set(INTEGER_PARAMETERS) | set(FLOAT_PARAMETERS) | {"stop", "penalize_newline"}
 IMPORT_PHASE_MESSAGES = {
     "DOWNLOADING": "공유 저장소에 모델 파일 다운로드를 요청했습니다. AI 분석/추론 서버에 파일이 준비되기를 기다립니다.",
     "VERIFYING": "AI 분석/추론 서버에서 모델 파일의 서명·크기·해시를 검사하고 있습니다.",
@@ -92,6 +107,125 @@ class OllamaModelImporter:
                 and not show.get("remote_host") and not show.get("remote_model")
                 and isinstance(show.get("model_info"), dict) and show["model_info"].get("general.architecture") == architecture)
 
+    @staticmethod
+    def _native_format(show):
+        """엔진이 응답 본문에서 생략한 대화 처리기 이름만 고정 지시문에서 읽는다."""
+        result = {}
+        modelfile = show.get("modelfile", "")
+        if not isinstance(modelfile, str) or len(modelfile) > 1024 ** 2:
+            raise ValueError()
+        quoted = False
+        for raw in modelfile.splitlines():
+            line = raw.strip()
+            if quoted:
+                if line.count('"""') % 2:
+                    quoted = False
+                continue
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split(None, 1)
+            key = parts[0].lower()
+            value = parts[1].strip() if len(parts) == 2 else ""
+            if key in {"parser", "renderer"}:
+                if key in result or not FORMAT_IDENTIFIER.fullmatch(value):
+                    raise ValueError()
+                result[key] = value
+            elif value.count('"""') % 2:
+                # 대화 형식과 시스템 문구 안의 같은 이름은 지시문으로 해석하지 않는다.
+                quoted = True
+        if quoted:
+            raise ValueError()
+        for key in ("parser", "renderer"):
+            value = show.get(key)
+            if value is not None:
+                if (not isinstance(value, str) or not FORMAT_IDENTIFIER.fullmatch(value)
+                        or (key in result and result[key] != value)):
+                    raise ValueError()
+                result[key] = value
+        return result
+
+    @staticmethod
+    def _parameters(show):
+        """공통 생성 옵션만 이어받고 모델 구조와 장비에 따라 달라지는 실행 옵션은 제외한다."""
+        raw = show.get("parameters", "")
+        if raw is None:
+            raw = ""
+        if isinstance(raw, str):
+            if len(raw) > 64 * 1024:
+                raise ValueError()
+            rows = []
+            for line in raw.splitlines():
+                if not line.strip():
+                    continue
+                parts = line.split(None, 1)
+                if len(parts) != 2:
+                    raise ValueError()
+                key, value = parts
+                if key not in INHERITED_PARAMETERS:
+                    # 변환 모델에는 draft_num_predict 같은 원본 구조 전용 옵션을 적용하지 않는다.
+                    continue
+                if key == "stop":
+                    value = json.loads(value)
+                elif key == "penalize_newline":
+                    if value not in {"true", "false"}:
+                        raise ValueError()
+                    value = value == "true"
+                elif key in INTEGER_PARAMETERS:
+                    if not re.fullmatch(r"[-+]?\d+", value):
+                        raise ValueError()
+                    value = int(value)
+                elif key in FLOAT_PARAMETERS:
+                    if not PARAMETER_NUMBER.fullmatch(value):
+                        raise ValueError()
+                    value = float(value)
+                rows.append((key, value))
+        elif isinstance(raw, dict):
+            rows = list(raw.items())
+        else:
+            raise ValueError()
+        if len(rows) > 100:
+            raise ValueError()
+        result = {}
+        for key, value in rows:
+            if not isinstance(key, str):
+                raise ValueError()
+            if key not in INHERITED_PARAMETERS:
+                continue
+            if key in result and key != "stop":
+                raise ValueError()
+            if key == "stop":
+                values = value if isinstance(value, list) else [value]
+                if (not values or any(not isinstance(item, str) or not item or len(item) > 4096 for item in values)
+                        or len(result.get("stop", [])) + len(values) > 32):
+                    raise ValueError()
+                result.setdefault("stop", []).extend(values)
+                continue
+            if key == "penalize_newline":
+                if not isinstance(value, bool):
+                    raise ValueError()
+            else:
+                bounds = INTEGER_PARAMETERS.get(key) or FLOAT_PARAMETERS.get(key)
+                if bounds is None or isinstance(value, bool) or not isinstance(value, (int, float)):
+                    raise ValueError()
+                if (key in INTEGER_PARAMETERS and not isinstance(value, int)) or not math.isfinite(value):
+                    raise ValueError()
+                lower, upper = bounds
+                if (lower is not None and value < lower) or (upper is not None and value > upper):
+                    raise ValueError()
+            result[key] = value
+        return result
+
+    @classmethod
+    def _generation_settings(cls, show):
+        template = show.get("template")
+        if not isinstance(template, str) or not template.strip() or len(template) > 256 * 1024:
+            raise ValueError()
+        result = {"template": template, **cls._native_format(show)}
+        parameters = cls._parameters(show)
+        if parameters:
+            result["parameters"] = parameters
+        return result
+
     def register(self, metadata, weights, deadline, *, check=None):
         """같은 이름의 외부 모델은 덮어쓰지 않고, 확인된 재시도만 이어간다."""
         metadata = metadata_input(metadata)
@@ -104,17 +238,12 @@ class OllamaModelImporter:
             source = self._json(client, "POST", "/api/show", {"model": metadata["sourceModel"]})
             if not self._compatible(source, architecture):
                 raise TrainedModelError(409, "TRAINED_MODEL_SOURCE_UNAVAILABLE", "학습 자료의 기반 분석 모델이 로컬에 설치돼 있어야 합니다.")
-            template = source.get("template")
-            if not isinstance(template, str) or not template.strip() or len(template) > 256 * 1024:
-                raise TrainedModelError(409, "TRAINED_MODEL_TEMPLATE_INVALID", "기반 모델의 대화 형식을 확인하지 못했습니다.")
+            try:
+                generation = self._generation_settings(source)
+            except (ValueError, TypeError, OverflowError):
+                raise TrainedModelError(409, "TRAINED_MODEL_TEMPLATE_INVALID", "기반 모델의 대화 형식과 생성 설정을 확인하지 못했습니다.") from None
             body = {"model": metadata["model"], "files": {"model.gguf": "sha256:" + metadata["artifactSha256"]},
-                    "template": template, "stream": False}
-            for key in ("parser", "renderer"):
-                value = source.get(key)
-                if value is not None:
-                    if not isinstance(value, str) or not re.fullmatch(r"[a-zA-Z0-9_.-]{1,100}", value):
-                        raise ValueError()
-                    body[key] = value
+                    **generation, "stream": False}
             if existing:
                 actual = str(existing.get("digest", "")).removeprefix("sha256:")
                 installed = self._json(client, "POST", "/api/show", {"model": metadata["model"]})
@@ -122,9 +251,12 @@ class OllamaModelImporter:
                 from_lines = [line.strip() for line in modelfile.splitlines() if line.strip().startswith("FROM ")] if isinstance(modelfile, str) else []
                 expected_blob = "sha256-" + metadata["artifactSha256"]
                 same_weights = len(from_lines) == 1 and from_lines[0].removeprefix("FROM ").strip('"').split("/")[-1] == expected_blob
-                same_format = installed.get("template") == template and all(installed.get(key) == source.get(key) for key in ("parser", "renderer"))
+                try:
+                    same_format = self._generation_settings(installed) == generation
+                except (ValueError, TypeError, OverflowError):
+                    same_format = False
                 if same_weights and same_format and HASH.fullmatch(actual) and self._compatible(installed, architecture):
-                    # 응답 유실 뒤 같은 가중치와 대화 형식의 등록만 멱등 재시도로 인정한다.
+                    # 응답 유실 뒤 같은 가중치와 대화 형식·생성 설정의 등록만 재시도로 인정한다.
                     return actual
                 raise TrainedModelError(409, "TRAINED_MODEL_NAME_CONFLICT", "같은 이름의 다른 설치 모델이 있습니다. 기존 모델은 덮어쓰지 않았습니다.")
             digest_path = "/api/blobs/sha256:" + metadata["artifactSha256"]
@@ -166,7 +298,8 @@ class OllamaModelImporter:
             digest = str(installed.get("digest", "")).removeprefix("sha256:")
             show = self._json(client, "POST", "/api/show", {"model": metadata["model"]})
             if (not HASH.fullmatch(digest) or not self._compatible(show, architecture)
-                    or not isinstance(show.get("details"), dict) or show["details"].get("quantization_level") != metadata["quantization"]):
+                    or not isinstance(show.get("details"), dict) or show["details"].get("quantization_level") != metadata["quantization"]
+                    or self._generation_settings(show) != generation):
                 raise ValueError()
             return digest
 

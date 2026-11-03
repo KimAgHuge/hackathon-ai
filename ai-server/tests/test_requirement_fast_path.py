@@ -27,7 +27,9 @@ def final_update(**changes):
     general = json.loads(REQUIREMENT_GENERAL_MODEL_JSON)
     return {**{key: general[key] for key in ("summary", "plainLanguageSummary", "riskAssessment", "impactAreas", "recommendations")},
             "databaseFactsReview": [{"table": "public.projects", "columnsAvailable": True, "collectedColumnCount": 1,
-                                     "includedColumnNames": ["organization_id"], "allCollectedColumnsIncluded": True}], **changes}
+                                     "includedColumnNames": ["organization_id"], "allCollectedColumnsIncluded": True,
+                                     "indexesAvailable": False, "collectedIndexCount": None,
+                                     "includedIndexes": [], "allCollectedIndexesIncluded": False}], **changes}
 
 
 def test_verified_target_includes_incoming_foreign_keys_and_keeps_original_facts():
@@ -93,7 +95,7 @@ def test_fast_path_needs_three_calls_instead_of_a_full_database_batch_chain():
     assert result.database_review_coverage["mode"] == "FOCUSED"
     assert "databaseReviewPlan" not in result.model_dump(mode="json", by_alias=True)
     assert result.database_impact.proposed_changes[0].necessity == "REQUIRED"
-    assert all("think" not in call and call["options"] == {"temperature": 0} for call in client.chat_kwargs)
+    assert all(call["think"] == "medium" and call["options"] == {"temperature": 0} for call in client.chat_kwargs)
 
 
 def test_final_update_cannot_inject_new_db_decision_or_uncollected_files():

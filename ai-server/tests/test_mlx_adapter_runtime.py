@@ -157,6 +157,7 @@ def test_chat_uses_verified_local_adapter_and_preserves_truncation(prepared):
     assert result["done_reason"] == "length" and result["done"] is True
     assert runner.call_args.args[1] == runtime.cache / metadata["version"]
     assert runner.call_args.args[2]["maxTokens"] == 5
+    assert runner.call_args.args[2]["thinkingEnabled"] is False
     (runtime.cache / metadata["version"] / "adapters.safetensors").write_bytes(b"changed")
     runner.reset_mock()
     with pytest.raises(MlxAdapterError):
@@ -238,7 +239,10 @@ def test_gpu_lock_blocks_another_runtime_process_slot_without_starting_workers(p
     runner.assert_not_called()
 
 
-def test_worker_applies_adapter_and_schema_without_importing_real_mlx(monkeypatch, tmp_path):
+@pytest.mark.parametrize("thinking,effort,text", [(False, None, "{}"), (True, None, "검토 내용</think>{}"),
+                                                (True, "medium", "<think>검토 내용</think>{}"),
+                                                (True, "high", "<think>검토 내용</think>{}")])
+def test_worker_applies_adapter_schema_and_selected_thinking_without_real_mlx(monkeypatch, tmp_path, thinking, effort, text):
     import mlx_adapter_infer
 
     mx = ModuleType("mlx.core")
@@ -249,14 +253,34 @@ def test_worker_applies_adapter_and_schema_without_importing_real_mlx(monkeypatc
     tokenizer = SimpleNamespace(apply_chat_template=Mock(return_value="prompt"), encode=Mock(return_value=[1, 2]))
     lm = ModuleType("mlx_lm")
     lm.load = Mock(return_value=(object(), tokenizer))
-    lm.stream_generate = Mock(return_value=iter([SimpleNamespace(text="{}", finish_reason="stop", prompt_tokens=2, generation_tokens=1)]))
+    lm.stream_generate = Mock(return_value=iter([SimpleNamespace(text=text, finish_reason="stop", prompt_tokens=2, generation_tokens=1)]))
     sample = ModuleType("mlx_lm.sample_utils")
     sample.make_sampler = Mock(return_value="sampler")
     for name, module in {"mlx": mlx, "mlx.core": mx, "mlx_lm": lm, "mlx_lm.sample_utils": sample}.items():
         monkeypatch.setitem(sys.modules, name, module)
     result = mlx_adapter_infer.infer(tmp_path / "model", tmp_path / "adapter", {
-        "messages": [{"role": "user", "content": "요구사항"}], "schema": {"type": "object"}, "maxTokens": 128})
+        "messages": [{"role": "user", "content": "요구사항"}], "schema": {"type": "object"}, "maxTokens": 128,
+        "thinkingEnabled": thinking, "thinkingEffort": effort})
     lm.load.assert_called_once_with(str(tmp_path / "model"), adapter_path=str(tmp_path / "adapter"))
-    assert tokenizer.apply_chat_template.call_args.kwargs["enable_thinking"] is False
+    assert tokenizer.apply_chat_template.call_args.kwargs["enable_thinking"] is thinking
+    if effort:
+        assert tokenizer.apply_chat_template.call_args.kwargs["reasoning_effort"] == ("xhigh" if effort == "high" else effort)
     assert tokenizer.apply_chat_template.call_args.args[0][0]["role"] == "system"
     assert result == {"content": "{}", "finishReason": "stop", "promptTokens": 2, "generationTokens": 1}
+
+
+def test_chat_forwards_enabled_thinking_and_rejects_non_boolean_mode(prepared):
+    runtime, metadata, _, runner = prepared
+    run(runtime.prepare(metadata))
+    runner.return_value = {"content": "{}", "finishReason": "stop", "promptTokens": 10, "generationTokens": 5}
+    body = dict(model=PREFIX + metadata["version"], messages=[{"role": "user", "content": "확인"}],
+                format={"type": "object"}, stream=False, options={"temperature": 0})
+    run(runtime.chat(**body, think=True))
+    assert runner.call_args.args[2]["thinkingEnabled"] is True
+    run(runtime.chat(**body, think="medium"))
+    assert runner.call_args.args[2]["thinkingEnabled"] is True
+    assert runner.call_args.args[2]["thinkingEffort"] == "medium"
+    runner.reset_mock()
+    with pytest.raises(MlxAdapterError):
+        run(runtime.chat(**body, think="false"))
+    runner.assert_not_called()

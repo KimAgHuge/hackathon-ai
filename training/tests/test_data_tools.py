@@ -78,6 +78,50 @@ class DatasetTests(unittest.TestCase):
         with self.assertRaises(DatasetError):
             validate_case(record)
 
+    def test_recorded_thinking_mode_is_preserved_without_changing_older_cases(self):
+        legacy = case()
+        before = copy.deepcopy(legacy)
+        validate_case(legacy)
+        self.assertEqual(legacy, before)
+        self.assertNotIn("thinkingEnabled", legacy["request"])
+        self.assertNotIn("thinkingEffort", legacy["request"])
+        for enabled in (True, False, None):
+            record = case()
+            record["request"]["thinkingEnabled"] = enabled
+            before = copy.deepcopy(record)
+            validate_case(record)
+            self.assertEqual(record, before)
+
+    def test_training_input_rejects_coerced_or_noncanonical_thinking_modes(self):
+        for field, value in (("thinkingEnabled", "false"), ("thinkingEnabled", 1), ("thinking_enabled", False)):
+            record = case()
+            record["request"][field] = value
+            with self.assertRaises(DatasetError):
+                validate_case(record)
+
+    def test_recorded_thinking_effort_survives_json_roundtrip_without_changing_cases(self):
+        for effort in ("low", "medium", "high", None):
+            with self.subTest(effort=effort):
+                record = case()
+                record["request"]["thinkingEffort"] = effort
+                before = copy.deepcopy(record)
+                validated = validate_case(json.loads(json.dumps(record, ensure_ascii=False)))
+                self.assertEqual(validated, before)
+                self.assertEqual(record, before)
+                self.assertIn("thinkingEffort", validated["request"])
+                self.assertEqual(validated["request"]["thinkingEffort"], effort)
+
+    def test_training_input_rejects_invalid_or_noncanonical_thinking_efforts(self):
+        for field, value in (("thinkingEffort", "xhigh"), ("thinkingEffort", "Medium"),
+                             ("thinkingEffort", ""), ("thinkingEffort", True),
+                             ("thinkingEffort", 1), ("thinkingEffort", []),
+                             ("thinking_effort", "medium")):
+            with self.subTest(field=field, value=value):
+                record = case()
+                record["request"][field] = value
+                with self.assertRaises(DatasetError):
+                    validate_case(record)
+
     def test_existing_unapproved_baseline_rejected(self):
         path = Path(__file__).resolve().parents[2] / "docs/evaluation/qwen3.8_27b_team_management_baseline.json"
         with self.assertRaises(DatasetError):

@@ -223,16 +223,21 @@ class MlxAdapterRuntime:
 
     async def show(self, model):
         metadata, _, _, _, _ = self._local(model)
-        return {"capabilities": ["completion"], "sourceModel": metadata["sourceModel"],
+        return {"capabilities": ["completion", "thinking"], "sourceModel": metadata["sourceModel"],
                 "adapterId": metadata["jobId"], "provider": "mlx", "qualityEvaluated": False}
 
     async def chat(self, **body):
         metadata, _, package, model_dir, _ = self._local(body.get("model"))
         messages, schema = body.get("messages"), body.get("format")
         options = body.get("options") or {}
+        thinking = body.get("think", False)
+        effort = thinking if isinstance(thinking, str) else None
+        if effort in {"low", "medium", "high"}:
+            thinking = True
         if (body.get("stream") is not False or not isinstance(messages, list) or not messages
                 or len(messages) > 100 or not isinstance(schema, dict)
                 or not isinstance(options, dict) or options.get("temperature", 0) != 0
+                or type(thinking) is not bool
                 or any(not isinstance(item, dict) or set(item) != {"role", "content"}
                        or item["role"] not in {"system", "user", "assistant"}
                        or not isinstance(item["content"], str) for item in messages)):
@@ -240,7 +245,9 @@ class MlxAdapterRuntime:
         maximum = options.get("num_predict", 8192)
         if type(maximum) is not int or not 1 <= maximum <= 16384:
             raise MlxAdapterError(422, "MLX_REQUEST_INVALID", "어댑터 추론의 출력 한도를 확인하세요.")
-        payload = {"messages": messages, "schema": schema, "maxTokens": maximum}
+        payload = {"messages": messages, "schema": schema, "maxTokens": maximum, "thinkingEnabled": thinking}
+        if effort is not None:
+            payload["thinkingEffort"] = effort
         if len(canonical(payload)) > 2 * 1024 * 1024:
             raise MlxAdapterError(413, "MLX_REQUEST_INVALID", "어댑터 추론 입력의 허용 크기를 초과했습니다.")
         async with self._loop_lock(self._inference_locks):

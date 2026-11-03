@@ -1,9 +1,9 @@
 import re
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 from uuid import UUID
 
-from pydantic import ConfigDict, Field, field_validator, model_validator
+from pydantic import ConfigDict, Field, StrictBool, field_validator, model_validator
 
 from app.models.base import ApiModel, to_camel
 
@@ -48,6 +48,9 @@ class ProjectAnalysisRequest(ApiModel):
     source_summary: Dict[str, Any]
     database_summary: Dict[str, Any]
     relations: List[Dict[str, Any]] = Field(default_factory=list)
+    # 새 분석은 추론을 켜고, 이전 작업의 명시적 null은 모델 기본값을 유지한다.
+    thinking_enabled: Optional[StrictBool] = True
+    thinking_effort: Optional[Literal["low", "medium", "high"]] = None
 
     @model_validator(mode="after")
     def reject_secrets(self):
@@ -250,14 +253,26 @@ class RequirementGeneralAnalysisResponse(GeneralAnalysisResponse):
     database_review_plan: Optional[DatabaseReviewPlan] = Field(default=None, exclude_if=lambda value: value is None)
 
 
+class DatabaseIndexReview(ApiModel):
+    """실제로 전달한 인덱스 속성만 대조하며 누락된 속성은 미확인으로 남긴다."""
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
+    name: Optional[str]
+    columns: Optional[List[str]]
+    unique: Optional[StrictBool]
+
+
 class FinalDatabaseFactsReview(ApiModel):
-    """마지막 단계가 실제로 받은 컬럼 근거를 읽었는지 대조하는 내부 확인값이다."""
+    """전달한 컬럼과 인덱스의 목록·수집 여부·생략 범위를 대조하는 내부 확인값이다."""
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
     table: str = Field(min_length=1)
     columns_available: bool = Field(strict=True)
     collected_column_count: Optional[int] = Field(ge=0, strict=True)
     included_column_names: List[str]
     all_collected_columns_included: bool = Field(strict=True)
+    indexes_available: bool = Field(strict=True)
+    collected_index_count: Optional[int] = Field(ge=0, strict=True)
+    included_indexes: List[DatabaseIndexReview]
+    all_collected_indexes_included: bool = Field(strict=True)
 
 
 class FinalAnalysisUpdate(ApiModel):
@@ -275,6 +290,8 @@ class FinalAnalysisUpdate(ApiModel):
 class ProjectAnalysisResponse(GeneralAnalysisResponse):
     """구조 분석과 요구사항 분석 모두에 적용되는 최종 API 응답 형식."""
     analysis_model: Optional[str] = Field(default=None, exclude_if=lambda value: value is None)
+    analysis_thinking_enabled: Optional[StrictBool] = Field(default=None, exclude_if=lambda value: value is None)
+    analysis_thinking_effort: Optional[Literal["low", "medium", "high"]] = Field(default=None, exclude_if=lambda value: value is None)
     analysis_source_model: Optional[str] = Field(default=None, exclude_if=lambda value: value is None)
     analysis_adapter_digest: Optional[str] = Field(default=None, exclude_if=lambda value: value is None)
     analysis_trained_model_digest: Optional[str] = Field(default=None, exclude_if=lambda value: value is None)

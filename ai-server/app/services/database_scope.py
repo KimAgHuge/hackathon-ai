@@ -3,6 +3,7 @@
 import json
 import re
 from collections import Counter
+from copy import deepcopy
 
 from app.services.source_context import explicit_requirement_text, source_context, supported_target_tables
 
@@ -11,23 +12,40 @@ def table_name(table):
     return f"{table.get('schema')}.{table.get('name')}"
 
 
+def database_coverage(summary):
+    """저장된 수집 상태가 미확인이면 정상 완료나 경고 없음으로 바꾸지 않는다."""
+    summary = summary if isinstance(summary, dict) else {}
+    truncated, warnings = summary.get("truncated"), summary.get("warnings")
+    coverage = {"truncated": truncated if type(truncated) is bool else None,
+                "warnings": deepcopy(warnings) if isinstance(warnings, list) else None}
+    retrieval = summary.get("retrieval")
+    upstream_unknown = (summary.get("coverageUnknown") is True or summary.get("upstreamCoverageUnknown") is True
+                        or isinstance(retrieval, dict) and retrieval.get("originalCoverageUnknown") is True)
+    if coverage["truncated"] is None or coverage["warnings"] is None or upstream_unknown:
+        coverage.update(coverageUnknown=True,
+                        notice="DB 수집 범위 또는 경고 상태가 미확인입니다. 저장된 메타데이터로 확인한 구조만 검토해야 합니다.")
+    return coverage
+
+
 def user_selected_retrieval(request):
-    """화면에서 RAG를 직접 고른 요청이면 그 검색 결과를 돌려준다. 아니면 None."""
+    """화면에서 관련 근거 검색을 직접 고른 경우의 선택 범위를 반환한다."""
     coverage = request.get("sourceSummary", {}).get("promptCoverage")
     retrieval = coverage.get("retrieval") if isinstance(coverage, dict) else None
-    return retrieval if isinstance(retrieval, dict) and retrieval.get("userSelected") else None
+    return retrieval if (isinstance(retrieval, dict) and
+                         (retrieval.get("selectionMode") == "ALWAYS" or retrieval.get("userSelected") is True)) else None
 
 
 def retrieval_review_scope(request):
-    """RAG로 고른 테이블만 상세 검토 대상으로 쓴다. 테이블명을 직접 적었는지 같은 추가 조건은 보지 않는다."""
+    """직접 선택한 검색 결과만 검토하며 원본에서 생략된 대상은 개수로 표시한다."""
     retrieval = user_selected_retrieval(request)
     tables = [table for table in request.get("databaseSummary", {}).get("tables", []) if isinstance(table, dict)]
-    total = retrieval["total"].get("dbTable", len(tables)) if retrieval else len(tables)
+    total = retrieval.get("total", {}).get("dbTable", len(tables)) if retrieval else len(tables)
+    total = max(total, len(tables)) if type(total) is int else len(tables)
     names = sorted(table_name(table) for table in tables)
-    return tables, {"mode": "FOCUSED", "reason": "화면에서 고른 RAG 검색 결과의 테이블만 검토합니다.",
+    return tables, {"mode": "FOCUSED", "reason": "화면에서 고른 검색 결과의 테이블만 검토합니다.",
                     "selectionVerified": False, "collectedTables": total, "reviewedTables": names,
                     "omittedTables": [], "omittedTableCount": max(total - len(names), 0),
-                    "notice": "요구사항과 관련도가 높은 테이블만 검색해 전달했습니다. 생략된 테이블의 영향이 없음을 증명하지 않습니다."}
+                    "notice": "요구사항과 관련된 검색 범위의 검토입니다. 생략된 테이블의 영향은 미확인입니다."}
 
 
 def database_review_scope(request, plan=None):
@@ -92,12 +110,13 @@ def metadata_checks(tables):
     for table in tables:
         columns = table.get("columns")
         names = [column.get("name") for column in columns if isinstance(column, dict) and isinstance(column.get("name"), str)] if isinstance(columns, list) else []
-        primary = table.get("primaryKey", [])
-        checked.append({"table": table_name(table), "columnMetadataAvailable": isinstance(columns, list), "columnCount": len(names),
+        primary = table.get("primaryKey")
+        checked.append({"table": table_name(table), "columnMetadataAvailable": isinstance(columns, list),
+                        "columnCount": len(names) if isinstance(columns, list) else None,
                         "duplicateColumnNames": sorted(name for name, count in Counter(names).items() if count > 1),
                         "primaryKeyColumnsPresent": all(name in names for name in primary) if isinstance(columns, list) and isinstance(primary, list) else None,
-                        "foreignKeyCount": len(table.get("foreignKeys", [])) if isinstance(table.get("foreignKeys", []), list) else None,
-                        "indexCount": len(table.get("indexes", [])) if isinstance(table.get("indexes", []), list) else None})
+                        "foreignKeyCount": len(table["foreignKeys"]) if isinstance(table.get("foreignKeys"), list) else None,
+                        "indexCount": len(table["indexes"]) if isinstance(table.get("indexes"), list) else None})
     return checked
 
 
@@ -105,6 +124,7 @@ def database_input(request, tables):
     """운영 단독 DB 호출과 학습 메시지에서 같은 입력 형식을 사용한다."""
     return {"changeRequirement": request["sourceSummary"]["changeRequirement"],
             "databaseType": request["databaseSummary"].get("type"), "tables": tables,
+            "databaseCoverage": database_coverage(request["databaseSummary"]),
             "promptCoverage": request["sourceSummary"].get("promptCoverage"), "sourceContext": database_source_context(request, tables),
             "reviewScope": request["sourceSummary"].get("databaseReviewScope"), "metadataChecks": metadata_checks(tables)}
 

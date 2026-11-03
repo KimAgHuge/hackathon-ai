@@ -56,18 +56,39 @@ def _finish_context(result):
 
 
 def general_overview(request):
+    # 소스 연결 함수를 쓰는 범위 모듈과 순환하지 않도록 호출할 때 가져온다.
+    from app.services.database_scope import database_coverage
+
     payload = json.loads(json.dumps(request, ensure_ascii=False))
+    payload.pop("thinkingEnabled", None)
+    payload.pop("thinkingEffort", None)
     context = source_context(payload)
     payload["sourceSummary"].pop("sourceConnections", None)
     payload["sourceSummary"]["sourceContext"] = context
     payload["relations"] = context["tableReferences"]
     database = payload["databaseSummary"]
+    database.update(database_coverage(database))
     database.pop("capturedAt", None)
     if isinstance(database.get("tables"), list):
         database["tables"] = [{key: table[key] for key in ("schema", "name", "type") if key in table}
                               for table in database["tables"] if isinstance(table, dict)]
         database["detailLevel"] = "TABLE_OVERVIEW_ONLY"
     return payload
+
+
+def evidence_references(request, context=None):
+    """모델에 전달한 소스 항목에서 파일과 줄의 허용 조합을 한 번만 계산한다."""
+    source = request.get("sourceSummary", {})
+    context = source_context(request) if context is None else context
+    items = [*request.get("relations", []), *source.get("components", []),
+             *context["tableReferences"], *context["links"], *context["routes"],
+             *[{"file": item.get("targetFile"), "line": item.get("targetLine")} for item in context["links"]]]
+    references = {(item.get("file", item.get("path")), item.get("line")) for item in items
+                  if isinstance(item, dict) and isinstance(item.get("file", item.get("path")), str)
+                  and (item.get("line") is None or type(item.get("line")) is int)}
+    # 줄 번호를 특정하지 않은 파일 단위 근거는 기존 검사와 같이 허용한다.
+    return frozenset({(file, line) for file, line in references if line is not None and line > 0}
+                     | {(file, None) for file, _ in references})
 
 
 def supported_target_tables(request):

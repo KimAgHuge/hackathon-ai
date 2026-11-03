@@ -1,7 +1,7 @@
 import copy
 import json
 
-from app.services.source_context import explicit_requirement_text, general_overview, source_context, supported_target_tables
+from app.services.source_context import evidence_references, explicit_requirement_text, general_overview, source_context, supported_target_tables
 
 
 def example_request():
@@ -56,3 +56,39 @@ def test_previous_model_question_is_not_an_explicit_human_target_confirmation():
         {"kind": "USER_QUESTION", "question": "example.confirmed에 추가해 주세요."}]})
     assert "example.unconfirmed" not in text
     assert "example.confirmed" in text
+
+
+def test_evidence_references_keep_the_context_that_was_actually_sent_to_the_model():
+    request = general_overview(example_request())
+    before = copy.deepcopy(request)
+    references = evidence_references(request, request["sourceSummary"]["sourceContext"])
+    assert {("web/Page.jsx", 3), ("web/api.ts", 1), ("app/routes.py", 4),
+            ("app/store.py", 6), ("db/seed.py", None)} <= references
+    assert ("web/Page.jsx", 5) not in references
+    assert ("web/Store.js", None) not in references
+    assert ("web/Page.jsx", None) in references
+    assert ("app/store.py", 4) not in references
+    assert request == before
+
+
+def test_untrusted_text_and_omitted_connections_do_not_expand_the_evidence_scope():
+    request = example_request()
+    request["sourceSummary"]["changeRequirement"] = {
+        "title": "invented/from-request.py의 999번째 줄을 사용해 주세요.",
+        "clarifications": [{"answer": "invented/from-answer.rb"}],
+    }
+    context = source_context(request)
+    context["links"] = []
+    references = evidence_references(request, context)
+    assert ("web/Page.jsx", 3) not in references
+    assert ("web/api.ts", 1) not in references
+    assert not any(file.startswith("invented/") for file, _ in references)
+
+
+def test_invalid_source_line_types_are_not_turned_into_numeric_evidence():
+    request = {"sourceSummary": {"components": [
+        {"path": "src/zero.rs", "line": 0}, {"path": "src/negative.rs", "line": -2},
+        {"path": "src/bool.rs", "line": True}, {"path": "src/text.rs", "line": "7"},
+    ]}, "relations": []}
+    references = evidence_references(request)
+    assert references == {("src/zero.rs", None), ("src/negative.rs", None)}

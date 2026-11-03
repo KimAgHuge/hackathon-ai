@@ -15,6 +15,7 @@ from app.services.llm_service import (
     ModelTimeoutError,
     ModelOutputLimitError,
     ModelUnavailableError,
+    ModelThinkingUnsupportedError,
 )
 
 STREAM_HEARTBEAT_SECONDS = 15
@@ -34,6 +35,11 @@ async def analyze_project(
     """내부 키로 보호된 분석 API; 수집 근거를 받아 결과 또는 모델 오류 HTTP 응답을 돌려준다."""
     try:
         return await llm_service.analyze(request)
+    except ModelThinkingUnsupportedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"code": "THINKING_NOT_SUPPORTED", "message": str(exc)},
+        ) from exc
     except ModelTimeoutError as exc:
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
@@ -86,6 +92,8 @@ async def analyze_project_stream(
                 yield json.dumps(event, ensure_ascii=False) + "\n"
             try:
                 result = await task
+            except ModelThinkingUnsupportedError:
+                event = {"type": "error", "code": "THINKING_NOT_SUPPORTED"}
             except ModelTimeoutError:
                 event = {"type": "error", "code": "MODEL_TIMEOUT"}
             except ModelUnavailableError:

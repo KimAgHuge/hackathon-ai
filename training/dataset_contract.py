@@ -285,6 +285,10 @@ def validate_case(record):
         request = ProjectAnalysisRequest.model_validate(record["request"]).model_dump(mode="json", by_alias=True)
     except (ValueError, TypeError):
         raise DatasetError("분석 입력 계약을 통과하지 못했습니다.") from None
+    # 설정 도입 전 승인한 자료에는 새 기본값을 추가하지 않고 원래 입력을 검증한다.
+    for field in ("thinkingEnabled", "thinkingEffort"):
+        if field not in record["request"]:
+            request.pop(field, None)
     if request != record["request"]:
         raise DatasetError("분석 입력에는 정해진 camelCase 필드만 사용하세요.")
     requirement = request["sourceSummary"].get("changeRequirement")

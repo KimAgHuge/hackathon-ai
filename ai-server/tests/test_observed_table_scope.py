@@ -61,7 +61,7 @@ def test_other_batch_observation_repair_keeps_its_own_enum_and_preserves_the_db_
     assert enum(client.chat_kwargs[4]) == ["public.project_members", "public.projects"]
     assert "DB_OBSERVED_TABLE_OUTSIDE_SCOPE" in caplog.text
     assert "observed_table_count=1" in caplog.text
-    assert all("think" not in call and call["options"] == {"temperature": 0} for call in client.chat_kwargs)
+    assert all(call["think"] == "medium" and call["options"] == {"temperature": 0} for call in client.chat_kwargs)
     assert request.model_dump(mode="json", by_alias=True) == before
 
 

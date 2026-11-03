@@ -240,7 +240,7 @@ def test_installed_trained_model_uses_existing_probe_activate_and_rollback(stage
 
 def test_analysis_pins_trained_model_and_records_original_source_after_rollback(staged):
     from app.services.llm_service import LlmService
-    from tests.test_llm_service import requirement_request, REQUIREMENT_GENERAL_MODEL_JSON, AMBIGUOUS_DB_JSON, db_only
+    from tests.test_llm_service import requirement_request, REQUIREMENT_GENERAL_MODEL_JSON, AMBIGUOUS_DB_JSON, db_only, _enrich_internal_fixture
     metadata, _, settings = staged
     trained = TrainedModelRuntime(settings, FakeImporter())
     complete(trained, metadata)
@@ -256,7 +256,7 @@ def test_analysis_pins_trained_model_and_records_original_source_after_rollback(
             return await engine.list()
         async def chat(self, **body):
             calls.append(body)
-            return {"model": MODEL, "done": True, "done_reason": "stop", "message": {"content": responses.pop(0)}}
+            return {"model": MODEL, "done": True, "done_reason": "stop", "message": {"content": _enrich_internal_fixture(responses.pop(0), body)}}
     async def flow():
         proof = await runtime.probe(MODEL, ACTUAL)
         await runtime.activate(uuid4(), MODEL, ACTUAL, proof["probeToken"], 0)
@@ -325,6 +325,120 @@ def test_lost_create_response_recovers_only_identical_model(staged, monkeypatch,
     else:
         with pytest.raises(TrainedModelError, match="다른"):
             importer.register(metadata, source / "model.gguf", time.monotonic() + 60)
+
+
+def test_engine_restores_native_format_and_generation_defaults_from_show(staged, monkeypatch):
+    metadata, source, settings = staged
+    created = None
+    show = {"capabilities": ["completion"], "template": "{{ .Prompt }}",
+            "model_info": {"general.architecture": "qwen35"}, "details": {"quantization_level": "Q4_K_M"},
+            "parameters": "temperature 1\nrepeat_penalty 1\ntop_k 20\ntop_p 0.95\nmin_p 0\n"
+                          "stop \"<|im_end|>\"\nstop \"<|endoftext|>\"\nnum_ctx 32768\nnum_predict 4096\nseed 42\nrepeat_last_n 64\n"
+                          "presence_penalty 0\ndraft_num_predict 4\nnum_gpu 20\nfuture_engine_option 1",
+            "modelfile": 'FROM /engine/base\nTEMPLATE """{{ .Prompt }}\nPARSER fake-in-template\n"""\n'
+                         'SYSTEM """\nRENDERER fake-in-system\n"""\n'
+                         'MESSAGE user """\nPARSER fake-in-message\n"""\nRENDERER qwen3.8\nPARSER qwen3.5'}
+
+    def handle(request):
+        nonlocal created
+        if request.url.path == "/api/tags":
+            return httpx.Response(200, json={"models": [{"name": MODEL, "digest": ACTUAL}] if created else []})
+        if request.url.path == "/api/show":
+            installed = json.loads(request.read())["model"] == MODEL
+            result = dict(show)
+            if installed:
+                result["parameters"] = created["parameters"]
+            return httpx.Response(200, json=result)
+        if request.url.path.startswith("/api/blobs/"):
+            assert request.method == "HEAD"
+            return httpx.Response(200)
+        assert request.url.path == "/api/create"
+        created = json.loads(request.read())
+        assert created["parser"] == "qwen3.5" and created["renderer"] == "qwen3.8"
+        assert created["template"] == show["template"]
+        assert created["parameters"] == {"temperature": 1, "repeat_penalty": 1, "top_k": 20, "top_p": 0.95,
+            "min_p": 0, "stop": ["<|im_end|>", "<|endoftext|>"], "num_ctx": 32768, "num_predict": 4096,
+            "seed": 42, "repeat_last_n": 64, "presence_penalty": 0}
+        assert not {"from", "system", "modelfile"} & created.keys()
+        return httpx.Response(200, json={"status": "success"})
+
+    factory = httpx.Client
+    monkeypatch.setattr(httpx, "Client", lambda **kwargs: factory(**kwargs, transport=httpx.MockTransport(handle)))
+    assert OllamaModelImporter(settings).register(metadata, source / "model.gguf", time.monotonic() + 60) == ACTUAL
+
+
+@pytest.mark.parametrize("change", ["missing_renderer", "changed_parser", "changed_parameters"])
+@pytest.mark.parametrize("existing", [False, True])
+def test_engine_rejects_same_weights_with_different_generation_settings(staged, monkeypatch, change, existing):
+    metadata, source, settings = staged
+    created = existing
+    show = {"capabilities": ["completion"], "template": "{{ .Prompt }}",
+            "model_info": {"general.architecture": "qwen35"}, "details": {"quantization_level": "Q4_K_M"},
+            "parameters": "temperature 1\nmin_p 0", "modelfile": "RENDERER qwen3.8\nPARSER qwen3.5"}
+
+    def handle(request):
+        nonlocal created
+        if request.url.path == "/api/tags":
+            return httpx.Response(200, json={"models": [{"name": MODEL, "digest": ACTUAL}] if created else []})
+        if request.url.path == "/api/show":
+            result = dict(show)
+            if json.loads(request.read())["model"] == MODEL:
+                result["modelfile"] = "FROM /engine/blobs/sha256-" + metadata["artifactSha256"] + "\n" + show["modelfile"]
+                if change == "missing_renderer":
+                    result["modelfile"] = result["modelfile"].replace("RENDERER qwen3.8\n", "")
+                elif change == "changed_parser":
+                    result["modelfile"] = result["modelfile"].replace("PARSER qwen3.5", "PARSER other")
+                else:
+                    result["parameters"] = "temperature 0\nmin_p 0"
+            return httpx.Response(200, json=result)
+        assert not existing, "기존 모델에는 파일 전달이나 생성을 요청하면 안 됩니다."
+        if request.url.path.startswith("/api/blobs/"):
+            return httpx.Response(200)
+        assert request.url.path == "/api/create"
+        created = True
+        return httpx.Response(200, json={"status": "success"})
+
+    factory = httpx.Client
+    monkeypatch.setattr(httpx, "Client", lambda **kwargs: factory(**kwargs, transport=httpx.MockTransport(handle)))
+    importer = OllamaModelImporter(settings)
+    if existing:
+        with pytest.raises(TrainedModelError) as error:
+            importer.register(metadata, source / "model.gguf", time.monotonic() + 60)
+        assert error.value.code == "TRAINED_MODEL_NAME_CONFLICT"
+    else:
+        with pytest.raises(ValueError):
+            importer.register(metadata, source / "model.gguf", time.monotonic() + 60)
+
+
+@pytest.mark.parametrize("settings", [
+    {"modelfile": "RENDERER qwen3.8\nRENDERER qwen3.8"},
+    {"modelfile": "PARSER qwen3.5", "parser": "other"},
+    {"modelfile": "RENDERER qwen3.8; FROM other"},
+    {"modelfile": "PARSER ../other"},
+    {"modelfile": 'TEMPLATE """\nRENDERER qwen3.8'},
+    {"parameters": "temperature 1\ntemperature 0"},
+    {"parameters": "temperature NaN"},
+    {"parameters": "top_p 1.5"},
+    {"parameters": "top_k 1.5"},
+    {"parameters": {"seed": True}},
+    {"parameters": {"min_p": float("inf")}},
+    {"parameters": "stop FROM other"},
+])
+def test_engine_rejects_ambiguous_or_invalid_source_settings_before_upload(staged, monkeypatch, settings):
+    metadata, source, configured = staged
+
+    def handle(request):
+        if request.url.path == "/api/tags":
+            return httpx.Response(200, json={"models": []})
+        assert request.url.path == "/api/show"
+        return httpx.Response(200, content=json.dumps({"capabilities": ["completion"], "template": "{{ .Prompt }}",
+            "model_info": {"general.architecture": "qwen35"}, **settings}).encode(), headers={"content-type": "application/json"})
+
+    factory = httpx.Client
+    monkeypatch.setattr(httpx, "Client", lambda **kwargs: factory(**kwargs, transport=httpx.MockTransport(handle)))
+    with pytest.raises(TrainedModelError) as error:
+        OllamaModelImporter(configured).register(metadata, source / "model.gguf", time.monotonic() + 60)
+    assert error.value.code == "TRAINED_MODEL_TEMPLATE_INVALID"
 
 
 def test_import_routes_require_authentication_and_never_accept_paths(client, staged):

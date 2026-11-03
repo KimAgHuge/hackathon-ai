@@ -5,7 +5,7 @@ from app.services.hybrid_model_client import HybridModelClient
 from app.services.model_runtime import ModelRuntimeService, Selection
 from app.services.llm_service import LlmService
 from tests.test_model_runtime import FakeAdminClient, FIRST, BASE
-from tests.test_llm_service import settings, requirement_request, REQUIREMENT_GENERAL_MODEL_JSON, AMBIGUOUS_DB_JSON, db_only
+from tests.test_llm_service import settings, requirement_request, REQUIREMENT_GENERAL_MODEL_JSON, AMBIGUOUS_DB_JSON, db_only, _enrich_internal_fixture
 
 JOB = "424b376d-2419-4c80-a776-87d7d863b6d2"
 ADAPTER = "doenaai-mlx:web-" + JOB
@@ -26,8 +26,9 @@ class FakeAdapters:
         return {"capabilities": ["completion"], "sourceModel": BASE, "adapterId": JOB}
     async def chat(self, **body):
         self.calls.append(body)
+        content = self.responses.pop(0) if self.responses else '{"message":"모델 응답 확인"}'
         return {"model": ADAPTER, "done": True, "done_reason": "stop",
-                "message": {"content": self.responses.pop(0) if self.responses else '{"message":"모델 응답 확인"}'}}
+                "message": {"content": _enrich_internal_fixture(content, body)}}
 
 def test_prepared_adapter_reuses_probe_activation_and_base_model_rollback(tmp_path):
     async def flow():

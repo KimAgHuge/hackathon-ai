@@ -56,7 +56,7 @@ def test_final_required_sections_replace_old_explanations_without_rewriting_db_o
     assert message["reconciliationFacts"]["rowValuesVerified"] is False
     assert message["reconciliationFacts"]["runtimeUsageVerified"] is False
     assert (general, impact, update) == before
-    assert all("think" not in call and "num_predict" not in call.get("options", {}) for call in client.chat_kwargs)
+    assert all(call["think"] == "medium" and "num_predict" not in call.get("options", {}) for call in client.chat_kwargs)
 
 
 @pytest.mark.parametrize("field", ["riskAssessment", "impactAreas", "recommendations", "databaseFactsReview"])
@@ -73,16 +73,19 @@ def test_omitting_or_nulling_a_final_review_section_is_rejected(field, missing):
     assert field in schema["required"]
 
 
-def test_wrong_column_count_repairs_only_the_fact_check_not_the_completed_analysis(caplog):
+def test_wrong_column_count_repairs_related_explanations_without_restarting_database_review(caplog):
     general, impact, update = scenario()
     correct_reviews = copy.deepcopy(update["databaseFactsReview"])
     update["databaseFactsReview"][0]["collectedColumnCount"] = 11
-    client = FakeClient(chat_responses=[json.dumps(general), json.dumps(impact), json.dumps(update),
-                                        json.dumps({"databaseFactsReview": correct_reviews})])
+    repair = {key: update[key] for key in ("summary", "plainLanguageSummary", "riskAssessment", "impactAreas", "recommendations")}
+    repair["databaseFactsReview"] = correct_reviews
+    repair["databaseNarrative"] = {key: impact[key] for key in ("explanation", "conditionalPaths", "openQuestions")}
+    client = FakeClient(chat_responses=[json.dumps(general), json.dumps(impact), json.dumps(update), json.dumps(repair)])
     result = asyncio.run(LlmService(settings(ai_requirement_fast_path_enabled=True, ai_final_reconciliation_enabled=True), client=client)
                          .analyze(requirement_request()))
     assert client.chat_calls == 4
-    assert set(client.chat_kwargs[-1]["format"]["properties"]) == {"databaseFactsReview"}
+    assert set(client.chat_kwargs[-1]["format"]["properties"]) == set(repair)
+    assert client.chat_kwargs[-1]["format"]["properties"]["databaseFactsReview"] == client.chat_kwargs[-2]["format"]["properties"]["databaseFactsReview"]
     assert "FINAL_DB_FACTS_MISMATCH" in caplog.text
     assert result.summary == update["summary"] and result.recommendations == update["recommendations"]
     assert result.database_impact.model_dump(mode="json", by_alias=True) == impact
