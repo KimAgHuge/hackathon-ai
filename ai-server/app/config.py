@@ -30,8 +30,8 @@ class Settings(BaseSettings):
     ai_requirement_fast_path_enabled: bool = True
     ai_db_merge_max_chars: int = Field(default=24000, ge=1000, le=90000)
     ai_rag_enabled: bool = True
-    # 비워 두면 임베딩 없이 어휘 검색만 사용한다. 예: bge-m3 (ollama pull 필요)
-    ai_embedding_model: str = ""
+    # 한글 요구사항과 영어 식별자를 잇는 임베딩 모델. ollama pull bge-m3 가 필요하며, 비우거나 실패하면 낱말 검색만 쓴다.
+    ai_embedding_model: str = "bge-m3"
     ai_rag_index_path: str = ""
     ai_mlx_model_dir: str = ""
     ai_mlx_python: str = ""

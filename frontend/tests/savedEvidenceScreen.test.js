@@ -300,6 +300,8 @@ test('부분 자료의 경고를 표시하고 과거 시점 사용을 확인한 
                     requirementVersionId: 'version-1',
                     reuseFromJobId: 'partial',
                     confirmedUnchanged: true,
+                    // 화면의 기본 근거 전달 방식은 항상 관련 근거만 골라 보내기(RAG)이다.
+                    evidenceSelection: 'ALWAYS',
                 },
             ],
         ])
