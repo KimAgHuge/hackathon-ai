@@ -19,8 +19,25 @@ public record AnalysisJobResponse(
         OffsetDateTime completedAt,
         List<AnalysisActivityEvent> activityLog,
         Boolean thinkingEnabled,
-        String thinkingEffort
+        String thinkingEffort,
+        AnalysisRequirementContext requirementContext
 ) {
+
+    public AnalysisJobResponse(UUID jobId, UUID projectId, UUID requirementVersionId, String status,
+                               int sourceProgress, int databaseProgress, int relationProgress,
+                               int overallProgress, OffsetDateTime createdAt, String errorMessage,
+                               OffsetDateTime startedAt, OffsetDateTime completedAt,
+                               List<AnalysisActivityEvent> activityLog, Boolean thinkingEnabled, String thinkingEffort) {
+        this(jobId, projectId, requirementVersionId, status, sourceProgress, databaseProgress,
+                relationProgress, overallProgress, createdAt, errorMessage, startedAt, completedAt,
+                activityLog, thinkingEnabled, thinkingEffort, null);
+    }
+
+    public AnalysisJobResponse withRequirementContext(AnalysisRequirementContext context) {
+        return new AnalysisJobResponse(jobId, projectId, requirementVersionId, status,
+                sourceProgress, databaseProgress, relationProgress, overallProgress, createdAt, errorMessage,
+                startedAt, completedAt, activityLog, thinkingEnabled, thinkingEffort, context);
+    }
 
     public AnalysisJobResponse(UUID jobId, UUID projectId, UUID requirementVersionId, String status,
                                int sourceProgress, int databaseProgress, int relationProgress,

@@ -2,6 +2,7 @@ package com.doenaai.analysis.service;
 
 import com.doenaai.analysis.AnalysisNodeIdentity;
 import com.doenaai.analysis.dto.AnalysisJobResponse;
+import com.doenaai.analysis.dto.AnalysisRequirementContext;
 import com.doenaai.analysis.repository.AnalysisJobRepository;
 import com.doenaai.analysis.repository.AnalysisResultRepository;
 import com.doenaai.project.connection.dto.GitRepositoryConnectionResponse;
@@ -189,7 +190,16 @@ public class AnalysisJobService {
                 userId
         );
 
-        return analysisJob;
+        if (analysisJob.requirementVersionId() == null) return analysisJob;
+        try {
+            var version = requirementService.assertVersionBelongsToProject(
+                    analysisJob.requirementVersionId(), analysisJob.projectId(), userId);
+            return version == null ? analysisJob : analysisJob.withRequirementContext(AnalysisRequirementContext.from(version));
+        } catch (ResponseStatusException exception) {
+            // 과거 버전을 찾지 못해도 접근 가능한 작업의 진행 상태는 계속 표시한다.
+            if (exception.getStatusCode().value() == HttpStatus.NOT_FOUND.value()) return analysisJob;
+            throw exception;
+        }
     }
 
     /** 화면을 떠나는 동작과 달리 서버 작업을 취소하고 같은 인스턴스의 실행 중 요청 중단을 시도한다. */
@@ -200,6 +210,7 @@ public class AnalysisJobService {
             analysisWorker.ifAvailable(worker -> worker.interruptActive(analysisJobId));
         }
         return analysisJobRepository.findById(analysisJobId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "분석 작업을 찾을 수 없습니다."));
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "분석 작업을 찾을 수 없습니다."))
+                .withRequirementContext(current.requirementContext());
     }
 }

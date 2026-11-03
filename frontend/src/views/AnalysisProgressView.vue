@@ -9,7 +9,9 @@ import TrainingDataGuide from '@/components/analysis/TrainingDataGuide.vue'
 import AnalysisCorrectionEditor from '@/components/analysis/AnalysisCorrectionEditor.vue'
 import AnalysisJsonGuide from '@/components/analysis/AnalysisJsonGuide.vue'
 import AnalysisThinkingControl from '@/components/analysis/AnalysisThinkingControl.vue'
+import AnalysisRequirementContext from '@/components/analysis/AnalysisRequirementContext.vue'
 import { analysisThinkingError, analysisThinkingLabel, analysisThinkingEffortLabel } from '@/lib/analysisThinking'
+import { requirementContextForJob, requirementContextFromList } from '@/lib/analysisRequirementContext'
 import {
     cancelAnalysisJob,
     getAnalysisJob,
@@ -23,7 +25,7 @@ import {
     validateTrainingCase,
     startProjectAnalysis,
 } from '@/api/analysisApi'
-import { getAllRequirements, createRequirementFollowUp } from '@/api/requirementApi'
+import { getAllRequirements, getProjectRequirements, createRequirementFollowUp } from '@/api/requirementApi'
 import { createAnalysisPoller } from '@/lib/analysisPolling'
 import {
     activeActivityEvent,
@@ -56,6 +58,10 @@ const router = useRouter()
 const authStore = useAuthStore()
 const job = ref(null)
 const analysis = ref(null)
+const requirementContextFallback = ref(null)
+const requirementContextLoading = ref(false)
+const requirementContextError = ref('')
+let requirementContextRequest = 0
 const loading = ref(false)
 const retryScheduled = ref(false)
 const requestError = ref(null)
@@ -501,6 +507,7 @@ onMounted(() => {
     }, 5000)
 })
 onBeforeUnmount(() => {
+    requirementContextRequest += 1
     window.removeEventListener('beforeunload', warnBeforeUnload)
     poller.stop()
     if (elapsedTimer !== null) clearInterval(elapsedTimer)
@@ -538,6 +545,30 @@ const activityStateLabel = (state) => ({ STARTED: '진행 중', WAITING: '응답
 const count = (value) => (Array.isArray(value) ? `${value.length.toLocaleString('ko-KR')}개` : '정보 없음')
 // result는 AI 판단, facts는 AI에 실제 전달된 소스·DB 근거다.
 const source = computed(() => analysis.value?.facts?.sourceSummary || {})
+const requirementContext = computed(() => requirementContextForJob(job.value, analysis.value, requirementContextFallback.value))
+
+const loadRequirementContext = async () => {
+    const target = job.value
+    const request = ++requirementContextRequest
+    requirementContextFallback.value = null
+    requirementContextLoading.value = false
+    requirementContextError.value = ''
+    if (!target?.requirementVersionId || target.jobId !== route.params.analysisJobId) return
+    if (target.requirementContext?.versionId === target.requirementVersionId) return
+    requirementContextLoading.value = true
+    try {
+        const requirements = await getProjectRequirements(target.projectId)
+        if (request !== requirementContextRequest || job.value?.jobId !== target.jobId || route.params.analysisJobId !== target.jobId) return
+        requirementContextFallback.value = requirementContextFromList(requirements, target)
+        if (!requirementContextFallback.value) requirementContextError.value = '이 분석에 사용한 요구사항 버전의 내용을 확인하지 못했습니다.'
+    } catch {
+        if (request === requirementContextRequest) requirementContextError.value = '요구사항 내용을 불러오지 못했습니다. 분석 작업은 계속 진행됩니다.'
+    } finally {
+        if (request === requirementContextRequest) requirementContextLoading.value = false
+    }
+}
+
+watch([() => job.value?.jobId, () => job.value?.requirementVersionId], loadRequirementContext, { immediate: true })
 const database = computed(() => analysis.value?.facts?.databaseSummary || {})
 const aiResult = computed(() =>
     analysis.value?.reviewStatus === 'APPROVED' && analysis.value?.correctedResult ? analysis.value.correctedResult : analysis.value?.result || {}
@@ -744,6 +775,15 @@ const evidenceEntries = (evidence) => (evidence && typeof evidence === 'object' 
         </section>
 
         <section v-if="job" class="hero-progress panel">
+            <dl v-if="isRequirementAnalysis" class="mb-5">
+                <AnalysisRequirementContext
+                    :key="job.jobId"
+                    :context="requirementContext"
+                    :loading="requirementContextLoading"
+                    :error="requirementContextError"
+                    @retry="loadRequirementContext"
+                />
+            </dl>
             <div class="hero-progress-header">
                 <div>
                     <span class="badge" :class="job.status === 'COMPLETED' ? 'green' : job.status === 'FAILED' ? 'orange' : 'blue'">{{ statusLabel }}</span>
@@ -775,8 +815,8 @@ const evidenceEntries = (evidence) => (evidence && typeof evidence === 'object' 
                     <dd>{{ job.jobId }}</dd>
                 </div>
                 <div v-if="job.requirementVersionId">
-                    <dt>분석 대상 요구사항</dt>
-                    <dd>{{ source.changeRequirement?.title || `버전 ${job.requirementVersionId}` }}</dd>
+                    <dt>요구사항 버전</dt>
+                    <dd>{{ requirementContext?.versionNumber ? `v${requirementContext.versionNumber}` : '분석 시작 때 선택한 버전' }}</dd>
                 </div>
                 <div>
                     <dt>추론 모드</dt>
