@@ -56,6 +56,50 @@ def test_always_mode_selects_related_evidence_even_when_small(tmp_path):
     assert reduced["sourceSummary"]["promptCoverage"]["retrieval"]["mode"] == "RAG"
 
 
+def test_always_mode_leaves_evidence_empty_when_nothing_is_related(tmp_path):
+    # 한글 요구사항은 영어 식별자와 낱말이 겹치지 않으므로 관련 조각이 없다. 앞쪽 항목으로 채우지 않는다.
+    request = payload({"title": "주문 취소", "refinedContent": "사유 저장", "evidenceSelection": "ALWAYS"})
+    reduced = asyncio.run(retriever(tmp_path).retrieve(request))
+
+    assert reduced["sourceSummary"]["components"] == []
+    assert reduced["relations"] == [] and reduced["databaseSummary"]["tables"] == []
+    retrieval = reduced["sourceSummary"]["promptCoverage"]["retrieval"]
+    assert retrieval["noRelevantEvidence"] is True and retrieval["userSelected"] is True
+    assert "관련된 근거를 찾지 못" in retrieval["notice"]
+    assert len(request["databaseSummary"]["tables"]) == 82
+
+
+def test_always_mode_does_not_expand_by_file_or_table_name(tmp_path):
+    request = payload({"title": "취소", "refinedContent": "OrderCancel", "evidenceSelection": "ALWAYS"}, noise=3)
+    request["sourceSummary"]["components"].append({"path": "src/billing/InvoiceRepository.java", "type": "REPOSITORY", "language": "java"})
+    request["relations"].append({"file": "src/billing/InvoiceRepository.java", "schema": "public", "table": "orders", "kind": "SELECT"})
+    reduced = asyncio.run(retriever(tmp_path).retrieve(request))
+
+    # OrderCancel과 겹치는 파일만 남고, 같은 테이블을 읽는다는 이유로 다른 파일이 따라오지 않는다.
+    assert [item["path"] for item in reduced["sourceSummary"]["components"]] == ["src/order/OrderCancelService.java"]
+    assert [item["file"] for item in reduced["relations"]] == ["src/order/OrderCancelService.java"]
+    assert {table["name"] for table in reduced["databaseSummary"]["tables"]} == {"orders", "customers"}
+    assert "noRelevantEvidence" not in reduced["sourceSummary"]["promptCoverage"]["retrieval"]
+
+
+def test_default_mode_still_fills_from_the_front_when_nothing_matches(tmp_path):
+    reduced = asyncio.run(retriever(tmp_path).retrieve(payload({"title": "주문 취소"})))
+    # 기존 방식은 점수가 없어도 앞쪽 항목으로 채우고 연결된 파일까지 넓힌다. 이 동작은 바뀌지 않는다.
+    assert len(reduced["sourceSummary"]["components"]) >= 40
+    assert "userSelected" not in reduced["sourceSummary"]["promptCoverage"]["retrieval"]
+
+
+def test_always_mode_ignores_weak_embedding_similarity(tmp_path):
+    async def embed(model, input):
+        # 질문(사유)과 주문 취소 파일은 같은 방향이고, 나머지는 거의 수직이라 유사도가 바닥값보다 낮다.
+        related = ("사유", "OrderCancel", "cancel_reason")
+        return {"embeddings": [[1.0, 0.0] if any(word in text for word in related) else [0.1, 1.0] for text in input]}
+
+    request = payload({"title": "주문 취소", "refinedContent": "사유", "evidenceSelection": "ALWAYS"}, noise=3)
+    reduced = asyncio.run(EvidenceRetriever(EvidenceStore(tmp_path / "e.db"), embed, "bge-m3").retrieve(request))
+    assert [item["path"] for item in reduced["sourceSummary"]["components"]] == ["src/order/OrderCancelService.java"]
+
+
 def test_off_mode_keeps_everything_even_when_large(tmp_path):
     request = payload({"title": "주문 취소", "refinedContent": "OrderCancel 사유", "evidenceSelection": "OFF"})
     result = asyncio.run(retriever(tmp_path).retrieve(request))
@@ -109,3 +153,16 @@ def test_chunks_cover_every_evidence_kind():
     request = payload(None, noise=1)
     request["sourceSummary"]["sourceConnections"] = {"links": [{"file": "a"}], "routes": [{"file": "a"}], "unresolvedReferences": [{"file": "a"}]}
     assert {chunk["kind"] for chunk in build_chunks(request)} == {"component", "tableRef", "link", "route", "unresolved", "dbTable"}
+
+
+def test_index_built_without_embeddings_is_rebuilt_when_model_is_enabled(tmp_path):
+    async def embed(model, input):
+        return {"embeddings": [[1.0, 0.0] for _ in input]}
+
+    request = payload(None, noise=2)
+    store = EvidenceStore(tmp_path / "old.db")
+    key = asyncio.run(EvidenceRetriever(store).index(request))
+    assert all(chunk["embedding"] is None for chunk in store.load(PROJECT_ID, key))
+
+    assert asyncio.run(EvidenceRetriever(store, embed, "bge-m3").index(request)) == key
+    assert all(chunk["embedding"] == [1.0, 0.0] and chunk["model"] == "bge-m3" for chunk in store.load(PROJECT_ID, key))

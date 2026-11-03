@@ -11,6 +11,25 @@ def table_name(table):
     return f"{table.get('schema')}.{table.get('name')}"
 
 
+def user_selected_retrieval(request):
+    """화면에서 RAG를 직접 고른 요청이면 그 검색 결과를 돌려준다. 아니면 None."""
+    coverage = request.get("sourceSummary", {}).get("promptCoverage")
+    retrieval = coverage.get("retrieval") if isinstance(coverage, dict) else None
+    return retrieval if isinstance(retrieval, dict) and retrieval.get("userSelected") else None
+
+
+def retrieval_review_scope(request):
+    """RAG로 고른 테이블만 상세 검토 대상으로 쓴다. 테이블명을 직접 적었는지 같은 추가 조건은 보지 않는다."""
+    retrieval = user_selected_retrieval(request)
+    tables = [table for table in request.get("databaseSummary", {}).get("tables", []) if isinstance(table, dict)]
+    total = retrieval["total"].get("dbTable", len(tables)) if retrieval else len(tables)
+    names = sorted(table_name(table) for table in tables)
+    return tables, {"mode": "FOCUSED", "reason": "화면에서 고른 RAG 검색 결과의 테이블만 검토합니다.",
+                    "selectionVerified": False, "collectedTables": total, "reviewedTables": names,
+                    "omittedTables": [], "omittedTableCount": max(total - len(names), 0),
+                    "notice": "요구사항과 관련도가 높은 테이블만 검색해 전달했습니다. 생략된 테이블의 영향이 없음을 증명하지 않습니다."}
+
+
 def database_review_scope(request, plan=None):
     """전체 메타데이터는 보존하고 검증 가능한 대상이 있을 때만 모델 상세 입력을 좁힌다."""
     tables = [table for table in request.get("databaseSummary", {}).get("tables", []) if isinstance(table, dict)]

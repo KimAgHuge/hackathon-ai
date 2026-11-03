@@ -19,6 +19,11 @@ logger = logging.getLogger(__name__)
 # 종류별로 모델에 전달할 최대 조각 수. 전체가 이보다 적으면 그 종류는 줄이지 않는다.
 BUDGETS = {"component": 40, "tableRef": 60, "link": 40, "route": 20, "unresolved": 10, "dbTable": 12}
 EMBED_BATCH = 64
+# 화면에서 RAG를 고른(ALWAYS) 경우에만 쓰는 기준. 종류별 최고 점수의 이 비율 미만인 조각은 관련 없다고 본다.
+MIN_RELATIVE_SCORE = 0.4
+# 임베딩 유사도가 이 값 미만이면 관련 없는 조각으로 보고 점수에 반영하지 않는다. 모델에 따라 조정한다.
+EMBED_FLOOR = 0.4
+NO_EVIDENCE_NOTICE = "요구사항과 관련된 근거를 찾지 못해 근거를 전달하지 않았습니다. 관련 근거 없음은 영향이 없다는 뜻이 아닙니다."
 _TOKEN = re.compile(r"[A-Za-z0-9]+|[가-힣]+")
 _CAMEL = re.compile(r"[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+|[0-9]+")
 
@@ -130,6 +135,13 @@ class EvidenceStore:
         with self._connect() as db:
             return db.execute("select 1 from chunks where project_id=? and evidence_key=? limit 1", (project_id, key)).fetchone() is not None
 
+    def has_embeddings(self, project_id, key, model):
+        """저장된 조각이 모두 해당 임베딩 모델로 만들어졌는지 확인한다."""
+        with self._connect() as db:
+            missing = db.execute("select count(*) from chunks where project_id=? and evidence_key=? "
+                                 "and (embedding is null or model is not ?)", (project_id, key, model)).fetchone()[0]
+        return missing == 0
+
     def save(self, project_id, key, chunks, embeddings, model):
         with self._connect() as db:
             db.execute("delete from chunks where project_id=?", (project_id,))
@@ -194,7 +206,9 @@ class EvidenceRetriever:
         """근거가 처음이면 조각으로 나눠 저장한다. 같은 근거는 다시 만들지 않는다."""
         project_id, key = str(payload["projectId"]), evidence_key(payload)
         if await asyncio.to_thread(self.store.has, project_id, key):
-            return key
+            # 임베딩 없이 만든 예전 색인은 임베딩 모델을 켠 뒤에도 다시 만들어 벡터를 채운다.
+            if not self.embedding_model or await asyncio.to_thread(self.store.has_embeddings, project_id, key, self.embedding_model):
+                return key
         chunks = build_chunks(payload)
         embeddings = await self._embeddings([chunk["text"] for chunk in chunks])
         await asyncio.to_thread(self.store.save, project_id, key, chunks, embeddings, self.embedding_model)
@@ -218,29 +232,43 @@ class EvidenceRetriever:
         if mode == "AUTO" and not over_budget:
             return _without_option(payload)
 
+        strict = mode == "ALWAYS"
         scores = _bm25(tokenize(query), chunks)
         top = max(scores) or 1
         scores = [score / top for score in scores]
         if self.embedding_model and all(chunk["embedding"] and chunk["model"] == self.embedding_model for chunk in chunks):
             query_vector = await self._embeddings([query])
             if query_vector:
-                scores = [(lexical + _cosine(query_vector[0], chunk["embedding"])) / 2 for lexical, chunk in zip(scores, chunks)]
+                similarities = [_cosine(query_vector[0], chunk["embedding"]) for chunk in chunks]
+                if strict:
+                    # 관련 없는 조각의 낮은 유사도가 점수를 부풀리지 않게 바닥값 미만은 0으로 본다.
+                    similarities = [value if value >= EMBED_FLOOR else 0.0 for value in similarities]
+                scores = [(lexical + similarity) / 2 for lexical, similarity in zip(scores, similarities)]
 
         selected = set()
         for kind, limit in BUDGETS.items():
             ranked = [index for index, chunk in enumerate(chunks) if chunk["kind"] == kind]
-            if len(ranked) <= limit and mode != "ALWAYS":
+            if len(ranked) <= limit and not strict:
                 selected.update(ranked)
                 continue
             ranked.sort(key=lambda index: (-scores[index], index))
             hits = [index for index in ranked if scores[index] > 0]
-            # 질문과 맞는 조각이 없으면 기존처럼 앞쪽 항목을 전달해 근거가 비지 않게 한다.
-            selected.update((hits or sorted(ranked))[:limit])
-        return self._reduce(payload, chunks, selected)
+            if strict:
+                # RAG를 고른 경우: 관련도가 낮은 조각은 버리고, 관련 조각이 없으면 비워 둔다. 상한은 안전장치다.
+                cutoff = scores[hits[0]] * MIN_RELATIVE_SCORE if hits else 0
+                selected.update([index for index in hits if scores[index] >= cutoff][:limit])
+            else:
+                # 기본 방식은 질문과 맞는 조각이 없으면 앞쪽 항목을 전달해 근거가 비지 않게 한다.
+                selected.update((hits or sorted(ranked))[:limit])
+        reduced = self._reduce(payload, chunks, selected, strict)
+        retrieval = reduced["sourceSummary"]["promptCoverage"]["retrieval"]
+        logger.info("evidence_retrieved mode=%s selected=%s total=%s", mode, retrieval["selected"], retrieval["total"])
+        return reduced
 
     @staticmethod
-    def _reduce(payload, chunks, selected):
-        """선택한 조각과 그 조각이 가리키는 파일·테이블(외래키 한 단계)을 함께 남긴다."""
+    def _reduce(payload, chunks, selected, strict=False):
+        """선택한 조각을 남긴다. 기본 방식은 가리키는 파일·테이블(외래키 한 단계)도 함께 남기고,
+        strict(화면에서 RAG를 고른 경우)는 선택된 조각과 그 외래키 이웃 테이블만 남긴다."""
         picked = [chunk for index, chunk in enumerate(chunks) if index in selected]
         files = {chunk["item"].get(field) for chunk in picked if chunk["kind"] != "dbTable"
                  for field in ("file", "targetFile", "path")}
@@ -253,9 +281,11 @@ class EvidenceRetriever:
                 target = f"{foreign.get('referencedSchema') or table.get('schema')}.{foreign.get('referencedTable')}" if isinstance(foreign, dict) else None
                 if (name in seeds or target in seeds) and target in all_tables:
                     tables.update({name, target})
-        keep = {"component": lambda item: item.get("path") in files,
-                "tableRef": lambda item: f"{item.get('schema')}.{item.get('table')}" in tables,
-                "dbTable": lambda item: _table_name(item) in tables}
+        keep = {"dbTable": lambda item: _table_name(item) in tables}
+        if not strict:
+            # 파일 경로와 테이블 이름으로 이어진 조각까지 넓히는 것은 기본 방식에서만 한다.
+            keep["component"] = lambda item: item.get("path") in files
+            keep["tableRef"] = lambda item: f"{item.get('schema')}.{item.get('table')}" in tables
         kept = {kind: [] for kind in BUDGETS}
         for index, chunk in enumerate(chunks):
             if index in selected or keep.get(chunk["kind"], lambda item: False)(chunk["item"]):
@@ -270,8 +300,15 @@ class EvidenceRetriever:
             source["sourceConnections"].update(links=kept["link"], routes=kept["route"], unresolvedReferences=kept["unresolved"])
         totals = Counter(chunk["kind"] for chunk in chunks)
         coverage = source.setdefault("promptCoverage", {})
-        coverage["retrieval"] = {"mode": "RAG", "selected": {kind: len(kept[kind]) for kind in BUDGETS},
-                                 "total": {kind: totals[kind] for kind in BUDGETS},
-                                 "notice": "요구사항과 관련된 근거만 검색해 전달했습니다. 전달하지 않은 항목이 없다는 뜻이 아닙니다."}
+        retrieval = {"mode": "RAG", "selected": {kind: len(kept[kind]) for kind in BUDGETS},
+                     "total": {kind: totals[kind] for kind in BUDGETS},
+                     "notice": "요구사항과 관련된 근거만 검색해 전달했습니다. 전달하지 않은 항목이 없다는 뜻이 아닙니다."}
+        if strict:
+            # 화면에서 RAG를 직접 골랐다는 표시. 뒤 단계가 이 선택을 다시 넓히지 않도록 한다.
+            retrieval["userSelected"] = True
+            if not any(kept.values()):
+                retrieval["noRelevantEvidence"] = True
+                retrieval["notice"] = NO_EVIDENCE_NOTICE
+        coverage["retrieval"] = retrieval
         coverage["truncated"] = True
         return reduced

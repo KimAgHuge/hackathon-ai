@@ -17,7 +17,7 @@ from app.services.stage_checkpoints import StageCheckpoints
 from app.services.evidence_retriever import EvidenceRetriever, EvidenceStore
 from app.services.model_runtime import ModelRuntimeError, normalized_digest
 from app.services.source_context import general_overview, source_context, supported_target_tables, explicit_requirement_text
-from app.services.database_scope import database_review_scope, metadata_checks, review_groups, database_input, database_source_context
+from app.services.database_scope import database_review_scope, retrieval_review_scope, user_selected_retrieval, metadata_checks, review_groups, database_input, database_source_context
 from app.services.response_repairs import repair_contract, apply_repair, restrict_observed_tables
 from app.services.reconciliation_context import reconciliation_facts, validate_database_facts_review
 from app.models.analysis import (
@@ -330,8 +330,19 @@ class LlmService:
                     if progress:
                         await progress("DATABASE_SCOPE_FOCUSED" if review_coverage["mode"] == "FOCUSED" else "DATABASE_SCOPE_FULL",
                                        len(review_coverage["reviewedTables"]) or None)
-                impact = await self._analyze_database_impact(database_request, requirement, progress)
-                if (review_coverage and review_coverage["mode"] == "FOCUSED" and impact.status == DatabaseImpactStatus.UNKNOWN):
+                chosen_by_user = bool(user_selected_retrieval(database_request.model_dump(mode="json", by_alias=True)))
+                if chosen_by_user and not database_request.database_summary.get("tables"):
+                    # RAG가 관련 테이블을 찾지 못했으면 빈 입력으로 모델을 호출하지 않는다.
+                    impact = DatabaseImpact(
+                        status=DatabaseImpactStatus.UNKNOWN,
+                        explanation="요구사항과 관련된 DB 테이블 근거를 찾지 못했습니다. 관련 근거 없음은 DB 영향이 없다는 뜻이 아닙니다.",
+                        observed_tables=[], proposed_changes=[], conditional_paths=[], open_questions=[],
+                    )
+                else:
+                    impact = await self._analyze_database_impact(database_request, requirement, progress)
+                # 화면에서 RAG를 고른 경우에는 결과가 UNKNOWN이어도 전체 테이블로 되돌아가지 않는다.
+                if (review_coverage and review_coverage["mode"] == "FOCUSED" and not chosen_by_user
+                        and impact.status == DatabaseImpactStatus.UNKNOWN):
                     previous_scope = review_coverage["reviewedTables"]
                     database_request, review_coverage = self._scope_request(full_request, general, force_full=True)
                     review_coverage["expandedFrom"] = previous_scope
@@ -418,6 +429,11 @@ class LlmService:
     @staticmethod
     def _scope_request(request, general, force_full=False):
         payload = request.model_dump(mode="json", by_alias=True)
+        if not force_full and user_selected_retrieval(payload):
+            # 화면에서 RAG를 고른 경우 DB 단계도 검색이 고른 테이블을 그대로 쓴다.
+            selected, coverage = retrieval_review_scope(payload)
+            payload["sourceSummary"]["databaseReviewScope"] = coverage
+            return ProjectAnalysisRequest.model_validate(payload), coverage
         plan = general.database_review_plan.model_dump(mode="json", by_alias=True) if general.database_review_plan else None
         if force_full:
             plan = {"requiresFullReview": True}
