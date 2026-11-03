@@ -49,7 +49,8 @@ const selectedSnapshotId = ref('')
 const confirmedUnchanged = ref(false)
 const thinkingEnabled = ref(true)
 const thinkingEffort = ref('medium')
-const evidenceSelection = ref('AUTO')
+// 기본은 항상 관련 근거만 골라 보내기(RAG). 비교가 필요할 때만 다른 방식으로 바꾼다.
+const evidenceSelection = ref('ALWAYS')
 const showCreateForm = ref(false)
 const errorMessage = ref('')
 const notice = ref('')
@@ -305,7 +306,7 @@ const prepareAnalysis = async (requirement) => {
     evidenceMode.value = 'VERIFY_CURRENT'
     thinkingEnabled.value = true
     thinkingEffort.value = 'medium'
-    evidenceSelection.value = 'AUTO'
+    evidenceSelection.value = 'ALWAYS'
     selectedSnapshotId.value = ''
     confirmedUnchanged.value = false
     snapshotRecords.value = []
