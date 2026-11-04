@@ -1,0 +1,1280 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>되나AI 발표</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<style>
+
+/* 색상은 실제 플랫폼 화면(main.css)과 같은 값을 사용한다. */
+:root {
+  --navy: #10182a;
+  --navy-2: #172137;
+  --navy-3: #24314d;
+  --brand-50: #eff6ff;
+  --brand-100: #dbeafe;
+  --brand-500: #3b82f6;
+  --brand-600: #2563eb;
+  --brand-700: #1d4ed8;
+  --cyan: #22d3ee;
+  --ink: #182033;
+  --mute: #5b6780;
+  --soft: #8390aa;
+  --line: #e4e8f0;
+  --bg: #f5f7fb;
+  --ok: #16a34a;
+  --warn: #d97706;
+  --amber-bg: #fff8eb;
+  --amber-line: #f1d9a6;
+  --amber-ink: #b45309;
+  --ease: cubic-bezier(.2, .7, .2, 1);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body {
+  background: #0b1020;
+  color: var(--ink);
+  font-family: Pretendard, "Pretendard Variable", Inter, "Malgun Gothic", system-ui, sans-serif;
+  overflow: hidden;
+  word-break: keep-all;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------- 화면 배치: 슬라이드(1920x1080 고정)를 창 크기에 맞춰 축소 ---------- */
+#app { display: flex; height: 100%; }
+#view { position: relative; flex: 1; min-width: 0; overflow: hidden; cursor: pointer; }
+#stage {
+  position: absolute; left: 50%; top: 50%;
+  width: 1920px; height: 1080px;
+  transform-origin: center center;
+  background: var(--bg);
+  overflow: hidden;
+  border-radius: 6px;
+}
+
+/* ---------- 슬라이드 공통 ---------- */
+.slide {
+  position: absolute; inset: 0;
+  padding: 0 96px;
+  background:
+    radial-gradient(circle at 92% 0%, rgba(74, 118, 255, .09), transparent 30%),
+    var(--bg);
+  opacity: 0; visibility: hidden;
+  transition: opacity .45s ease, visibility 0s .45s;
+}
+.slide.active { opacity: 1; visibility: visible; transition: opacity .45s ease; }
+.slide.dark {
+  background:
+    radial-gradient(circle at 88% 8%, rgba(59, 130, 246, .22), transparent 34%),
+    var(--navy);
+  color: #fff;
+}
+
+.topbar {
+  position: absolute; left: 96px; right: 96px; top: 44px; height: 44px;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.brand { display: flex; align-items: center; gap: 12px; font-size: 26px; font-weight: 800; letter-spacing: -.01em; }
+.brand svg { width: 40px; height: 40px; }
+.tag {
+  border: 1.5px solid var(--brand-600); color: var(--brand-600);
+  border-radius: 999px; padding: 7px 20px;
+  font-size: 18px; font-weight: 700; letter-spacing: .08em;
+}
+.dark .tag { border-color: rgba(255, 255, 255, .35); color: #cfe0ff; }
+
+.body { position: absolute; left: 96px; right: 96px; top: 140px; bottom: 100px; display: flex; flex-direction: column; }
+.head { margin-bottom: 36px; }
+.eyebrow { font-size: 22px; font-weight: 700; letter-spacing: .14em; color: var(--brand-600); margin-bottom: 16px; }
+.dark .eyebrow { color: var(--cyan); }
+h1 { font-size: 60px; line-height: 1.22; font-weight: 800; letter-spacing: -.025em; }
+.sub { margin-top: 18px; font-size: 28px; line-height: 1.5; color: var(--mute); }
+.dark .sub { color: #a9b4c8; }
+.blue { color: var(--brand-600); }
+.dark .blue { color: #6ea8ff; }
+/* 화면에서 꼭 짚을 말에 형광펜처럼 표시한다. */
+.hl { background: linear-gradient(transparent 62%, rgba(34, 211, 238, .38) 62%); padding: 0 4px; }
+.dark .hl { background: linear-gradient(transparent 62%, rgba(34, 211, 238, .28) 62%); }
+
+.card {
+  background: #fff; border: 1px solid var(--line); border-radius: 20px;
+  box-shadow: 0 1px 2px rgba(16, 24, 42, .04), 0 14px 36px rgba(37, 99, 235, .06);
+}
+.pagenum { position: absolute; right: 96px; bottom: 40px; font-size: 20px; font-weight: 700; color: var(--soft); letter-spacing: .06em; }
+.dark .pagenum { color: #6b7894; }
+.footnote { position: absolute; left: 96px; bottom: 40px; font-size: 19px; color: var(--soft); }
+
+/* ---------- 단계별 등장: 슬라이드가 켜지고 data-s 값 이하의 요소가 차례로 나타난다 ---------- */
+.rv {
+  opacity: 0; transform: translateY(18px);
+  transition: opacity .7s var(--ease), transform .7s var(--ease);
+  transition-delay: calc(var(--d, 0) * 1ms);
+}
+.rv.on { opacity: 1; transform: none; }
+.rv.fade { transform: none; }
+.rv.scale { transform: scale(.96); }
+.rv.scale.on { transform: none; }
+
+/* 방금 나타난 핵심 요소는 한 번 빛나게 해서 시선을 모은다. */
+@keyframes glow {
+  0% { box-shadow: 0 0 0 0 rgba(37, 99, 235, .55); }
+  100% { box-shadow: 0 0 0 26px rgba(37, 99, 235, 0); }
+}
+.glow.on { animation: glow 1.4s ease-out .6s 1; }
+
+/* ---------- 진행 막대 ---------- */
+#bar { position: absolute; left: 0; bottom: 0; height: 6px; width: 0; background: linear-gradient(90deg, var(--cyan), var(--brand-600)); transition: width .5s var(--ease); z-index: 5; }
+
+/* ================= 1. 표지 ================= */
+.cover { display: grid; grid-template-columns: 1fr 760px; gap: 80px; align-items: center; height: 100%; }
+.cover h1 { font-size: 108px; letter-spacing: -.04em; line-height: 1.04; }
+.cover .logo-big { display: flex; align-items: center; gap: 22px; margin-bottom: 34px; }
+.cover .logo-big svg { width: 76px; height: 76px; }
+.cover .lead { margin-top: 30px; font-size: 32px; line-height: 1.55; color: #b8c4da; max-width: 760px; }
+.agenda { margin-top: 56px; display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.agenda span { padding: 11px 22px; border-radius: 999px; background: rgba(255, 255, 255, .07); border: 1px solid rgba(255, 255, 255, .14); font-size: 22px; font-weight: 600; color: #dbe6ff; }
+.agenda i { color: #6b7894; font-style: normal; font-size: 20px; }
+.presenter { margin-top: 40px; font-size: 24px; color: #8fa0bf; font-weight: 600; }
+.ask { position: relative; display: grid; gap: 22px; }
+.bubble { border-radius: 22px; padding: 30px 34px; font-size: 28px; line-height: 1.5; }
+.bubble small { display: block; font-size: 18px; font-weight: 700; letter-spacing: .1em; margin-bottom: 10px; }
+.bubble.q { background: #fff; color: var(--ink); width: 86%; justify-self: start; }
+.bubble.q small { color: var(--soft); }
+.bubble.a { background: var(--brand-600); color: #fff; width: 92%; justify-self: end; box-shadow: 0 20px 50px rgba(37, 99, 235, .35); }
+.bubble.a small { color: #bcd3ff; }
+.chips { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 18px; }
+.chip { padding: 8px 16px; border-radius: 999px; font-size: 20px; font-weight: 700; background: rgba(255, 255, 255, .18); }
+.mocktag { text-align: right; font-size: 18px; color: #6b7894; }
+/* ================= 2. 문제 ================= */
+.split { display: grid; grid-template-columns: 1fr 700px; gap: 80px; flex: 1; align-items: center; }
+.donut-wrap { position: relative; width: 620px; height: 620px; justify-self: center; }
+.donut-wrap svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+.seg { fill: none; stroke-width: 15; stroke-dasharray: 0 100; stroke-dashoffset: var(--off); transition: stroke-dasharray 1.1s var(--ease) calc(var(--d, 0) * 1ms), opacity .6s ease; }
+.seg.on { stroke-dasharray: var(--len) var(--rest); }
+.donut-center { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; }
+.donut-center b { font-size: 130px; font-weight: 800; letter-spacing: -.04em; color: var(--brand-600); line-height: 1; }
+.donut-center span { margin-top: 14px; font-size: 25px; color: var(--mute); line-height: 1.4; }
+.slide.step-2 .seg:not(.hi) { opacity: .22; }
+.legend { display: grid; gap: 12px; margin-top: 34px; }
+.legend div { display: flex; align-items: center; gap: 16px; font-size: 27px; font-weight: 600; transition: opacity .6s ease; }
+.legend em { width: 16px; height: 16px; border-radius: 5px; flex: none; }
+.legend b { margin-left: auto; font-size: 30px; font-weight: 800; }
+.slide.step-2 .legend div:not(.hi) { opacity: .35; }
+.callout { margin-top: 32px; padding: 26px 34px; border-radius: 18px; background: var(--navy); color: #fff; font-size: 29px; line-height: 1.5; font-weight: 600; }
+.callout b { color: var(--cyan); font-weight: 800; }
+
+/* ================= 1. 목차 ================= */
+.toc { display: grid; gap: 20px; align-content: center; }
+.toc-row { display: grid; grid-template-columns: 96px 1fr; align-items: center; gap: 30px; padding: 30px 40px; border-radius: 22px; background: rgba(255, 255, 255, .06); border: 1px solid rgba(255, 255, 255, .13); }
+.toc-row .no { font-size: 64px; font-weight: 800; letter-spacing: -.03em; color: var(--cyan); line-height: 1; }
+.toc-row h3 { font-size: 40px; font-weight: 800; letter-spacing: -.03em; line-height: 1.25; }
+.toc-row p { margin-top: 8px; font-size: 24px; color: #a9b4c8; line-height: 1.45; }
+
+/* ================= 2. 고객 요청, 우리의 답 ================= */
+.talk { display: grid; grid-template-columns: 35fr 110px 45fr; gap: 0; flex: 1; align-items: center; }
+.msg-col { display: grid; gap: 26px; }
+.talk .arrow { display: grid; place-items: center; }
+.talk .arrow svg { width: 64px; height: 64px; stroke: var(--brand-600); }
+.who-l { font-size: 20px; font-weight: 800; letter-spacing: .1em; margin-bottom: 12px; }
+.msg { border-radius: 26px; padding: 36px 40px; font-size: 34px; line-height: 1.55; font-weight: 700; }
+.msg.cust { background: #fff; border: 1px solid var(--line); box-shadow: 0 14px 36px rgba(37, 99, 235, .08); }
+.msg.cust .who-l { color: var(--soft); }
+.msg.mgr { background: var(--brand-600); color: #fff; box-shadow: 0 20px 50px rgba(37, 99, 235, .3); }
+.msg.mgr .who-l { color: #bcd3ff; }
+.status { margin-top: 24px; padding-top: 22px; border-top: 1px solid rgba(255, 255, 255, .28); display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.status span { padding: 8px 16px; border-radius: 999px; background: rgba(255, 255, 255, .2); font-size: 20px; font-weight: 700; }
+.status i { font-style: normal; color: #bcd3ff; font-size: 22px; }
+.skills { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+.skills div { display: flex; align-items: center; gap: 12px; padding: 16px 18px; border-radius: 16px; background: #fff; border: 1px solid var(--line); font-size: 22px; font-weight: 700; line-height: 1.3; }
+.skills svg { width: 30px; height: 30px; flex: none; color: var(--brand-600); }
+
+/* ================= 3. 업무 비중(목록 + 그래프) ================= */
+.rank { display: grid; gap: 14px; margin-top: 30px; }
+.rank div { display: grid; grid-template-columns: 52px 1fr auto; align-items: center; gap: 18px; padding: 16px 24px; border-radius: 16px; background: #fff; border: 1px solid var(--line); font-size: 29px; font-weight: 700; transition: opacity .6s ease; }
+.rank div i { font-style: normal; width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; background: var(--brand-50); color: var(--brand-700); font-size: 20px; font-weight: 800; }
+.rank div b { font-size: 34px; font-weight: 800; }
+.rank div em { display: none; }
+.slide.step-2 .rank div:not(.hi) { opacity: .35; }
+.rank div.hi i { background: var(--brand-600); color: #fff; }
+.slide.step-3 .rank div:not(.hi) { opacity: .35; }
+
+/* ================= 4. 기존 방식의 한계 ================= */
+.lims { display: grid; grid-template-columns: repeat(3, 1fr); gap: 30px; }
+.lim { padding: 34px 40px 36px; position: relative; min-height: 330px; display: flex; flex-direction: column; }
+.feat .ft { min-height: 420px; padding: 40px 42px 42px; }
+.feat .ft .ic { margin-bottom: 34px; }
+.feat .ft h3 { font-size: 42px; }
+.feat .ft p { margin-top: 20px; font-size: 27px; }
+.lim-no { position: absolute; top: 34px; right: 38px; font-size: 18px; font-weight: 800; letter-spacing: .14em; color: var(--soft); }
+.lim .ic { width: 84px; height: 84px; border-radius: 24px; display: grid; place-items: center; background: #eef1f7; color: var(--mute); margin-bottom: 30px; }
+.lim .ic svg { width: 44px; height: 44px; }
+.lim h3 { font-size: 40px; font-weight: 800; letter-spacing: -.03em; line-height: 1.28; }
+.lim p { margin-top: 16px; font-size: 27px; line-height: 1.55; color: var(--mute); }
+.namebar2 { margin-top: 30px; padding: 28px 44px 30px; border-radius: 18px; background: var(--navy); color: #fff; }
+.namebar2 h2 { font-size: 52px; font-weight: 800; letter-spacing: -.03em; line-height: 1.2; }
+.namebar2 h2 span { color: var(--cyan); }
+.namebar2 p { margin-top: 10px; font-size: 30px; line-height: 1.45; color: #cfe0ff; font-weight: 600; }
+.namebar { margin-top: 32px; display: flex; align-items: center; gap: 30px; padding: 28px 44px; }
+.namebar b { font-size: 52px; font-weight: 800; color: var(--brand-600); letter-spacing: -.02em; }
+.namebar span { font-size: 30px; color: var(--mute); line-height: 1.45; }
+
+/* ================= 4. 플랫폼 ================= */
+.feat { display: grid; grid-template-columns: repeat(3, 1fr); gap: 30px; }
+.ft { padding: 36px 38px 38px; position: relative; }
+.ft .ic { width: 64px; height: 64px; border-radius: 20px; display: grid; place-items: center; background: var(--brand-50); color: var(--brand-600); margin-bottom: 24px; }
+.ft .ic svg { width: 34px; height: 34px; }
+.ft .no { position: absolute; top: 32px; right: 36px; font-size: 18px; font-weight: 800; letter-spacing: .14em; color: var(--soft); }
+.ft h3 { font-size: 38px; font-weight: 800; letter-spacing: -.03em; line-height: 1.25; }
+.ft p { margin-top: 16px; font-size: 25px; line-height: 1.55; color: var(--mute); }
+.ft .who { margin-top: 22px; display: flex; gap: 10px; flex-wrap: wrap; }
+.ft .who span { padding: 8px 16px; border-radius: 999px; background: var(--brand-50); color: var(--brand-700); font-size: 20px; font-weight: 800; }
+.ft.main { background: var(--navy); border-color: var(--navy); color: #fff; }
+.ft.main .ic { background: rgba(255, 255, 255, .1); color: var(--cyan); }
+.ft.main .no { color: #6b7894; }
+.ft.main p { color: #a9b4c8; }
+.ft.main .who span { background: rgba(255, 255, 255, .1); color: #cfe0ff; }
+.goal { margin-top: 34px; padding: 26px 40px; display: flex; align-items: center; gap: 24px; font-size: 30px; font-weight: 700; }
+.goal i { font-style: normal; font-size: 18px; letter-spacing: .12em; padding: 7px 16px; border-radius: 999px; background: var(--brand-50); color: var(--brand-700); font-weight: 800; }
+.goal .arrowline { color: var(--brand-600); font-weight: 800; }
+.principle { margin-top: 24px; padding: 28px 40px; border-radius: 18px; background: var(--brand-600); color: #fff; font-size: 34px; font-weight: 800; letter-spacing: -.01em; display: flex; align-items: center; gap: 22px; }
+.principle i { font-style: normal; font-size: 18px; letter-spacing: .12em; padding: 7px 16px; border-radius: 999px; background: rgba(255, 255, 255, .2); }
+
+/* ================= 6. 핵심 원리 ================= */
+.how { display: grid; }
+.stg { display: grid; grid-template-columns: 84px 1fr 800px; align-items: center; gap: 26px; padding: 26px 40px; min-height: 138px; }
+.stg .no { width: 64px; height: 64px; border-radius: 20px; background: var(--brand-50); color: var(--brand-700); display: grid; place-items: center; font-size: 34px; font-weight: 800; }
+.stg h3 { font-size: 38px; font-weight: 800; letter-spacing: -.03em; }
+.stg p { margin-top: 8px; font-size: 24px; color: var(--mute); line-height: 1.4; }
+.stg-f { display: flex; align-items: center; gap: 16px; justify-content: flex-end; }
+.stg-f i { font-style: normal; font-size: 30px; font-weight: 800; color: var(--brand-500); }
+.chip2 { padding: 16px 24px; border-radius: 14px; background: #f1f4fa; border: 1px solid var(--line); font-size: 25px; font-weight: 800; letter-spacing: -.02em; white-space: nowrap; }
+.stg.rag { background: var(--brand-600); border-color: var(--brand-600); color: #fff; }
+.stg.rag .no { background: rgba(255, 255, 255, .2); color: #fff; }
+.stg.rag p { color: #cfe0ff; }
+.stg.rag .chip2 { background: rgba(255, 255, 255, .18); border-color: rgba(255, 255, 255, .3); color: #fff; }
+.stg.rag .stg-f i { color: #fff; }
+.stg.dk { background: var(--navy); border-color: var(--navy); color: #fff; }
+.stg.dk .no { background: rgba(34, 211, 238, .16); color: var(--cyan); }
+.stg.dk p { color: #a9b4c8; }
+.stg.dk .chip2 { background: rgba(255, 255, 255, .1); border-color: rgba(255, 255, 255, .2); color: #fff; }
+.stg.dk .stg-f i { color: var(--cyan); }
+.down { display: grid; place-items: center; height: 40px; }
+.down svg { width: 34px; height: 34px; stroke: var(--brand-600); }
+.msgbar { margin-top: 24px; padding: 24px 40px; border-radius: 18px; background: var(--navy); color: #fff; font-size: 32px; line-height: 1.45; font-weight: 800; letter-spacing: -.02em; text-align: center; }
+
+/* ================= 7. 시연 영상 자리 ================= */
+.vframe { position: relative; width: 1120px; height: 630px; margin: 0 auto; border-radius: 24px; background: var(--navy); border: 2px dashed rgba(255, 255, 255, .28); display: grid; place-content: center; text-align: center; box-shadow: 0 30px 70px rgba(16, 24, 42, .18); }
+.vframe .play { width: 120px; height: 120px; margin: 0 auto 28px; border-radius: 50%; background: rgba(34, 211, 238, .16); display: grid; place-items: center; }
+.vframe .play svg { width: 54px; height: 54px; fill: var(--cyan); margin-left: 8px; }
+.vframe b { font-size: 40px; font-weight: 800; color: #fff; letter-spacing: -.02em; }
+.vframe span { display: block; margin-top: 12px; font-size: 24px; color: #8fa0bf; }
+
+.node { padding: 26px 30px 24px; position: relative; display: flex; flex-direction: column; gap: 6px; }
+.node .k { font-size: 17px; font-weight: 800; letter-spacing: .12em; color: var(--brand-600); }
+.node h4 { font-size: 32px; font-weight: 800; letter-spacing: -.02em; }
+.node > p { font-size: 22px; line-height: 1.4; color: var(--mute); }
+.spec { display: grid; grid-template-columns: 96px 1fr; gap: 7px 12px; margin-top: 10px; padding-top: 14px; border-top: 1px solid var(--line); font-size: 21px; line-height: 1.35; }
+.spec dt { color: var(--soft); font-weight: 700; }
+.spec dd { font-weight: 700; color: var(--ink); }
+/* 웹 화면과 서비스 서버는 같은 색(파란 띠) */
+.node.app { border-top: 6px solid var(--brand-500); }
+/* 분석할 자료는 다른 색(노란 계열) */
+.node.data { background: var(--amber-bg); border-color: var(--amber-line); box-shadow: none; }
+.node.data .k { color: var(--amber-ink); }
+.node.data .spec { border-top-color: var(--amber-line); }
+/* AI 분석/추론 서버와 AI 학습 서버는 같은 색(남색) */
+.node.ai { background: var(--navy); border-color: var(--navy); color: #fff; }
+.node.ai .k { color: var(--cyan); }
+.node.ai > p { color: #a9b4c8; }
+.node.ai .spec { border-top-color: rgba(255, 255, 255, .14); }
+.node.ai .spec dt { color: #8fa0bf; }
+.node.ai .spec dd { color: #fff; }
+.node.note { background: var(--brand-600); border-color: var(--brand-600); color: #fff; justify-content: center; }
+.node.note h4 { font-size: 34px; line-height: 1.3; }
+.node.note > p { color: #cfe0ff; }
+
+/* ================= 7. 시스템 구성 (서버별 흐름) ================= */
+.srv5 { display: grid; grid-template-columns: repeat(5, 1fr); gap: 24px; margin-bottom: 10px; padding-top: 6px; }
+.srv5 .mac { grid-column: 3 / span 2; display: grid; grid-template-columns: 1fr 1fr; gap: 24px; position: relative; }
+.srv5 .mac::after { content: ""; position: absolute; inset: -6px; border: 2px dashed #94a3c4; border-radius: 26px; pointer-events: none; }
+.srv5 .mac::before { content: "MAC STUDIO"; position: absolute; top: -17px; left: 50%; transform: translateX(-50%); padding: 0 12px; background: #f1f4fb; font-size: 15px; font-weight: 800; letter-spacing: .14em; color: var(--brand-700); z-index: 1; }
+.srv5 .node { padding: 14px 20px 12px; gap: 2px; }
+.srv5 .node h4 { font-size: 25px; white-space: nowrap; }
+.srv5 .node > p { font-size: 17px; }
+.srv5 .spec { grid-template-columns: 58px 1fr; font-size: 16px; gap: 3px 8px; margin-top: 6px; padding-top: 8px; }
+.srv5 .node.eng { background: var(--navy-3); border-color: var(--navy-3); }
+.proc { position: relative; height: 504px; flex: none; overflow: hidden; }
+.life, .arr { position: absolute; inset: 0; width: 100%; height: 100%; }
+.life line { stroke: #cfd7e6; stroke-width: 2; stroke-dasharray: 5 7; }
+.ph { position: absolute; inset: 0; opacity: 0; visibility: hidden; transition: opacity .4s ease, visibility 0s .4s; }
+.slide[data-step="1"] .phA, .slide[data-step="2"] .phB, .slide[data-step="3"] .phC { opacity: 1; visibility: visible; transition: opacity .4s ease; }
+.ph-h { position: absolute; left: 24px; top: 6px; display: flex; align-items: center; gap: 12px; font-size: 24px; font-weight: 800; }
+.ph-h i { font-style: normal; width: 34px; height: 34px; border-radius: 10px; background: var(--brand-600); color: #fff; display: grid; place-items: center; font-size: 19px; }
+.phC .ph-h i { background: #0e7490; }
+.ph-n { position: absolute; right: 24px; top: 12px; font-size: 18px; font-weight: 700; color: var(--mute); }
+.arr { color: var(--brand-500); }
+.ar { fill: none; stroke: currentColor; stroke-width: 3; opacity: 0; transition: opacity .4s ease; }
+.ar.dash { stroke-dasharray: 8 6; color: #0e7490; }
+.bx { position: absolute; width: 300px; height: 54px; padding: 4px 14px; border-radius: 14px; background: #fff; border: 1.5px solid var(--line); border-left: 6px solid var(--brand-500); box-shadow: 0 6px 18px rgba(16, 24, 42, .07); opacity: 0; transform: translateY(8px); transition: opacity .5s ease, transform .5s ease; }
+.bx h5 { font-size: 20px; font-weight: 800; letter-spacing: -.02em; line-height: 1.25; white-space: nowrap; }
+.bx p { font-size: 15px; line-height: 1.3; color: var(--mute); white-space: nowrap; }
+.bx.c2, .bx.c4 { background: var(--navy); border-color: var(--navy); border-left-color: var(--cyan); color: #fff; }
+.bx.c3 { background: var(--navy-3); border-color: var(--navy-3); border-left-color: var(--cyan); color: #fff; }
+.bx.c2 p, .bx.c3 p, .bx.c4 p { color: #a9b4c8; }
+.bx.rag { background: var(--brand-600); border-color: var(--brand-600); border-left-color: #fff; box-shadow: 0 10px 26px rgba(37, 99, 235, .4); }
+.bx.rag p { color: #cfe0ff; }
+.slide[data-step="1"] .phA .bx, .slide[data-step="2"] .phB .bx, .slide[data-step="3"] .phC .bx { opacity: 1; transform: none; transition-delay: calc(var(--d) * 1ms + 450ms); }
+.slide[data-step="1"] .phA .ar, .slide[data-step="2"] .phB .ar, .slide[data-step="3"] .phC .ar { opacity: .9; transition-delay: calc(var(--d) * 1ms + 450ms); }
+
+/* ================= 대본 패널 ================= */
+#notes { width: 420px; flex: none; background: #fff; color: var(--ink); display: flex; flex-direction: column; border-left: 1px solid var(--line); }
+#notes.hide { display: none; }
+#notes header { padding: 20px 26px 16px; border-bottom: 1px solid var(--line); }
+#notes header b { font-size: 18px; letter-spacing: .1em; color: var(--brand-600); }
+#notes header div { margin-top: 6px; font-size: 20px; font-weight: 800; }
+#np { flex: 1; overflow: auto; padding: 20px 26px 30px; display: grid; gap: 16px; align-content: start; }
+#np p { font-size: 17px; line-height: 1.7; color: #9aa4ba; padding: 12px 14px; border-radius: 12px; border-left: 4px solid transparent; transition: all .3s ease; }
+#np p small { display: block; font-size: 12px; font-weight: 800; letter-spacing: .1em; margin-bottom: 4px; }
+#np p.past { color: #6b7894; }
+#np p.cur { color: var(--ink); background: var(--brand-50); border-left-color: var(--brand-600); font-weight: 600; }
+#np p.cur small { color: var(--brand-600); }
+#np p.future { opacity: .55; }
+#notes footer { padding: 14px 26px; border-top: 1px solid var(--line); font-size: 14px; color: var(--soft); line-height: 1.6; }
+.notes-src { display: none; }
+#hint { position: fixed; left: 18px; bottom: 12px; font-size: 13px; color: rgba(255, 255, 255, .35); pointer-events: none; transition: opacity .8s ease; }
+
+@media (prefers-reduced-motion: reduce) {
+  .rv, .pn { transition-duration: .01s; transform: none; }
+  .glow.on { animation: none; }
+}
+
+/* ===== 시스템 구성(v5) 슬라이드 전용 스타일: 다른 슬라이드에 영향이 없도록 범위를 제한했다 ===== */
+.slide.v5[data-step="7"] .phA, .slide.v5[data-step="8"] .phB, .slide.v5[data-step="9"] .phC { opacity: 1; visibility: visible; transition: opacity .4s ease; }
+.slide.v5[data-step="7"] .phA .bx, .slide.v5[data-step="8"] .phB .bx, .slide.v5[data-step="9"] .phC .bx { opacity: 1; transform: none; transition-delay: calc(var(--d) * 1ms + 450ms); }
+.slide.v5[data-step="7"] .phA .ar, .slide.v5[data-step="8"] .phB .ar, .slide.v5[data-step="9"] .phC .ar { opacity: .9; transition-delay: calc(var(--d) * 1ms + 450ms); }
+.slide.v5 .pagenum { display: none; }
+.slide.v5 .srv5 .node { cursor: pointer; transition: box-shadow .3s ease, transform .3s ease; }
+.slide.v5 .srv5 .node:hover { transform: translateY(-2px); }
+.slide.v5 .srv5 .node.sel { box-shadow: 0 0 0 4px var(--cyan), 0 14px 36px rgba(34, 211, 238, .35); }
+.slide.v5 .srv5 .node.app.sel { box-shadow: 0 0 0 4px var(--brand-500), 0 14px 36px rgba(59, 130, 246, .3); }
+.slide.v5 .det, .slide.v5 .flow { position: absolute; inset: 0; opacity: 0; visibility: hidden; transition: opacity .35s ease, visibility 0s .35s; }
+.slide.v5 .det.on, .slide.v5 .flow.on { opacity: 1; visibility: visible; transition: opacity .35s ease; }
+.slide.v5 .det { --ac: var(--cyan); padding: 34px 34px 20px; display: flex; flex-direction: column; gap: 10px; }
+.slide.v5 .det.app { --ac: var(--brand-500); }
+.slide.v5 .det::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 6px; background: var(--ac); }
+.slide.v5 .det::after { content: ""; position: absolute; top: 6px; left: calc(var(--x) - 16px); border: 16px solid transparent; border-top-color: var(--ac); border-bottom: 0; }
+.slide.v5 .det-top { display: flex; align-items: center; gap: 16px; }
+.slide.v5 .det-top .badge { flex: none; padding: 6px 15px; border-radius: 10px; background: var(--navy); color: var(--cyan); font-size: 17px; font-weight: 800; letter-spacing: .12em; }
+.slide.v5 .det.app .det-top .badge { background: var(--brand-600); color: #fff; }
+.slide.v5 .det-top h3 { flex: none; font-size: 32px; font-weight: 800; letter-spacing: -.02em; }
+.slide.v5 .det-top .one { margin-left: auto; font-size: 24px; font-weight: 700; color: var(--brand-700); text-align: right; }
+.slide.v5 .det.intro { justify-content: center; text-align: center; }
+.slide.v5 .det.intro b { display: block; font-size: 38px; font-weight: 800; letter-spacing: -.02em; }
+.slide.v5 .det.intro span { display: block; margin-top: 14px; font-size: 24px; color: var(--mute); }
+.slide.v5 .det.intro .go { margin-top: 26px; display: inline-flex; gap: 10px; justify-content: center; }
+.slide.v5 .det.intro .go i { font-style: normal; padding: 8px 18px; border-radius: 999px; background: var(--brand-50); color: var(--brand-700); font-weight: 800; font-size: 20px; }
+.slide.v5 .det.intro .go i.t { background: var(--navy); color: var(--cyan); }
+.slide.v5 .det.intro::before, .slide.v5 .det.intro::after { display: none; }
+.slide.v5 .lite { flex: 1; display: flex; align-items: center; justify-content: center; gap: 22px; }
+.slide.v5 .lite .tc { flex: 0 1 380px; border-radius: 18px; background: #f6f8fc; border: 1px solid var(--line); border-top: 6px solid var(--brand-500); padding: 26px 28px; text-align: center; }
+.slide.v5 .det:not(.app) .lite .tc { background: var(--navy); border-color: var(--navy); border-top-color: var(--cyan); color: #fff; }
+.slide.v5 .lite .tc b { display: block; font-size: 32px; font-weight: 800; }
+.slide.v5 .lite .tc span { display: block; margin-top: 8px; font-size: 21px; color: var(--mute); }
+.slide.v5 .det:not(.app) .lite .tc span { color: #a9b4c8; }
+.slide.v5 .lite-note { text-align: center; font-size: 20px; font-weight: 700; color: var(--amber-ink); }
+.slide.v5 .stg { position: relative; flex: 1; min-height: 0; }
+.slide.v5 .stg > * { position: absolute; }
+@keyframes pop { from { opacity: 0; transform: translateY(14px) scale(.97); } to { opacity: 1; transform: none; } }
+@keyframes fly { 0% { opacity: 0; transform: translateX(0); } 14% { opacity: 1; } 82% { opacity: 1; } 100% { opacity: 0; transform: translateX(var(--dx)); } }
+@keyframes grow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@keyframes dim { to { opacity: .45; filter: grayscale(1); } }
+@keyframes drop { 0% { opacity: 0; transform: translateY(-46px); } 60% { opacity: 1; } 100% { opacity: 1; transform: none; } }
+@keyframes pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(34, 211, 238, 0); } 50% { box-shadow: 0 0 0 10px rgba(34, 211, 238, .35); } }
+@keyframes scan { 0% { opacity: 0; top: 74px; } 10% { opacity: 1; } 90% { opacity: 1; } 100% { opacity: 0; top: 332px; } }
+.slide.v5 .an { opacity: 0; }
+.slide.v5 .det.on .an { animation: pop .6s var(--ease) both; animation-delay: calc(var(--t, 0) * 1s); }
+.slide.v5 .pk { opacity: 0; }
+.slide.v5 .det.on .pk { animation: fly 2.4s linear infinite both; animation-delay: calc(var(--t, 0) * 1s); }
+.slide.v5 .bar { transform-origin: left; transform: scaleX(0); }
+.slide.v5 .det.on .bar { animation: grow .9s var(--ease) both; animation-delay: calc(var(--t, 0) * 1s); }
+.slide.v5 .det.on .dm { animation: dim .6s ease forwards; animation-delay: calc(var(--t, 0) * 1s); }
+.slide.v5 .det.on .dp { animation: drop .7s var(--ease) both; animation-delay: calc(var(--t, 0) * 1s); }
+.slide.v5 .det.on .pl { animation: pop .6s var(--ease) both, pulse 1.6s ease-in-out 2; animation-delay: calc(var(--t, 0) * 1s), calc(var(--t, 0) * 1s + .5s); }
+.slide.v5 .lane { height: 0; border-top: 4px dashed #b6c3dc; }
+.slide.v5 .lane::after { content: ""; position: absolute; right: -4px; top: -11px; border: 9px solid transparent; border-left: 14px solid #8aa0c8; border-right: 0; }
+.slide.v5 .tool { padding: 6px 18px; border-radius: 999px; background: var(--brand-600); color: #fff; font-size: 24px; font-weight: 800; letter-spacing: .04em; }
+.slide.v5 .tool.g { background: #15803d; }
+.slide.v5 .pkc { padding: 5px 12px; border-radius: 9px; background: #fff; border: 1.5px solid var(--brand-500); font: 700 17px Consolas, "D2Coding", monospace; white-space: nowrap; color: var(--ink); box-shadow: 0 4px 10px rgba(16, 24, 42, .12); }
+.slide.v5 .pkc.t { border-color: #d97706; background: var(--amber-bg); }
+.slide.v5 .pbox { border-radius: 18px; background: #f6f8fc; border: 1.5px solid var(--line); padding: 14px 18px; }
+.slide.v5 .pbox h6 { font-size: 22px; font-weight: 800; margin-bottom: 8px; display: flex; align-items: center; gap: 10px; }
+.slide.v5 .pbox .r { font: 700 18px Consolas, "D2Coding", monospace; padding: 6px 12px; margin-top: 7px; border-radius: 8px; background: #fff; border: 1px solid var(--line); }
+.slide.v5 .pbox.db { background: var(--amber-bg); border-color: var(--amber-line); }
+.slide.v5 .pbox.db .r { border-color: var(--amber-line); }
+.slide.v5 .lock { display: inline-flex; align-items: center; gap: 6px; padding: 3px 12px; border-radius: 999px; background: #ecfdf3; border: 1px solid #a7e3bf; color: #15803d; font-size: 17px; font-weight: 800; font-family: inherit; }
+.slide.v5 .wasbox { border-radius: 22px; background: var(--brand-600); color: #fff; text-align: center; display: grid; place-content: center; gap: 6px; box-shadow: 0 14px 34px rgba(37, 99, 235, .35); }
+.slide.v5 .wasbox b { font-size: 34px; font-weight: 800; }
+.slide.v5 .wasbox span { font-size: 20px; color: #cfe0ff; }
+.slide.v5 .jsoncard { border-radius: 18px; background: var(--navy); color: #fff; padding: 18px 22px; }
+.slide.v5 .jsoncard h6 { font-size: 24px; font-weight: 800; color: var(--cyan); margin-bottom: 12px; }
+.slide.v5 .jsoncard .jl { font-size: 21px; font-weight: 700; padding: 9px 14px; margin-top: 9px; border-radius: 10px; background: rgba(255, 255, 255, .09); }
+.slide.v5 .cap { font-size: 22px; font-weight: 700; color: var(--mute); text-align: center; }
+.slide.v5 .nd { width: 340px; height: 230px; border-radius: 20px; border: 1.5px solid var(--line); background: #f6f8fc; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; text-align: center; }
+.slide.v5 .nd b { font-size: 28px; font-weight: 800; }
+.slide.v5 .nd span { font-size: 20px; color: var(--mute); }
+.slide.v5 .nd.n { background: var(--navy); border-color: var(--navy); color: #fff; }
+.slide.v5 .nd.n span { color: #a9b4c8; }
+.slide.v5 .nd.bl { background: var(--brand-600); border-color: var(--brand-600); color: #fff; }
+.slide.v5 .nd.bl span { color: #cfe0ff; }
+.slide.v5 .nl { position: absolute; font-size: 21px; font-weight: 800; color: var(--brand-700); display: flex; align-items: center; gap: 10px; }
+.slide.v5 .nl i { font-style: normal; width: 34px; height: 34px; border-radius: 50%; background: var(--brand-600); color: #fff; display: grid; place-items: center; font-size: 19px; }
+.slide.v5 .arw { font-size: 44px; font-weight: 800; color: var(--brand-500); }
+.slide.v5 .docl { width: 190px; display: grid; gap: 9px; }
+.slide.v5 .docl i { display: block; height: 14px; border-radius: 7px; background: #cbd6ec; }
+.slide.v5 .cyl { position: relative; width: 210px; height: 120px; border-radius: 22px / 16px; background: var(--navy-3); border: 2px solid var(--cyan); overflow: hidden; }
+.slide.v5 .cyl .ch { position: absolute; left: 50%; margin-left: -80px; width: 160px; padding: 3px 0; border-radius: 7px; background: var(--cyan); color: var(--navy); font: 800 15px Consolas, "D2Coding", monospace; text-align: center; }
+.slide.v5 .chk { width: 64px; height: 64px; border-radius: 50%; background: #16a34a; color: #fff; display: grid; place-items: center; font-size: 40px; font-weight: 800; }
+.slide.v5 .qb { width: 440px; padding: 18px 22px; border-radius: 18px 18px 18px 4px; background: var(--brand-600); color: #fff; font-size: 26px; font-weight: 800; line-height: 1.4; }
+.slide.v5 .tok { padding: 6px 18px; border-radius: 999px; background: var(--navy); color: #fff; font-size: 24px; font-weight: 800; }
+.slide.v5 .tok.lo { background: #cfd7e6; color: var(--ink); }
+.slide.v5 .sdb { border-radius: 22px; background: var(--navy); color: #fff; padding: 16px 22px; border: 2px solid var(--cyan); }
+.slide.v5 .sdb h6 { font-size: 22px; font-weight: 800; color: var(--cyan); }
+.slide.v5 .sdb h6 small { font-size: 17px; font-weight: 600; color: #a9b4c8; margin-left: 8px; }
+.slide.v5 .sr { color: #fff; position: absolute; left: 22px; right: 22px; height: 44px; border-radius: 10px; background: rgba(255, 255, 255, .08); display: grid; grid-template-columns: 1fr 170px 76px; gap: 12px; align-items: center; padding: 0 14px; font: 700 20px Consolas, "D2Coding", monospace; }
+.slide.v5 .sr i { height: 14px; border-radius: 7px; background: linear-gradient(90deg, var(--cyan), #60a5fa); }
+.slide.v5 .sr u { text-decoration: none; text-align: right; font: 800 18px Pretendard, sans-serif; color: #7ee8fa; }
+.slide.v5 .scanln { position: absolute; left: 12px; right: 12px; height: 6px; border-radius: 3px; background: var(--cyan); box-shadow: 0 0 18px var(--cyan); opacity: 0; }
+.slide.v5 .det.on .scanln { animation: scan 1.6s ease-in-out 2.4s both; }
+.slide.v5 .bundle { border-radius: 20px; background: #f6f8fc; border: 1.5px solid var(--line); padding: 16px 20px; display: grid; gap: 10px; }
+.slide.v5 .bundle h6 { font-size: 22px; font-weight: 800; }
+.slide.v5 .bundle .pkc { font-size: 19px; width: fit-content; }
+.slide.v5 .srv5 .node.sel { transform: translateY(-4px); }
+.slide.v5 .srv5 .node.app.sel { box-shadow: 0 16px 30px rgba(59, 130, 246, .32); }
+.slide.v5 .srv5 .node.ai.sel { box-shadow: 0 16px 30px rgba(34, 211, 238, .38); }
+.slide.v5 .proc { overflow: visible; transition: border-color .3s ease; }
+.slide.v5 .proc.ringed { border-color: var(--pac); }
+.slide.v5 .proc::before { content: ""; position: absolute; z-index: 3; top: -11px; left: calc(var(--bx, 0px) - 11px); width: 22px; height: 22px; background: #fff; border-left: 1px solid var(--pac, var(--line)); border-top: 1px solid var(--pac, var(--line)); border-radius: 5px 0 0 0; transform: rotate(45deg); opacity: 0; pointer-events: none; transition: opacity .3s ease; }
+.slide.v5 .proc.ringed::before { opacity: 1; }
+.slide.v5 .det, .slide.v5 .flow { border-radius: 20px; overflow: hidden; }
+.slide.v5 .det::before, .slide.v5 .det::after { display: none !important; }
+.slide.v5 .det { padding: 26px 34px 20px; }
+@keyframes type { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 -40px 0 0); } }
+@keyframes out { to { opacity: 0; transform: translateY(-10px); } }
+@keyframes press { 0%, 100% { transform: none; box-shadow: 0 0 0 0 rgba(37, 99, 235, 0); } 40% { transform: scale(.94); box-shadow: 0 0 0 14px rgba(37, 99, 235, .3); } }
+.slide.v5 .ty { display: inline-block; clip-path: inset(0 100% 0 0); white-space: nowrap; }
+.slide.v5 .det.on .ty { animation: type 1.2s steps(16, jump-end) both; animation-delay: calc(var(--t, 0) * 1s); }
+.slide.v5 .win { left: 330px; top: 4px; width: 1000px; height: 372px; border-radius: 18px; background: #fff; border: 1.5px solid var(--line); box-shadow: 0 18px 44px rgba(16, 24, 42, .14); overflow: hidden; }
+.slide.v5 .win .wbar { height: 40px; background: #eef2f9; display: flex; align-items: center; gap: 8px; padding: 0 16px; transform: none; }
+.slide.v5 .win .wbar i { width: 12px; height: 12px; border-radius: 50%; background: #c7d0e2; }
+.slide.v5 .win .wbar b { margin-left: 10px; font-size: 17px; color: var(--mute); font-weight: 700; }
+.slide.v5 .pane { position: absolute; left: 0; right: 0; top: 40px; bottom: 0; padding: 20px 40px; }
+.slide.v5 .pane h5 { font-size: 28px; font-weight: 800; margin-bottom: 14px; }
+.slide.v5 .pane h5 small { margin-left: 12px; font-size: 18px; color: var(--brand-600); letter-spacing: .1em; }
+.slide.v5 .fr { display: grid; grid-template-columns: 210px 1fr; align-items: center; margin-bottom: 12px; font-size: 22px; font-weight: 700; }
+.slide.v5 .fr span { color: var(--mute); }
+.slide.v5 .fr div { height: 46px; border: 1.5px solid var(--line); border-radius: 10px; background: #f8faff; padding: 0 16px; display: flex; align-items: center; font-weight: 700; overflow: hidden; }
+.slide.v5 .pbtn { display: inline-block; margin-top: 6px; padding: 12px 34px; border-radius: 12px; background: var(--brand-600); color: #fff; font-size: 24px; font-weight: 800; }
+.slide.v5 .det.on .pbtn.pr { animation: pop .6s var(--ease) both, press .7s ease both; animation-delay: calc(var(--t, 0) * 1s), calc(var(--t, 0) * 1s + 1.2s); }
+.slide.v5 .det.on .pane.po { animation: pop .5s var(--ease) both, out .5s ease forwards; animation-delay: calc(var(--t, 0) * 1s), 7s; }
+.slide.v5 .res { margin-top: 12px; padding: 14px 20px; border-radius: 14px; background: #ecfdf3; border: 1.5px solid #a7e3bf; font-size: 24px; font-weight: 800; color: #15803d; }
+.slide.v5 .pr2 { display: inline-block; padding: 4px 14px; border-radius: 999px; background: var(--amber-bg); border: 1px solid var(--amber-line); color: var(--amber-ink); font-size: 19px; font-weight: 800; }
+.slide.v5 .lbl { font-size: 24px; font-weight: 800; color: var(--brand-700); }
+.slide.v5 .mini { display: flex; align-items: center; gap: 10px; padding: 7px 12px; margin-top: 8px; border-radius: 10px; background: #fff; border: 1px solid var(--line); font-size: 19px; font-weight: 700; color: var(--ink); text-align: left; width: 250px; }
+.slide.v5 .mini i { font-style: normal; color: #16a34a; font-weight: 800; }
+.slide.v5 .pb { width: 220px; height: 16px; border-radius: 8px; background: rgba(255, 255, 255, .15); overflow: hidden; }
+.slide.v5 .pb i { display: block; height: 100%; background: linear-gradient(90deg, var(--cyan), #60a5fa); transform-origin: left; transform: scaleX(0); }
+.slide.v5 .det.on .pb i { animation: grow 3s ease-in-out both; animation-delay: calc(var(--t, 0) * 1s); }
+.slide.v5 .ans { width: 200px; display: grid; gap: 9px; }
+.slide.v5 .ans i { display: block; height: 14px; border-radius: 7px; background: #86efac; }
+.slide.v5 .det.on .sr.xd { animation: pop .6s var(--ease) both, dim .6s ease forwards; animation-delay: calc(var(--t, 0) * 1s), 3.9s; }
+.slide.v5 .sr3 { color: #fff; position: absolute; width: 716px; height: 44px; border-radius: 10px; background: rgba(255, 255, 255, .08); display: grid; grid-template-columns: 180px 140px 140px 80px 1fr; gap: 10px; align-items: center; padding: 0 14px; font: 700 19px Consolas, "D2Coding", monospace; }
+.slide.v5 .sr3.hd { background: none; height: 28px; color: #a9b4c8; font: 700 16px Pretendard, sans-serif; }
+.slide.v5 .sr3 .cell { display: flex; align-items: center; gap: 8px; }
+.slide.v5 .sr3 .cell i { flex: none; height: 12px; border-radius: 6px; background: linear-gradient(90deg, var(--cyan), #60a5fa); }
+.slide.v5 .sr3 .cell em, .slide.v5 .sr3 .sc { font: 800 16px Pretendard, sans-serif; font-style: normal; color: #cbd5e1; }
+.slide.v5 .sr3 .sc { color: #fff; font-size: 18px; }
+.slide.v5 .sr3 u { text-decoration: none; text-align: right; font: 800 18px Pretendard, sans-serif; color: #7ee8fa; }
+.slide.v5 .sr3 u.x { color: #94a3b8; }
+.slide.v5 .sr3 u.nb { color: #fbbf24; }
+.slide.v5 .det.on .sr3.xd { animation: pop .6s var(--ease) both, dim .6s ease forwards; animation-delay: calc(var(--t, 0) * 1s), 5.0s; }
+
+/* ===== 개선사항 슬라이드 전용 스타일 ===== */
+.slide.imp .body { position: absolute; left: 96px; right: 96px; top: 116px; bottom: 56px; display: flex; flex-direction: column; }
+.slide.imp .eyebrow { font-size: 22px; font-weight: 800; letter-spacing: .14em; color: var(--brand-600); margin-bottom: 12px; }
+.slide.imp h1 { font-size: 54px; line-height: 1.22; font-weight: 800; letter-spacing: -.03em; }
+.slide.imp .card { background: #fff; border: 1px solid var(--line); border-radius: 22px;
+  box-shadow: 0 1px 2px rgba(16, 24, 42, .04), 0 14px 36px rgba(37, 99, 235, .06); }
+.slide.imp .fade { transform: none; }
+.slide.imp .tlcard { margin-top: 22px; padding: 26px 30px 22px; }
+.slide.imp .tlrow { display: grid; grid-template-columns: 210px 1fr; align-items: center; }
+.slide.imp .tlrow + .tlrow { margin-top: 26px; padding-top: 22px; border-top: 1.5px dashed var(--line); }
+.slide.imp .tlab b { display: block; font-size: 30px; font-weight: 800; letter-spacing: -.02em; }
+.slide.imp .tlab span { display: block; margin-top: 4px; font-size: 20px; font-weight: 600; color: var(--mute); }
+.slide.imp .tlab.new b { color: var(--brand-600); }
+.slide.imp .track { position: relative; --u: 8.3333%; }
+.slide.imp .track.one { height: 56px; }
+.slide.imp .track.four { height: 212px; }
+.slide.imp .axis { position: absolute; left: 0; right: 0; bottom: -14px; height: 0; border-top: 2px solid #cfd7e6; }
+.slide.imp .axis::after { content: "시간 →"; position: absolute; right: 0; top: 4px; font-size: 16px; font-weight: 700; color: var(--soft); }
+.slide.imp .blk { position: absolute; height: 46px; border-radius: 12px; display: flex; align-items: center; padding: 0 14px;
+  font-size: 20px; font-weight: 800; color: #fff; white-space: nowrap; overflow: hidden;
+  left: calc(var(--s) * var(--u)); width: calc(var(--l) * var(--u) - 6px);
+  transform-origin: left center; transform: scaleX(0); opacity: 0;
+  transition: transform .9s var(--ease), opacity .3s ease; transition-delay: calc(var(--d, 0) * 1ms); }
+.slide.imp .blk.on { transform: none; opacity: 1; }
+.slide.imp .blk.g { background: var(--brand-600); }
+.slide.imp .blk.d { background: var(--navy-3); }
+.slide.imp .blk.m { background: var(--teal); }
+.slide.imp .blk.f { background: var(--navy); }
+.slide.imp .l0 { top: 5px; }
+.slide.imp .l1 { top: 3px; }
+.slide.imp .l2 { top: 57px; }
+.slide.imp .l3 { top: 111px; }
+.slide.imp .l4 { top: 165px; }
+.slide.imp .saved { position: absolute; top: 0; bottom: 0; left: calc(6 * var(--u)); right: 0; border: 2px dashed var(--cyan); border-radius: 14px;
+  background: rgba(34, 211, 238, .10); display: grid; place-content: center; text-align: center; }
+.slide.imp .saved b { font-size: 26px; font-weight: 800; color: var(--teal); }
+.slide.imp .saved span { display: block; margin-top: 4px; font-size: 17px; font-weight: 600; color: var(--mute); }
+.slide.imp .eg { margin-top: 18px; display: flex; justify-content: space-between; font-size: 17px; font-weight: 600; color: var(--soft); }
+.slide.imp .three { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; margin-top: 22px; }
+.slide.imp .step { padding: 22px 28px; display: flex; gap: 18px; align-items: flex-start; }
+.slide.imp .step .no { flex: none; width: 46px; height: 46px; border-radius: 14px; background: var(--brand-600); color: #fff; display: grid; place-items: center; font-size: 25px; font-weight: 800; }
+.slide.imp .step h3 { font-size: 27px; font-weight: 800; letter-spacing: -.03em; line-height: 1.3; }
+.slide.imp .step p { margin-top: 8px; font-size: 20px; line-height: 1.5; color: var(--mute); font-weight: 600; }
+.slide.imp .note { margin-top: 18px; padding: 20px 34px; border-radius: 18px; background: var(--navy); color: #fff; display: flex; align-items: center; gap: 20px; font-size: 27px; font-weight: 700; line-height: 1.4; }
+.slide.imp .note i { font-style: normal; flex: none; padding: 6px 16px; border-radius: 999px; background: rgba(34, 211, 238, .18); color: var(--cyan); font-size: 18px; font-weight: 800; letter-spacing: .1em; }
+.slide.imp .note b { color: var(--cyan); font-weight: 800; }
+.slide.imp .cmp { margin-top: 22px; padding: 26px 30px 28px; display: grid; grid-template-columns: 640px 1fr; gap: 34px; }
+.slide.imp .cmp h4 { font-size: 30px; font-weight: 800; letter-spacing: -.02em; }
+.slide.imp .cmp h4 small { margin-left: 12px; font-size: 20px; font-weight: 600; color: var(--mute); }
+.slide.imp .cmp .new h4 { color: var(--brand-600); }
+.slide.imp .cmp .new h4 small { color: var(--teal); }
+.slide.imp .cmp .old { padding-right: 34px; border-right: 1.5px dashed var(--line); }
+.slide.imp .grid3 { margin-top: 20px; display: grid; gap: 16px; align-items: stretch; }
+.slide.imp .grid3.o { grid-template-columns: 190px 52px 1fr; grid-template-rows: repeat(3, 76px); }
+.slide.imp .grid3.n { grid-template-columns: 190px 44px 270px 44px 1fr; grid-template-rows: repeat(3, 76px); }
+.slide.imp .pj { border-radius: 16px; background: #fff; border: 1.5px solid var(--line); display: flex; align-items: center; justify-content: center; font-size: 25px; font-weight: 800; }
+.slide.imp .pj.a { border-left: 7px solid var(--brand-500); }
+.slide.imp .pj.b { border-left: 7px solid #0e7490; }
+.slide.imp .pj.c { border-left: 7px solid #d97706; }
+.slide.imp .xarr { display: grid; place-items: center; font-size: 34px; font-weight: 800; color: var(--brand-500); }
+.slide.imp .model { border-radius: 18px; background: var(--navy); color: #fff; display: grid; place-content: center; text-align: center; padding: 10px; }
+.slide.imp .model b { display: block; font-size: 30px; font-weight: 800; letter-spacing: -.02em; }
+.slide.imp .model span { display: block; margin-top: 8px; font-size: 20px; font-weight: 600; color: #a9b4c8; line-height: 1.4; }
+.slide.imp .model.mix { background: #3b2a2a; }
+.slide.imp .model.mix span { color: #f4c9a8; }
+.slide.imp .ad { border-radius: 16px; display: grid; place-content: center; text-align: center; font-size: 24px; font-weight: 800; }
+.slide.imp .ad small { display: block; margin-top: 2px; font-size: 16px; font-weight: 600; }
+.slide.imp .ad.a { background: var(--brand-50); border: 2px solid var(--brand-500); color: var(--brand-700); }
+.slide.imp .ad.b { background: #ecfeff; border: 2px solid #0e7490; color: #0e7490; }
+.slide.imp .ad.c { background: var(--amber-bg); border: 2px solid #d97706; color: var(--amber-ink); }
+.slide.imp .flow3 { margin-top: 22px; display: grid; grid-template-columns: 1fr 46px 1fr 46px 1fr; align-items: stretch; }
+.slide.imp .flow3 .step { height: 100%; }
+.slide.imp .flow3 .gap { display: grid; place-items: center; font-size: 34px; font-weight: 800; color: var(--brand-500); }
+.slide.imp .s9 .gridwrap { margin-top: 0; }
+.slide.imp.dark .tag { border-color: rgba(255, 255, 255, .35); color: #cfe0ff; }
+.slide.imp.dark .body { top: 150px; bottom: 110px; }
+.slide.imp.dark .head { margin-bottom: 44px; }
+.slide.imp.dark .eyebrow { color: var(--cyan); font-weight: 700; margin-bottom: 18px; }
+.slide.imp.dark h1 { font-size: 60px; letter-spacing: -.025em; }
+.slide.imp.dark .blue { color: #6ea8ff; }
+.slide.imp .close { display: grid; gap: 18px; max-width: 1500px; }
+.slide.imp .cr { display: grid; grid-template-columns: 1fr 70px 1fr; align-items: center; padding: 0 44px; height: 112px; border-radius: 20px; background: rgba(255, 255, 255, .06); border: 1px solid rgba(255, 255, 255, .12); }
+.slide.imp .cr .a { font-size: 30px; color: #8390aa; font-weight: 600; text-decoration: line-through; text-decoration-color: rgba(131, 144, 170, .5); }
+.slide.imp .cr .b { font-size: 36px; font-weight: 800; letter-spacing: -.02em; }
+.slide.imp .cr svg { width: 34px; height: 34px; stroke: var(--cyan); }
+.slide.imp .final { margin-top: 56px; font-size: 54px; line-height: 1.35; font-weight: 800; letter-spacing: -.03em; }
+.slide.imp .final span { color: #6ea8ff; }
+.slide.imp.qa .body { top: 116px; bottom: 56px; justify-content: center; }
+.slide.imp.qa .qa-c { text-align: center; }
+.slide.imp.qa h1 { font-size: 88px; margin: 28px 0 36px; }
+.slide.imp.qa p { font-size: 34px; color: #8390aa; font-weight: 600; }
+.slide.imp.end .body { top: 140px; bottom: 100px; }
+.slide.imp.end .head { margin-bottom: 0; }
+.slide.imp.end h1 { font-size: 60px; margin-top: 44px; }
+.slide.imp.end .talk { width: 88%; margin: 0 auto; }
+.slide.imp.end .msg .q { font-style: normal; font-weight: 900; color: var(--cyan); }
+.slide.imp.end .msg.mgr .q { color: #ffe066; }
+.slide.imp.end .talk .arrow svg { stroke: var(--cyan); }
+.slide.imp.end .msg.cust { background: rgba(255, 255, 255, .08); border: 1px solid rgba(255, 255, 255, .16); box-shadow: none; color: #fff; }
+.slide.imp.end .msg.cust .who-l { color: #8390aa; }
+.slide.imp .saved { opacity: 0; transition: opacity .7s ease; transition-delay: calc(var(--d, 0) * 1ms); }
+.slide.imp .saved.on { opacity: 1; }
+@media (prefers-reduced-motion: reduce) {
+  .slide.imp .rv, .slide.imp .blk { transition-duration: .01s; transform: none; }
+}
+:root { --teal: #0e7490; --amber: #fbbf24; }
+</style>
+</head>
+<body>
+
+<!-- 로고 마크: 육각형 안에 상승하는 꺾은선 -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <linearGradient id="lg" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#22d3ee"/><stop offset="1" stop-color="#2563eb"/>
+    </linearGradient>
+    <symbol id="logo" viewBox="0 0 40 40">
+      <path d="M20 2 36 11v18L20 38 4 29V11z" fill="url(#lg)"/>
+      <polyline points="11,25 17,18 22,22 29,13" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+  </defs>
+</svg>
+
+<div id="app">
+  <div id="view">
+    <div id="stage">
+
+      <section class="slide dark" data-steps="4">
+        <div class="topbar"><div class="brand"><svg><use href="#logo"/></svg>doenaai</div><div class="tag">AGENDA</div></div>
+        <div class="body"><div class="cover">
+          <div>
+            <div class="logo-big rv"><svg><use href="#logo"/></svg><span class="eyebrow" style="margin:0">AI 요구사항 분석 플랫폼</span></div>
+            <h1 class="rv" style="--d:150">Doena AI<br>플랫폼</h1>
+            <p class="lead rv" style="--d:300">고객의 요구사항을 실제 소스와 DB 분석으로 연결합니다.</p>
+          </div>
+          <div class="toc">
+            <div class="toc-row rv" data-s="1"><span class="no">01</span><div><h3>배경과 문제</h3><p>되나AI를 개발하게 된 이유</p></div></div>
+            <div class="toc-row rv" data-s="2"><span class="no">02</span><div><h3>주요 기능과 서비스 구조</h3><p>되나AI가 하는 일과 구성</p></div></div>
+            <div class="toc-row rv" data-s="3"><span class="no">03</span><div><h3>시연</h3><p>실제로 어떻게 활용하는지 영상으로 확인</p></div></div>
+            <div class="toc-row rv" data-s="4"><span class="no">04</span><div><h3>개선 및 발전 방향</h3><p>현재 기능을 바탕으로 앞으로 나아갈 부분</p></div></div>
+          </div>
+        </div></div>
+        <div class="notes-src">
+          <p data-s="0">그럼 발표를 시작하겠습니다. 안녕하세요. 발표를 맡게 된 공공AX1팀 박인수 책임입니다. 오늘 발표는 크게 네 가지 순서로 진행하겠습니다.</p>
+          <p data-s="1">먼저, 저희가 되나AI를 개발하게 된 이유에 대해서 말씀드리겠습니다.</p>
+          <p data-s="2">다음으로 되나AI의 주요 기능과 서비스 구조를 소개하고,</p>
+          <p data-s="3">실제 시연 영상을 통해 어떻게 구현했는지 보여드리겠습니다.</p>
+          <p data-s="4">마지막으로 현재 구현된 기능을 바탕으로 앞으로 어떤 부분을 개선하고 발전시켜 나갈지 말씀드리겠습니다.</p>
+        </div>
+      </section>
+
+      <section class="slide" data-steps="3">
+        <div class="topbar"><div class="brand"><svg><use href="#logo"/></svg>doenaai</div><div class="tag">PROBLEM 1</div></div>
+        <div class="body">
+          <div class="head">
+            <div class="eyebrow rv">유지보수 업무에서 느낀 불편함</div>
+            <h1 class="rv" style="--d:120">요청은 <span class="blue">한 줄</span>인데,<br>답변하는 데는 <span class="blue">하루</span>가 걸립니다.</h1>
+          </div>
+          <div class="talk">
+            <div class="msg-col">
+              <div class="msg cust rv" data-s="1"><div class="who-l">고객</div>책임님~<br>심의 단계에서 검증하는 기능을 추가할 수 있을까요?</div>
+            </div>
+            <div class="arrow rv fade" data-s="2"><svg viewBox="0 0 24 24" fill="none" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+            <div class="msg-col">
+              <div class="msg mgr rv" data-s="2"><div class="who-l">담당자</div>요청하신 내용 확인해 보겠습니다.<br>기존 로직에 어떤 영향이 있을지 검토가 필요해서, 확인 후 다시 말씀드리겠습니다.
+                <div class="status"><span>기존 코드 확인 중</span><i>›</i><span>영향도 분석 중</span><i>›</i><span>작업량 검토 중</span></div>
+              </div>
+              <div class="skills rv" data-s="3">
+                <div><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 7l-5 5 5 5M16 7l5 5-5 5"/></svg>소스 코드 분석</div>
+                <div><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="2.5"/><circle cx="5" cy="19" r="2.5"/><circle cx="19" cy="19" r="2.5"/><path d="M12 7.5v4M12 11.5L6.5 17M12 11.5l5.5 5.5"/></svg>영향 범위 확인</div>
+                <div><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>작업량 및 일정 산정</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="footnote">※ 실제 업무 과정을 설명하기 위한 예시 화면입니다.</div>
+        <div class="notes-src">
+          <p data-s="0">현재 저희는 소상공인24 경영안전바우처팀에서 유지보수 업무를 하고 있습니다. 일을 하다보면 고객의 요청은 매일 들어옵니다. 이 요청 중에서 간단한 요청도 있지만 기능에 대한 개선이나 추가 요청이 들어오는 경우도 있습니다. 이 때 고객의 요청은 한 줄로 들어옵니다.</p>
+          <p data-s="1">고객 : “책임님~ 심의 단계에서 검증하는 기능을 추가할 수 있을까요?”</p>
+          <p data-s="2">담당자 : “요청하신 내용 확인해 보겠습니다. 기존 로직에 어떤 영향이 있을지 검토가 필요해서, 확인 후 다시 말씀드리겠습니다.”</p>
+          <p data-s="3">고객에게는 간단한 질문이지만, 저희가 답변하기 위해서는 소스 코드를 분석하고, 수정이 필요한 부분과 다른 기능에 미치는 영향, 작업량과 일정까지 확인해야 합니다. 이처럼 간단한 요청 하나에도 답변하기까지 여러 단계의 분석 과정이 필요합니다.</p>
+        </div>
+      </section>
+
+      <section class="slide" data-steps="3">
+        <div class="topbar"><div class="brand"><svg><use href="#logo"/></svg>doenaai</div><div class="tag">PROBLEM 2</div></div>
+        <div class="body"><div class="split">
+          <div>
+            <div class="eyebrow rv">기능 개선 요청 이후, 실제 업무 과정</div>
+            <h1 class="rv" style="--d:120">개발보다 오래 걸리는 건,<br><span class="blue">분석</span>입니다.</h1>
+            <div class="rank">
+              <div class="hi rv" data-s="1" style="--d:0"><i>1</i>영향도 분석 및 작업량 산정<b>30%</b></div>
+              <div class="hi rv" data-s="1" style="--d:120"><i>2</i>기존 시스템 분석<b>25%</b></div>
+              <div class="rv" data-s="1" style="--d:240"><i>3</i>기능 구현<b>20%</b></div>
+              <div class="rv" data-s="1" style="--d:360"><i>4</i>테스트 및 검증<b>15%</b></div>
+              <div class="hi rv" data-s="1" style="--d:480"><i>5</i>요구사항 분석<b>10%</b></div>
+            </div>
+            <div class="callout rv" data-s="3">구현하는 시간보다 <b>“분석하는 시간”</b>이 더 깁니다.<br>그동안 고객은 답을 기다립니다.</div>
+          </div>
+          <div>
+            <div class="donut-wrap rv fade" data-s="1">
+              <svg viewBox="0 0 120 120">
+                <circle cx="60" cy="60" r="46" fill="none" stroke="#e8ecf4" stroke-width="15"/>
+                <circle class="seg hi rv fade" data-s="1" pathLength="100" cx="60" cy="60" r="46" stroke="#2563eb" style="--len:29.2;--rest:70.8;--off:0;--d:200"/>
+                <circle class="seg hi rv fade" data-s="1" pathLength="100" cx="60" cy="60" r="46" stroke="#22d3ee" style="--len:24.2;--rest:75.8;--off:-30;--d:700"/>
+                <circle class="seg rv fade" data-s="1" pathLength="100" cx="60" cy="60" r="46" stroke="#93c5fd" style="--len:19.2;--rest:80.8;--off:-55;--d:1200"/>
+                <circle class="seg rv fade" data-s="1" pathLength="100" cx="60" cy="60" r="46" stroke="#dbe3f0" style="--len:14.2;--rest:85.8;--off:-75;--d:1600"/>
+                <circle class="seg hi rv fade" data-s="1" pathLength="100" cx="60" cy="60" r="46" stroke="#0e7490" style="--len:9.2;--rest:90.8;--off:-90;--d:1900"/>
+              </svg>
+              <div class="donut-center rv fade" data-s="2"><b>65%</b><span>분석 업무가<br>차지하는 비중</span></div>
+            </div>
+          </div>
+        </div></div>
+        <div class="footnote">※ 경영안전바우처 유지보수팀의 업무 경험을 바탕으로 산정한 주관적 추정치입니다.</div>
+        <div class="notes-src">
+          <p data-s="1">실제 저희 유지보수팀의 경험을 바탕으로, 기능 개선이나 추가 요청이 들어왔을 때 업무 비중을 주관적으로 시각화해 봤습니다. 보시는 것처럼 기존 시스템 분석에 25%, 영향도 분석 및 작업량 산정에 30%, 요구사항 분석에 10%로,</p>
+          <p data-s="2">분석 업무가 전체의 65%를 차지합니다. 즉, 실제 기능을 구현하는 시간보다 분석에 더 많은 시간이 소요되는 것입니다.</p>
+          <p data-s="3">그리고 이 분석이 끝나고 답을 내리기 전까지, 고객은 계속 답변을 기다립니다. 저희는 바로 이 분석 시간을 줄이는 것에서 출발했습니다.</p>
+        </div>
+      </section>
+
+      <section class="slide" data-steps="4">
+        <div class="topbar"><div class="brand"><svg><use href="#logo"/></svg>doenaai</div><div class="tag">WHY DOENAAI</div></div>
+        <div class="body">
+          <div class="head" style="margin-bottom:34px">
+            <div class="eyebrow rv">기존 방식의 한계</div>
+            <h1 class="rv" style="--d:120">문제는 <span class="blue">시간만</span>이 아니었습니다.</h1>
+            <p class="sub rv" style="--d:240">분석 결과를 판단하고, 고객에게 전달하는 과정에도 한계가 있었습니다.</p>
+          </div>
+          <div class="lims">
+            <div class="card lim rv" data-s="1">
+              <span class="lim-no">한계 1</span>
+              <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6"/><circle cx="17.5" cy="9" r="2.5"/><path d="M17 14.2c2.6.1 4.5 1.8 4.5 4.8"/></svg></span>
+              <h3>담당자에 따른 분석 편차</h3>
+              <p>경험과 지식에 따라<br>분석 결과가 달라질 수 있습니다</p>
+            </div>
+            <div class="card lim rv" data-s="2">
+              <span class="lim-no">한계 2</span>
+              <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/><path d="M8.5 11h7M8.5 14.5h4"/></svg></span>
+              <h3>고객과 개발자 간의 소통</h3>
+              <p>기술적인 분석 결과를<br>고객이 이해하기 쉽게 설명해야 합니다</p>
+            </div>
+            <div class="card lim rv" data-s="3">
+              <span class="lim-no">한계 3</span>
+              <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 14l2 2 4-4"/></svg></span>
+              <h3>분석 근거의 확인과 공유</h3>
+              <p>결과를 검토하고<br>설명할 수 있는 근거가 필요합니다</p>
+            </div>
+          </div>
+          <div class="namebar2 rv" data-s="4"><h2>“이 기능, <span>되나요?</span>”</h2><p>고객의 질문에서 출발해, 실제 시스템을 분석하고 근거 있는 답변을 제시하는 플랫폼입니다.</p></div>
+        </div>
+        <div class="notes-src">
+          <p data-s="0">분석 시간 말고도 한계가 있었습니다. 분석 결과를 판단하고, 고객에게 전달하는 과정에서도 어려움이 있었는데요.</p>
+          <p data-s="1">첫 번째로 담당자의 경험과 지식에 따라 분석 결과에 차이가 생길 수 있습니다.</p>
+          <p data-s="2">두 번째는 기술적인 분석 결과를 고객이 이해하기 쉽게 설명해야 하는 소통의 어려움이 있습니다.</p>
+          <p data-s="3">마지막으로 분석 결과를 검토하고 다른 사람에게 설명하려면 근거가 필요한데, 이를 확인하고 공유하기가 쉽지 않습니다. 결국 저희가 해결하고 싶었던 건, 고객의 요청에 명확한 근거를 바탕으로 답변하는 일이었습니다. 그 고민을 가장 잘 보여주는 질문이 있습니다.</p>
+          <p data-s="4">"이 기능, 되나요?" 고객의 질문에서 시작해 실제 시스템을 분석하고, 근거를 바탕으로 답변한다는 의미를 담아 '되나AI'라고 이름을 지었습니다.</p>
+        </div>
+      </section>
+
+      <section class="slide" data-steps="4">
+        <div class="topbar"><div class="brand"><svg><use href="#logo"/></svg>doenaai</div><div class="tag">THE PLATFORM</div></div>
+        <div class="body">
+          <div class="head">
+            <div class="eyebrow rv">그래서, 되나AI를 만들었습니다</div>
+            <h1 class="rv" style="--d:120">고객의 요구사항 한 줄에서,<br><span class="blue">근거 있는 견적까지.</span></h1>
+          </div>
+          <div class="feat">
+            <div class="card ft main rv" data-s="1">
+              <span class="no">CORE 1</span>
+              <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg></div>
+              <h3>영향 범위를 한눈에</h3>
+              <p>요구사항이 영향을 주는 기능·화면·파일을 실제 소스 코드와 DB 구조에서 찾아, 근거와 함께 알려줍니다.</p>
+            </div>
+            <div class="card ft rv" data-s="2">
+              <span class="no">CORE 2</span>
+              <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6"/><path d="M16 5.5a3.5 3.5 0 0 1 0 6M18 14.4c2 .7 3.5 2.6 3.5 5.6"/></svg></div>
+              <h3>눈높이에 맞는 결과</h3>
+              <p>고객이 이해하기 쉬운 한 줄 요약과, 개발자가 확인할 기술 분석 내용을 함께 제공합니다.</p>
+            </div>
+            <div class="card ft rv" data-s="3">
+              <span class="no">CORE 3</span>
+              <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 4.5-3.2 8-8 9-4.8-1-8-4.5-8-9V6z"/><path d="M8.5 12l2.5 2.5 4.5-5"/></svg></div>
+              <h3>근거와 함께 검토</h3>
+              <p>분석 결과와 관련 근거를 함께 제공하고, 담당자가 승인하거나 반려하며 최종 판단은 사람이 내립니다.</p>
+            </div>
+          </div>
+          <div class="principle rv" data-s="4" style="margin-top:40px"><i>원칙</i>실제 시스템을 분석하고, 근거를 제시하며, 사람이 검토합니다.</div>
+        </div>
+        <div class="footnote">※ 현재 구현 범위는 요구사항의 영향 분석과 검토까지이며, 견적 산출은 다음 목표입니다.</div>
+        <div class="notes-src">
+          <p data-s="0">요구사항 한 줄에서 근거 있는 견적까지가 저희가 바라보는 방향이고, 현재 구현된 범위는 영향 분석과 검토까지입니다.</p>
+          <p data-s="1">저희 되나 AI는 고객의 요구사항이 영향을 주는 범위를 실제 소스 코드와 DB 구조에서 찾아서, 근거와 함께 알려줍니다.</p>
+          <p data-s="2">고객은 이해하기 쉬운 한 줄 요약을, 개발자는 확인할 기술 분석 내용을 함께 볼 수 있습니다.</p>
+          <p data-s="3">분석 결과와 관련 근거를 함께 제공하고, 담당자가 승인하거나 반려합니다. 최종 판단은 사람이 내리도록 구현했습니다.</p>
+          <p data-s="4">정리하면, 되나AI는 실제 시스템을 분석하고, 근거를 제시하며, 사람이 최종 검토합니다.</p>
+        </div>
+      </section>
+
+      <section class="slide" data-steps="4">
+        <div class="topbar"><div class="brand"><svg><use href="#logo"/></svg>doenaai</div><div class="tag">HOW IT WORKS</div></div>
+        <div class="body">
+          <div class="head" style="margin-bottom:26px">
+            <div class="eyebrow rv">되나AI는 어떻게 답할까요?</div>
+            <h1 class="rv" style="--d:120">먼저 근거를 준비하고, <span class="blue">필요한 근거를 찾아</span> 답변합니다.</h1>
+          </div>
+          <div class="how">
+            <div class="card stg rv" data-s="1">
+              <span class="no">1</span>
+              <div class="stg-b"><h3>프로젝트 사전 분석</h3><p>소스와 DB 구조에서 근거를 만들어 저장해 둡니다</p></div>
+              <div class="stg-f"><span class="chip2">소스 코드 · DB 구조 분석</span><i>›</i><span class="chip2">분석 정보 저장 · 색인</span></div>
+            </div>
+            <div class="down rv fade" data-s="2"><svg viewBox="0 0 24 24" fill="none" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M6 13l6 6 6-6"/></svg></div>
+            <div class="card stg rag glow rv" data-s="2">
+              <span class="no">2</span>
+              <div class="stg-b"><h3>질문에 맞는 근거 검색</h3><p>RAG: 질문과 관련된 근거만 골라냅니다</p></div>
+              <div class="stg-f"><span class="chip2">사용자 질문 (요구사항)</span><i>›</i><span class="chip2">관련 소스·DB 정보 검색</span></div>
+            </div>
+            <div class="down rv fade" data-s="3"><svg viewBox="0 0 24 24" fill="none" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M6 13l6 6 6-6"/></svg></div>
+            <div class="card stg dk rv" data-s="3">
+              <span class="no">3</span>
+              <div class="stg-b"><h3>근거 기반 답변 생성</h3><p>근거와 함께 쉬운 요약과 기술 분석을 만듭니다</p></div>
+              <div class="stg-f"><span class="chip2">질문 + 검색된 근거</span><i>›</i><span class="chip2">AI 분석 결과 생성</span></div>
+            </div>
+          </div>
+          <div class="msgbar rv" data-s="4">프로젝트 분석부터 질문에 맞는 근거 검색까지, 더 정확한 AI 답변을 위한 기반을 만듭니다.</div>
+        </div>
+        <div class="footnote"><span class="rv fade" data-s="1" style="display:inline-block">※ DB는 구조만 읽기 전용으로 읽습니다.</span> <span class="rv fade" data-s="4" style="display:inline-block;margin-left:14px">근거가 적은 작은 프로젝트는 전체 근거를 그대로 전달합니다.</span></div>
+        <div class="notes-src">
+          <p data-s="0">그러면 되나AI는 어떻게 필요한 근거를 찾을까요?</p>
+          <p data-s="1">먼저 프로젝트를 등록하면 실제 소스 코드와 DB 구조를 조회해 구조와 연결 관계를 분석하고, 그 근거를 저장해 검색할 수 있게 색인해 둡니다.</p>
+          <p data-s="2">그다음, 고객이나 개발자가 요구사항을 질문하면 프로젝트 전체를 다시 보지 않고, 질문과 관련된 소스 코드와 DB 정보만 검색합니다.</p>
+          <p data-s="3">마지막으로 질문과 검색된 근거를 함께 AI 모델에 전달해 답변을 생성합니다.</p>
+          <p data-s="4">정리하면, 프로젝트 분석부터 질문에 맞는 근거 검색까지, 더 정확한 AI 답변을 위한 기반을 만듭니다.</p>
+        </div>
+      </section>
+
+      <section class="slide v5" data-steps="9">
+        <div class="topbar"><div class="brand"><svg><use href="#logo"/></svg>doenaai</div><div class="tag">ARCHITECTURE</div></div>
+        <div class="body">
+          <div class="head" style="margin-bottom:8px">
+            <div class="eyebrow rv" style="margin-bottom:8px">시스템 구성</div>
+            <h1 class="rv" style="--d:120;font-size:42px">서버마다 맡은 일, 그리고 <span class="blue">서버 사이로 흐르는 과정</span></h1>
+          </div>
+          <div class="srv5 rv" style="--d:200">
+            <div class="card node app" data-n="1"><div class="k">WEB</div><h4>웹 화면</h4><p>입력 · 결과 확인</p>
+              <dl class="spec"><dt>기술</dt><dd>Vue 3 · Vite 6</dd><dt>로그인</dt><dd>Supabase Auth</dd></dl></div>
+            <div class="card node app" data-n="2"><div class="k">WAS</div><h4>서비스 서버</h4><p>권한 · 근거 수집 · 저장</p>
+              <dl class="spec"><dt>기술</dt><dd>Spring Boot 4.1</dd><dt>수집</dt><dd>JGit · JDBC</dd><dt>저장</dt><dd>Supabase PostgreSQL</dd></dl></div>
+            <div class="mac">
+              <div class="card node ai" data-n="3"><div class="k">AI SERVER</div><h4>AI 분석 서버</h4><p>색인 · 검색 · 검증</p>
+                <dl class="spec"><dt>서버</dt><dd>FastAPI</dd><dt>검색</dt><dd>BM25 + bge-m3</dd><dt>저장</dt><dd>SQLite</dd></dl></div>
+              <div class="card node ai eng" data-n="4"><div class="k">MODEL ENGINE</div><h4>모델 실행 엔진</h4><p>모델 로딩 · 답변 · 임베딩</p>
+                <dl class="spec"><dt>엔진</dt><dd>Ollama</dd><dt>분석</dt><dd>Qwen3.8-27B (270억)</dd><dt>임베딩</dt><dd>bge-m3</dd></dl></div>
+            </div>
+            <div class="card node ai" data-n="5"><div class="k">AI TRAINING</div><h4>AI 학습 서버</h4><p>승인 사례로 모델 조정</p>
+              <dl class="spec"><dt>장비</dt><dd>MacBook Pro · M4 Max</dd><dt>학습</dt><dd>MLX-LM 0.32.0 · LoRA</dd><dt>변환</dt><dd>llama.cpp → GGUF Q4_K_M</dd></dl></div>
+          </div>
+          <div class="card proc rv" data-s="1" style="--d:300">
+<div class="det app" data-s="1" style="--x:163px">
+  <div class="det-top"><span class="badge">WEB</span><h3>웹 화면</h3><span class="one">프로젝트를 등록하고, 요구사항의 영향도를 확인한다</span></div>
+  <div class="stg"><div class="an win" style="--t:.2"><div class="wbar"><i></i><i></i><i></i><b>doenaai</b></div><div class="pane po" style="--t:.2"><h5>프로젝트 등록<small>STEP 1</small></h5><div class="fr"><span>프로젝트 이름</span><div><b class="ty" style="--t:.8">주문 관리 시스템</b></div></div><div class="fr"><span>Git 저장소 주소</span><div><b class="ty" style="--t:2.0;font-family:Consolas,monospace;font-size:20px">https://github.com/shop/order.git</b></div></div><div class="fr"><span>DB 연결</span><div><b class="ty" style="--t:3.4">🔒 읽기 전용 계정 · order-db</b></div></div><div class="an pbtn pr" style="--t:4.8">분석 시작</div></div><div class="pane an" style="--t:7.8;opacity:0"><h5>요구사항 입력<small>STEP 2</small></h5><div class="fr"><span>요구사항</span><div><b class="ty" style="--t:8.4">환불 사유 입력 기능을 추가하고 싶어요</b></div></div><div class="fr"><span>우선순위</span><div style="background:none;border:none;padding:0"><span class="pr2">보통</span></div></div><div class="an pbtn pr" style="--t:10.0">요구사항 입력</div><div class="an res" style="--t:11.6">✅ 고쳐야 할 곳을 근거와 함께 알려줘요</div></div></div></div>
+</div>
+<div class="det app" data-s="2" style="--x:514px">
+  <div class="det-top"><span class="badge">WAS</span><h3>서비스 서버</h3><span class="one">실제 프로젝트의 소스와 DB 구조를 읽어 근거를 만든다</span></div>
+  <div class="stg"><div class="an pbox" style="--t:0.2;left:0;top:4px;width:390px;height:176px"><h6>📁 프로젝트 소스 <small style="font-weight:600;color:var(--mute);font-size:18px">Git 저장소</small></h6><div class="r">OrderController.java</div><div class="r">OrderService.java</div><div class="r">order-list.vue</div></div><div class="an pbox db" style="--t:0.8;left:0;top:204px;width:390px;height:176px"><h6>🗄️ 고객 DB <span class="lock">🔒 읽기만 해요</span></h6><div class="r">order</div><div class="r">order_refund</div><div class="r">member</div></div><div class="an " style="--t:1.2;left:470px;top:8px"><span class="tool">JGit</span></div><div class="an " style="--t:1.2;left:470px;top:208px"><span class="tool g">JDBC</span></div><div class="lane an" style="--t:1.4;left:400px;top:98px;width:250px"></div><div class="lane an" style="--t:1.6;left:400px;top:298px;width:250px"></div><div class="pk pkc " style="--t:2.0;--dx:205px;left:405px;top:78px">Order.java</div><div class="pk pkc " style="--t:2.8;--dx:205px;left:405px;top:78px">Service.java</div><div class="pk pkc " style="--t:3.6;--dx:205px;left:405px;top:78px">order-list.vue</div><div class="pk pkc t" style="--t:2.4;--dx:190px;left:405px;top:278px">order</div><div class="pk pkc t" style="--t:3.2;--dx:190px;left:405px;top:278px">order_refund</div><div class="pk pkc t" style="--t:4.0;--dx:190px;left:405px;top:278px">member</div><div class="an wasbox" style="--t:1.0;left:670px;top:96px;width:340px;height:190px"><b>WAS</b><span>서비스 서버</span></div><div class="lane an" style="--t:3.6;left:1020px;top:191px;width:240px"></div><div class="pk pkc " style="--t:4.0;--dx:200px;left:1025px;top:171px">근거 모으는 중…</div><div class="an jsoncard" style="--t:3.2;left:1280px;top:36px;width:380px;height:310px"><h6>근거 JSON</h6><div class="jl an" style="--t:4.2">소스 파일 · 호출 관계</div><div class="jl an" style="--t:4.8">API 주소(라우트)</div><div class="jl an" style="--t:5.4">테이블 · 컬럼 · 연결</div><div class="cap an" style="--t:6.2;margin-top:16px;color:#7ee8fa">→ AI 분석 서버로 전달</div></div></div>
+</div>
+<div class="det ai" data-s="3" style="--x:864px">
+  <div class="det-top"><span class="badge">AI SERVER</span><h3>AI 분석 서버</h3><span class="one">① 프로젝트 분석할 때 · 작게 나눠 숫자와 함께 저장</span></div>
+  <div class="stg"><div class="an nl" style="--t:0.2;left:0px;top:14px"><i>1</i>근거 JSON 받기</div><div class="an nl" style="--t:1.4;left:440px;top:14px"><i>2</i>작게 나눠 숫자와 저장</div><div class="an nl" style="--t:4.2;left:880px;top:14px"><i>3</i>근거 전체를 모델에</div><div class="an nl" style="--t:5.8;left:1320px;top:14px"><i>4</i>응답 확인 후 저장</div><div class="an nd" style="--t:0.2;left:0;top:70px"><div class="docl"><i></i><i style="width:80%"></i><i style="width:92%"></i><i style="width:60%"></i></div><b>근거 JSON</b><span>서비스 서버가 만든 자료</span></div><div class="an arw" style="--t:1.2;left:370px;top:150px">→</div><div class="an" style="--t:1.3;left:346px;top:206px"><span class="tool g" style="font-size:17px;padding:4px 12px">bge-m3</span></div><div class="an nd n" style="--t:1.4;left:440px;top:70px"><div class="cyl"><div class="ch dp" style="--t:2.0;top:10px;opacity:0">order_refund</div><div class="ch dp" style="--t:2.5;top:36px;opacity:0">OrderService</div><div class="ch dp" style="--t:3.0;top:62px;opacity:0">member</div><div class="ch dp" style="--t:3.5;top:88px;opacity:0">order</div></div><b>SQLite</b><span>조각 + 숫자 (bge-m3)</span></div><div class="an arw" style="--t:3.5;left:810px;top:150px">→</div><div class="an nd bl" style="--t:4.2;left:880px;top:70px"><div style="font-size:46px">🤖</div><b>모델 분석</b><span>근거를 <u style="text-decoration:none;font-weight:800;color:#fff;background:rgba(255,255,255,.2);padding:2px 10px;border-radius:8px">전체</u> 그대로 전달</span></div><div class="an arw" style="--t:5.0;left:1250px;top:150px">→</div><div class="an nd" style="--t:5.8;left:1320px;top:70px"><div class="chk">✓</div><b>응답 검증</b><span>통과하면 WAS가 결과·근거를 저장</span></div><div class="an cap" style="--t:6.6;left:0;top:326px;width:1660px">요구사항 없이 프로젝트를 분석할 때 · <b style="color:var(--ink)">나중에 검색할 수 있게 먼저 저장해 두고, 이번엔 전체를 전달</b></div></div>
+</div>
+<div class="det ai" data-s="4" style="--x:864px">
+  <div class="det-top"><span class="badge">AI SERVER</span><h3>AI 분석 서버</h3><span class="one">② 요구사항을 물을 때 · 관련 있는 근거만 골라요</span></div>
+  <div class="stg"><div class="an qb" style="--t:0.2;left:0;top:6px;width:450px">“주문 환불 금액을 부분 환불도 가능하게”</div>
+  <div class="an cap" style="--t:0.8;left:4px;top:124px;width:450px;text-align:left;line-height:1.45"><b style="color:var(--brand-700)">① 낱말 일치</b><br><span style="font-size:19px;font-weight:600">같은 낱말이 있나? 한글 ↔ 영어 이름은 겹치지 않아요</span></div>
+  <div class="an cap" style="--t:1.2;left:4px;top:222px;width:450px;text-align:left;line-height:1.45"><b style="color:var(--brand-700)">② 의미 일치 (bge-m3)</b><br><span style="font-size:19px;font-weight:600">‘환불’ ≈ refund 처럼 뜻이 같은가?</span></div>
+  <div class="an cap" style="--t:5.0;left:4px;top:320px;width:450px;text-align:left;line-height:1.45"><b style="color:var(--brand-700)">③ 두 점수를 합쳐서</b> <span style="font-size:19px;font-weight:600">→ 높은 것만 골라요</span></div>
+  <div class="an sdb" style="--t:1.6;left:480px;top:0;width:760px;height:378px"><h6>SQLite<small>저장해 둔 조각</small></h6></div>
+  <div class="sr3 hd an" style="--t:1.8;top:40px;left:502px"><span>조각</span><span>① 낱말</span><span>② 의미</span><span>③ 합계</span><span style="text-align:right">결과</span></div>
+  <div class="sr3 an" style="--t:2.0;top:76px;left:502px"><span>order_refund</span><span class="cell"><i class="bar" style="--t:2.6;width:60px"></i><em>0.60</em></span><span class="cell"><i class="bar" style="--t:2.9;width:86px"></i><em>0.86</em></span><em class="sc">0.73</em><u class="">전달</u></div><div class="sr3 an" style="--t:2.14;top:132px;left:502px"><span>refund_policy</span><span class="cell"><i class="bar" style="--t:2.74;width:3px"></i><em>0.00</em></span><span class="cell"><i class="bar" style="--t:3.04;width:71px"></i><em>0.71</em></span><em class="sc">0.36</em><u class="">전달</u></div><div class="sr3 an" style="--t:2.28;top:188px;left:502px"><span>order</span><span class="cell"><i class="bar" style="--t:2.88;width:3px"></i><em>0.00</em></span><span class="cell"><i class="bar" style="--t:3.1799999999999997;width:52px"></i><em>0.52</em></span><em class="sc">0.26</em><u class="nb">함께 포함</u></div><div class="sr3 an xd" style="--t:2.42;top:244px;left:502px"><span>member</span><span class="cell"><i class="bar" style="--t:3.02;width:3px"></i><em>0.00</em></span><span class="cell"><i class="bar" style="--t:3.32;width:18px"></i><em>0.18</em></span><em class="sc">0.00</em><u class="x">제외</u></div><div class="sr3 an xd" style="--t:2.56;top:300px;left:502px"><span>notice_board</span><span class="cell"><i class="bar" style="--t:3.16;width:3px"></i><em>0.00</em></span><span class="cell"><i class="bar" style="--t:3.46;width:9px"></i><em>0.09</em></span><em class="sc">0.00</em><u class="x">제외</u></div>
+  <div class="scanln" style="left:492px;width:736px"></div>
+  <div class="an arw" style="--t:4.0;left:1252px;top:160px">→</div>
+  <div class="an bundle" style="--t:4.3;left:1310px;top:20px;width:350px"><h6>모델에 보낼 묶음</h6><div class="pkc kr">요구사항 “주문 환불 금액을 …”</div><div class="pkc an" style="--t:4.8">order_refund</div><div class="pkc an" style="--t:5.1">refund_policy</div><div class="pkc an" style="--t:5.4">order <span style="font-weight:600;color:var(--mute)">(연결된 테이블)</span></div><div class="cap an" style="--t:6.0;text-align:left;color:var(--brand-700)">→ 모델 분석 (관련 근거만)</div></div>
+  <div class="an cap" style="--t:6.4;left:1310px;top:336px;width:350px"><span style="font-size:17px">※ 이름과 점수는 이해를 돕기 위한 예시예요</span></div></div>
+</div>
+<div class="det ai" data-s="5" style="--x:1214px">
+  <div class="det-top"><span class="badge">MODEL ENGINE</span><h3>모델 실행 엔진</h3><span class="one">모델 두 개가 일해요 · 답변용 + 글을 숫자로 바꾸는 용</span></div>
+  <div class="stg"><div class="an lbl" style="--t:0.2;left:100px;top:0">분석 질문에 답하기</div>
+  <div class="an nd" style="--t:0.4;left:100px;top:34px;width:400px;height:130px;gap:4px"><div class="docl" style="width:150px;gap:7px"><i></i><i style="width:80%"></i><i style="width:92%"></i></div><b style="font-size:24px">요청서</b><span style="font-size:17px">요구사항 + 관련 근거</span></div>
+  <div class="an arw" style="--t:1.0;left:552px;top:70px">→</div>
+  <div class="an nd n pl" style="--t:1.4;left:630px;top:34px;width:400px;height:130px;gap:4px"><div style="font-size:34px">🤖</div><b style="font-size:24px">Qwen3.8-27B</b><span style="font-size:17px">읽고 분석해서 답변 만들기</span></div>
+  <div class="an arw" style="--t:2.2;left:1082px;top:70px">→</div>
+  <div class="an nd" style="--t:2.6;left:1160px;top:34px;width:400px;height:130px;gap:4px"><div class="ans" style="width:150px;gap:7px"><i class="an" style="--t:3.0"></i><i class="an" style="width:85%;--t:3.3"></i><i class="an" style="width:70%;--t:3.6"></i></div><b style="font-size:24px">분석 답변</b><span style="font-size:17px">JSON 형식</span></div>
+  <div class="an lbl" style="--t:4.2;left:100px;top:176px">글을 숫자로 바꾸기 <span style="font-size:18px;font-weight:600;color:var(--mute)">(관련 자료 찾기용)</span></div>
+  <div class="an nd" style="--t:4.4;left:100px;top:212px;width:400px;height:130px;gap:4px"><div class="mini" style="width:340px"><i>✓</i>order_refund 조각</div><div class="mini" style="width:340px;margin-top:4px"><i>✓</i>“주문 환불 금액을 …”</div></div>
+  <div class="an arw" style="--t:5.0;left:552px;top:246px">→</div>
+  <div class="an nd bl pl" style="--t:5.4;left:630px;top:210px;width:400px;height:130px;gap:4px"><div style="font-size:34px">🧭</div><b style="font-size:24px">bge-m3</b><span style="font-size:17px">임베딩 모델 · 한글과 영어를 함께 이해</span></div>
+  <div class="an arw" style="--t:6.2;left:1082px;top:246px">→</div>
+  <div class="an nd n" style="--t:6.6;left:1160px;top:212px;width:400px;height:130px;gap:4px"><div style="font:800 21px Consolas,'D2Coding',monospace;color:#7ee8fa">[0.12, -0.80, 0.33 …]</div><b style="font-size:24px">의미 숫자</b><span style="font-size:17px">뜻이 비슷하면 숫자도 비슷해요</span></div>
+  <div class="an cap" style="--t:7.4;left:0;top:352px;width:1660px">분석 모델은 <b style="color:var(--ink)">답변을 만들고</b>, 임베딩 모델은 <b style="color:var(--ink)">검색할 때 뜻을 비교할 숫자</b>를 만들어요</div></div>
+</div>
+<div class="det ai" data-s="6" style="--x:1565px">
+  <div class="det-top"><span class="badge">AI TRAINING</span><h3>AI 학습 서버</h3><span class="one">승인된 사례로 모델을 개선한다 (별도 서버)</span></div>
+  <div class="stg"><div class="an nl" style="--t:0.2;left:100px;top:14px"><i>1</i>승인된 사례</div><div class="an nl" style="--t:1.8;left:630px;top:14px"><i>2</i>모델 학습 (LoRA)</div><div class="an nl" style="--t:4.4;left:1160px;top:14px"><i>3</i>업무에 맞춘 모델</div><div class="an nd " style="--t:0.2;left:100px;top:70px;width:400px"><div class="mini an" style="--t:.5"><i>✓</i>승인된 분석 사례</div><div class="mini an" style="--t:.9"><i>✓</i>승인된 분석 사례</div><div class="mini an" style="--t:1.3"><i>✓</i>승인된 분석 사례</div><span style="margin-top:6px">사람이 확인한 사례만</span></div><div class="an arw" style="--t:1.2;left:552px;top:150px">→</div><div class="an nd n" style="--t:1.8;left:630px;top:70px;width:400px"><div style="font-size:46px">🧠</div><b>사례로 학습</b><div class="pb"><i style="--t:2.4"></i></div><span>MacBook Pro M4 Max</span></div><div class="an arw" style="--t:4.0;left:1082px;top:150px">→</div><div class="an nd bl" style="--t:4.4;left:1160px;top:70px;width:400px"><div style="font-size:46px">📦</div><b>새 모델 파일</b><span>서비스에 쓸 수 있게 변환(GGUF)</span></div><div class="an cap" style="--t:5.6;left:0;top:326px;width:1660px">승인된 사례로 <b style="color:var(--ink)">우리 업무에 맞는 모델</b>을 만들어요</div></div>
+</div>
+<div class="flow">
+            <svg class="life" viewBox="0 0 1728 504"><line x1="163" y1="44" x2="163" y2="492"/><line x1="514" y1="44" x2="514" y2="492"/><line x1="864" y1="44" x2="864" y2="492"/><line x1="1214" y1="44" x2="1214" y2="492"/><line x1="1565" y1="44" x2="1565" y2="492"/></svg>
+            <div class="ph phA">
+              <div class="ph-h"><i>①</i>프로젝트 구조 분석</div><div class="ph-n">요구사항 없이 분석할 때 · 전체 근거를 AI에 전달</div>
+              <svg class="arr" viewBox="0 0 1728 504"><defs><marker id="ahphA" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9z" fill="currentColor"/></marker></defs><path marker-end="url(#ahphA)" class="ar" d="M163 104 L163 110 L514 110 L514 114" style="--d:330"/><path marker-end="url(#ahphA)" class="ar" d="M514 170 L514 176 L864 176 L864 180" style="--d:780"/><path marker-end="url(#ahphA)" class="ar" d="M864 236 L864 242 L1214 242 L1214 246" style="--d:1230"/><path marker-end="url(#ahphA)" class="ar" d="M1214 302 L1214 308 L864 308 L864 312" style="--d:1680"/><path marker-end="url(#ahphA)" class="ar" d="M864 368 L864 374 L514 374 L514 378" style="--d:2130"/><path marker-end="url(#ahphA)" class="ar" d="M514 434 L514 440 L163 440 L163 444" style="--d:2580"/></svg>
+              <div class="bx c0 " style="left:13px;top:50px;--d:0"><h5>프로젝트 등록·분석 요청</h5><p>접속 정보 입력</p></div>
+              <div class="bx c1 " style="left:364px;top:116px;--d:450"><h5>소스·DB 구조 조회</h5><p>근거 JSON 생성</p></div>
+              <div class="bx c2 idx" style="left:714px;top:182px;--d:900"><h5>근거 색인·요청 구성</h5><p>SQLite 저장(+bge-m3) · 전체 근거</p></div>
+              <div class="bx c3 " style="left:1064px;top:248px;--d:1350"><h5>모델 분석</h5><p>프롬프트로 답변 생성</p></div>
+              <div class="bx c2 " style="left:714px;top:314px;--d:1800"><h5>응답 검증</h5><p>JSON 규격 확인</p></div>
+              <div class="bx c1 " style="left:364px;top:380px;--d:2250"><h5>결과·근거 저장</h5><p>PostgreSQL</p></div>
+              <div class="bx c0 " style="left:13px;top:446px;--d:2700"><h5>결과 확인</h5><p>저장된 결과 조회</p></div>
+            </div>
+            <div class="ph phB">
+              <div class="ph-h"><i>②</i>요구사항 분석</div><div class="ph-n">요구사항을 넣어 분석할 때 · 관련 근거만 골라 모델에 전달</div>
+              <svg class="arr" viewBox="0 0 1728 504"><defs><marker id="ahphB" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9z" fill="currentColor"/></marker></defs><path marker-end="url(#ahphB)" class="ar" d="M163 104 L163 110 L514 110 L514 114" style="--d:330"/><path marker-end="url(#ahphB)" class="ar" d="M514 170 L514 176 L864 176 L864 180" style="--d:780"/><path marker-end="url(#ahphB)" class="ar" d="M864 236 L864 242 L1214 242 L1214 246" style="--d:1230"/><path marker-end="url(#ahphB)" class="ar" d="M1214 302 L1214 308 L864 308 L864 312" style="--d:1680"/><path marker-end="url(#ahphB)" class="ar" d="M864 368 L864 374 L514 374 L514 378" style="--d:2130"/><path marker-end="url(#ahphB)" class="ar" d="M514 434 L514 440 L163 440 L163 444" style="--d:2580"/></svg>
+              <div class="bx c0 " style="left:13px;top:50px;--d:0"><h5>요구사항 입력</h5><p>“이 기능, 되나요?”</p></div>
+              <div class="bx c1 " style="left:364px;top:116px;--d:450"><h5>근거 준비·전달</h5><p>재사용/재수집 + 요구사항</p></div>
+              <div class="bx c2 rag" style="left:714px;top:182px;--d:900"><h5>RAG 검색·요청 구성</h5><p>BM25 + bge-m3 점수로 선택</p></div>
+              <div class="bx c3 " style="left:1064px;top:248px;--d:1350"><h5>모델 분석 (3단계)</h5><p>일반 분석 · DB 검토 · 최종 정리</p></div>
+              <div class="bx c2 " style="left:714px;top:314px;--d:1800"><h5>응답 검증</h5><p>JSON 규격 확인</p></div>
+              <div class="bx c1 " style="left:364px;top:380px;--d:2250"><h5>결과·근거 저장</h5><p>PostgreSQL</p></div>
+              <div class="bx c0 " style="left:13px;top:446px;--d:2700"><h5>결과 확인·검토</h5><p>근거 확인 후 승인·반려</p></div>
+            </div>
+            <div class="ph phC">
+              <div class="ph-h"><i>③</i>모델 학습과 적용</div><div class="ph-n">분석과는 별도 과정 · 학습·변환·게시</div>
+              <svg class="arr" viewBox="0 0 1728 504"><defs><marker id="ahphC" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9z" fill="currentColor"/></marker></defs><path marker-end="url(#ahphC)" class="ar dash" d="M514 104 L514 110 L864 110 L864 114" style="--d:330"/><path marker-end="url(#ahphC)" class="ar dash" d="M864 170 L864 176 L1565 176 L1565 180" style="--d:780"/><path marker-end="url(#ahphC)" class="ar dash" d="M1565 236 L1565 242 L1565 242 L1565 246" style="--d:1230"/><path marker-end="url(#ahphC)" class="ar dash" d="M1565 302 L1565 308 L864 308 L864 312" style="--d:1680"/><path marker-end="url(#ahphC)" class="ar dash" d="M864 368 L864 374 L1214 374 L1214 378" style="--d:2130"/></svg>
+              <div class="bx c1 " style="left:364px;top:50px;--d:0"><h5>승인 사례 확정</h5><p>승인 분석을 학습 자료로</p></div>
+              <div class="bx c2 " style="left:714px;top:116px;--d:450"><h5>학습 자료 게시</h5><p>공유 폴더에 게시</p></div>
+              <div class="bx c4 " style="left:1415px;top:182px;--d:900"><h5>LoRA 학습</h5><p>MLX-LM으로 사례 학습</p></div>
+              <div class="bx c4 " style="left:1415px;top:248px;--d:1350"><h5>변환·게시</h5><p>GGUF Q4_K_M → 공유 폴더</p></div>
+              <div class="bx c2 " style="left:714px;top:314px;--d:1800"><h5>모델 등록·전환</h5><p>완성 모델 등록</p></div>
+              <div class="bx c3 " style="left:1064px;top:380px;--d:2250"><h5>모델 로딩</h5><p>분석에 사용</p></div>
+            </div>
+            </div>
+          </div>
+        </div>
+        <div class="notes-src">
+          <p data-s="0">저희 시스템은 총 5개의 서버로 구성되어 있으며, 각 서버가 서로 역할을 나누어 동작하고 있습니다. 먼저 각 서버가 어떤 역할을 담당하는지 핵심 기능 위주로 간략하게 설명드리겠습니다. 이후 전체 구성도를 통해 각 서버가 어떻게 연결되어 데이터를 주고받고, 최종적으로 분석 결과를 만들어 내는지 전체적인 동작 흐름을 설명드리겠습니다.</p>
+          <p data-s="1">웹서버는 사용자가 서비스 화면을 통해 기능을 이용할 수 있도록 제공하는 역할을 담당합니다.</p>
+          <p data-s="2">서비스 서버는 프로젝트 등록 시 소스코드와 데이터베이스 구조를 수집하고, 이를 분석에 필요한 하나의 데이터로 정리해 AI 분석 서버에 전달합니다.</p>
+          <p data-s="3">AI 분석 서버는 크게 프로젝트 등록 단계와 고객의 요구사항을 분석하는 단계로 나뉩니다. 먼저 프로젝트 등록 단계에서는 서비스 서버로부터 프로젝트의 소스코드와 데이터베이스 정보가 담긴 JSON 데이터를 전달받습니다. 이후 전달받은 데이터를 작은 단위로 나누는데, 이때 두 가지 형태로 가공해 SQLite에 저장합니다. 첫 번째는 데이터를 검색하기 쉽도록 토큰 단위로 나누어 저장하는 것이고, 두 번째는 임베딩 모델을 활용해 각 데이터의 의미를 숫자로 표현한 벡터 데이터로 변환해 함께 저장하는 것입니다. 이렇게 프로젝트별 분석 자료를 미리 저장해 둡니다.</p>
+          <p data-s="4">다음으로 고객이 프로젝트에 대한 기능 변경이나 개선 요청을 하면, 전체 JSON 데이터를 다시 AI 모델에 전달하는 것이 아니라 SQLite에 저장해 둔 데이터 중에서 고객의 요구사항과 관련성이 높은 자료만 검색하고, 이를 추출해 AI 모델에 전달합니다. 이를 통해 불필요한 데이터 전달을 줄이고, AI가 실제 요구사항과 관련된 근거를 중심으로 분석할 수 있도록 합니다.</p>
+          <p data-s="5">모델 실행 엔진은 두 가지 일을 하는데요. 하나는 분석 모델이 요청서를 읽고 답변을 만드는 일이고, 다른 하나는 임베딩 모델이 글을 숫자로 바꾸는 일입니다.</p>
+          <p data-s="6">마지막은 AI 학습 서버입니다. 분석과는 따로 동작하는 별도의 서버로, 사람이 승인한 사례로 모델을 학습시키고 서비스에 쓸 수 있는 파일로 변환합니다.</p>
+          <p data-s="7">이제 각 서버가 어떻게 연결되어 동작하는지 전체 시스템 흐름을 살펴보겠습니다. 전체 흐름은 크게 세 가지로 나뉩니다. 첫 번째는 프로젝트를 등록하고 분석에 필요한 자료를 수집하고 저장하는 흐름, 두 번째는 고객이 요구사항을 입력하면 관련 자료를 검색해 분석하는 흐름, 마지막은 분석 모델을 프로젝트 목적에 맞게 학습시키는 흐름입니다. 먼저 프로젝트 등록 흐름부터 살펴보겠습니다. 프로젝트 등록 시 접속 정보를 입력하면 서비스 서버가 소스와 데이터베이스 구조를 읽고 분석 자료를 만듭니다. AI 분석 서버는 이 자료를 작게 나눠 숫자와 함께 보관하고, 모델에게 자료 전체를 보내 분석하게 합니다. 돌아온 결과는 확인한 뒤 서비스 서버에 저장되고, 화면에서 저장된 결과를 확인합니다.</p>
+          <p data-s="8">다음은 고객이 요구사항을 입력했을 때의 처리 과정입니다. 먼저 서비스 서버에서 해당 프로젝트 정보와 고객의 요구사항을 AI 분석 서버로 전달합니다. AI 분석 서버는 고객의 요구사항을 하나의 문장으로 정리한 뒤, 임베딩 모델을 통해 숫자로 변환합니다. 이렇게 변환한 데이터와 기존 SQLite에 저장해 둔 프로젝트 자료를 비교합니다. 이때 단어의 일치도와 의미적 유사도를 함께 활용해 요구사항과 관련성이 높은 자료만 찾아 분석 모델에 전달합니다. 이후 분석 모델은 총 3번에 걸쳐 순차적으로 분석을 진행합니다. 첫 번째는 요구사항으로 인해 소스코드의 어느 부분에 영향이 있는지 분석하고, 두 번째는 데이터베이스의 변경이 필요한지 검토합니다. 마지막으로 앞선 두 분석 결과를 종합해 최종 답변을 생성합니다. 이처럼 분석을 세 단계로 나눈 이유는 소스코드와 데이터베이스의 영향도를 각각 검토하고, 그 결과를 종합해 보다 정확한 답변을 제공하기 위해서입니다. 다만 현재는 이 세 가지 분석을 병렬로 처리하는 것이 아니라 하나씩 순차적으로 진행하고 있습니다. 여기에 모델이 실행되는 Mac Studio의 하드웨어 성능적인 한계까지 더해져 현재는 분석에 다소 시간이 소요되고 있습니다. 각 분석 단계에서는 응답이 정상적으로 생성되었는지 검증하는 과정도 거치며, 최종 분석 결과는 저장됩니다. 이후 담당자가 결과를 검토해 승인하거나 반려할 수 있도록 구성했습니다.</p>
+          <p data-s="9">마지막은 모델 학습 흐름입니다. 승인된 사례로 학습하고, 서비스에 쓸 수 있는 파일로 바꿔 모델을 등록해 분석에 사용합니다. 지금까지 전체 시스템의 구성과 동작 흐름을 살펴봤습니다. 이어서 이러한 흐름이 실제 서비스에서 어떻게 구현되고 동작하는지 시연 영상을 통해 보여드리겠습니다.</p>
+        </div>
+      </section>
+
+      <section class="slide" data-steps="0">
+        <div class="topbar"><div class="brand"><svg><use href="#logo"/></svg>doenaai</div><div class="tag">DEMO</div></div>
+        <div class="body">
+          <div class="head" style="margin-bottom:30px">
+            <div class="eyebrow rv">직접 확인해 보겠습니다</div>
+            <h1 class="rv" style="--d:120">프로젝트 등록부터 <span class="blue">질문과 답변</span>까지</h1>
+          </div>
+          <div class="vframe rv scale" style="--d:300">
+            <div class="play"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></div>
+            <b>시연 영상</b>
+            <span>이 자리에 시연 영상이 들어갑니다</span>
+          </div>
+        </div>
+        <div class="notes-src">
+
+        </div>
+      </section>
+
+      <section data-title="개선 1 병렬 처리" class="slide imp" data-steps="5">
+        <div class="topbar"><div class="brand"><svg><use href="#logo"/></svg>doenaai</div><div class="tag">IMPROVEMENT 1</div></div>
+        <div class="body">
+          <div class="eyebrow rv" data-s="0" style="--d:0">개선 사항 1 · 처리 속도</div>
+          <h1 class="rv" style="--d:120">AI에게 시키는 일을 <span class="blue">동시에</span> 처리해<br>기다리는 시간을 줄입니다</h1>
+
+          <div class="card tlcard rv" data-s="1" style="--d:200">
+            <div class="tlrow">
+              <div class="tlab"><b>지금</b><span>한 줄로 순서대로</span></div>
+              <div class="track one">
+                <div class="blk g l0 rv-b" data-s="2" style="--s:0;--l:3;--d:0">일반 분석</div>
+                <div class="blk d l0 rv-b" data-s="2" style="--s:3;--l:2;--d:500">묶음 1</div>
+                <div class="blk d l0 rv-b" data-s="2" style="--s:5;--l:2;--d:900">묶음 2</div>
+                <div class="blk d l0 rv-b" data-s="2" style="--s:7;--l:2;--d:1300">묶음 3</div>
+                <div class="blk m l0 rv-b" data-s="2" style="--s:9;--l:1;--d:1700">합치기</div>
+                <div class="blk f l0 rv-b" data-s="2" style="--s:10;--l:2;--d:1900">최종 정리</div>
+                <div class="axis"></div>
+              </div>
+            </div>
+            <div class="tlrow">
+              <div class="tlab new"><b>개선</b><span>상관없는 일은 동시에</span></div>
+              <div class="track four">
+                <div class="saved rv-b" data-s="3" style="--d:1700"><div><b>줄어든 시간</b><span>실제 폭은 측정 후 확정</span></div></div>
+                <div class="blk g l1 rv-b" data-s="3" style="--s:0;--l:4;--d:0">일반 분석</div>
+                <div class="blk d l2 rv-b" data-s="3" style="--s:0;--l:3;--d:150">묶음 1</div>
+                <div class="blk d l3 rv-b" data-s="3" style="--s:0;--l:3;--d:300">묶음 2</div>
+                <div class="blk d l4 rv-b" data-s="3" style="--s:0;--l:3;--d:450">묶음 3</div>
+                <div class="blk m l2 rv-b" data-s="3" style="--s:3;--l:1;--d:1000">합치기</div>
+                <div class="blk f l1 rv-b" data-s="3" style="--s:4;--l:2;--d:1250">최종 정리</div>
+                <div class="axis"></div>
+              </div>
+            </div>
+            <div class="eg"><span>※ 이해를 돕기 위한 예시 그림입니다. 동시에 하면 일 하나는 조금 느려질 수 있습니다.</span></div>
+          </div>
+
+          <div class="three">
+            <div class="card step rv" data-s="4" style="--d:0"><div class="no">1</div><div><h3>묶음 검토를 동시에</h3><p>테이블이 많아 나눈 묶음 검토를 한꺼번에 시킵니다.</p></div></div>
+            <div class="card step rv" data-s="4" style="--d:250"><div class="no">2</div><div><h3>일반 분석과 DB 검토를 함께 시작</h3><p>관련 근거만 보내는 방식에서는 서로 기다릴 필요가 없습니다.</p></div></div>
+            <div class="card step rv" data-s="4" style="--d:500"><div class="no">3</div><div><h3>동시에 보내는 개수에 상한</h3><p>장비가 감당하는 만큼만 한꺼번에 보냅니다.</p></div></div>
+          </div>
+
+          <div class="note rv" data-s="5"><i>조건</i><span>장비가 동시에 처리할 수 있는 만큼만 빨라집니다. <b>먼저 측정한 뒤 적용합니다.</b></span></div>
+        </div>
+        <div class="notes-src">
+          <p data-s="0">마지막으로 현재 시스템에서 개선이 필요한 부분과 향후 발전 방향에 대해 말씀드리겠습니다. 첫 번째는 AI 분석 처리 속도 개선입니다.</p>
+          <p data-s="1">현재는 고객의 요구사항을 분석하기 위해 AI가 여러 작업을 수행하는데, 각 작업을 순차적으로 하나씩 처리하고 있습니다. 앞으로는 동시에 처리할 수 있는 작업들을 병렬로 실행하도록 개선해 전체 대기 시간을 줄이고자 합니다.</p>
+          <p data-s="2">위 그림이 지금 방식입니다. 일반 분석이 끝나야 데이터베이스 검토를 시작하고, 테이블이 많으면 묶음으로 나눈 검토도 하나가 끝나야 다음 것을 합니다. 그래서 기다리는 시간이 계속 이어집니다.</p>
+          <p data-s="3">아래 그림이 개선할 방식입니다. 서로 상관없는 일은 동시에 시킵니다. 일반 분석과 데이터베이스 묶음 검토를 한꺼번에 시작하고, 마지막에 합치는 일만 순서를 지킵니다. 작업을 동시에 진행하면 개별 작업의 처리 시간은 다소 늘어날 수 있지만, 전체 대기 시간은 줄어듭니다. 이 그림은 이해를 돕기 위한 예시입니다.</p>
+          <p data-s="4">바꾸는 일은 세 가지입니다. 묶음 검토를 동시에 시키고, 일반 분석과 데이터베이스 검토를 함께 시작하고, 한꺼번에 보내는 개수에 상한을 둡니다.</p>
+          <p data-s="5">다만 AI 모델은 장비 한 대에서 돌아가기 때문에, 동시에 처리할 수 있는 만큼만 빨라집니다. 그래서 먼저 장비의 한계를 측정한 뒤에 적용하려고 합니다.</p>
+        </div>
+      </section>
+
+      <section data-title="개선 2 프로젝트별 어댑터" class="slide imp s9" data-steps="5">
+        <div class="topbar"><div class="brand"><svg><use href="#logo"/></svg>doenaai</div><div class="tag">IMPROVEMENT 2</div></div>
+        <div class="body">
+          <div class="eyebrow rv" data-s="0" style="--d:0">개선 사항 2 · 프로젝트마다 맞춤</div>
+          <h1 class="rv" style="--d:120">모델은 하나로 쓰고,<br>프로젝트마다 <span class="blue">맞춤 학습 파일</span>을 붙입니다</h1>
+
+          <div class="card cmp rv" data-s="1" style="--d:200">
+            <div class="old">
+              <h4>지금<small>모델 하나를 모든 프로젝트가 공유</small></h4>
+              <div class="grid3 o">
+                <div class="pj a rv" data-s="2" style="--d:0">프로젝트 A</div>
+                <div class="xarr rv" data-s="2" style="--d:120">→</div>
+                <div class="model mix rv" data-s="2" style="--d:300;grid-row: 1 / span 3; grid-column: 3"><div><b>AI 모델 1개</b><span>학습도 프로젝트 구분 없이<br>자료를 합쳐서 진행</span></div></div>
+                <div class="pj b rv" data-s="2" style="--d:200;grid-row:2;grid-column:1">프로젝트 B</div>
+                <div class="xarr rv" data-s="2" style="--d:320;grid-row:2;grid-column:2">→</div>
+                <div class="pj c rv" data-s="2" style="--d:400;grid-row:3;grid-column:1">프로젝트 C</div>
+                <div class="xarr rv" data-s="2" style="--d:520;grid-row:3;grid-column:2">→</div>
+              </div>
+            </div>
+            <div class="new">
+              <h4>개선<small>기본 모델은 공유하고, 학습 파일만 프로젝트별로 분리</small></h4>
+              <div class="grid3 n">
+                <div class="pj a rv" data-s="3" style="--d:0">프로젝트 A</div>
+                <div class="xarr rv" data-s="3" style="--d:120">→</div>
+                <div class="ad a rv" data-s="3" style="--d:200">A 맞춤 파일<small>어댑터</small></div>
+                <div class="xarr rv" data-s="3" style="--d:320">→</div>
+                <div class="model rv" data-s="3" style="--d:800;grid-row: 1 / span 3; grid-column: 5"><div><b>기본 AI 모델</b><span>모든 프로젝트가<br>하나를 공유</span></div></div>
+                <div class="pj b rv" data-s="3" style="--d:400;grid-row:2;grid-column:1">프로젝트 B</div>
+                <div class="xarr rv" data-s="3" style="--d:520;grid-row:2;grid-column:2">→</div>
+                <div class="ad b rv" data-s="3" style="--d:600;grid-row:2;grid-column:3">B 맞춤 파일<small>어댑터</small></div>
+                <div class="xarr rv" data-s="3" style="--d:720;grid-row:2;grid-column:4">→</div>
+                <div class="pj c rv" data-s="3" style="--d:800;grid-row:3;grid-column:1">프로젝트 C</div>
+                <div class="xarr rv" data-s="3" style="--d:920;grid-row:3;grid-column:2">→</div>
+                <div class="ad c rv" data-s="3" style="--d:1000;grid-row:3;grid-column:3">C 맞춤 파일<small>어댑터</small></div>
+                <div class="xarr rv" data-s="3" style="--d:1120;grid-row:3;grid-column:4">→</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="flow3">
+            <div class="card step rv" data-s="4" style="--d:0"><div class="no">1</div><div><h3>프로젝트별로 나눠 학습</h3><p>승인된 사례를 프로젝트별로 모아 맞춤 파일을 만듭니다.</p></div></div>
+            <div class="gap rv" data-s="4" style="--d:200">→</div>
+            <div class="card step rv" data-s="4" style="--d:300"><div class="no">2</div><div><h3>프로젝트와 연결해 저장</h3><p>어느 프로젝트가 어떤 맞춤 파일을 쓰는지 기록합니다.</p></div></div>
+            <div class="gap rv" data-s="4" style="--d:500">→</div>
+            <div class="card step rv" data-s="4" style="--d:600"><div class="no">3</div><div><h3>분석할 때 골라서 붙이기</h3><p>요청이 오면 그 프로젝트의 맞춤 파일을 붙여 분석합니다.</p></div></div>
+          </div>
+
+          <div class="note rv" data-s="5"><i>조건</i><span>승인된 사례가 충분히 쌓인 프로젝트부터 적용하고, <b>효과는 정답 세트로 확인합니다.</b></span></div>
+        </div>
+        <div class="notes-src">
+          <p data-s="0">두 번째 개선은 프로젝트마다 맞춤으로 쓰는 것입니다.</p>
+          <p data-s="1">먼저 지금 방식과 개선 방식을 비교해 보겠습니다.</p>
+          <p data-s="2">지금은 AI 모델 하나를 모든 프로젝트가 같이 씁니다. 학습할 때도 프로젝트 구분 없이 자료를 합쳐서 학습합니다. 그래서 프로젝트마다 코드와 규칙이 다르면 한 모델에 전부 반영하기 어렵습니다.</p>
+          <p data-s="3">개선 방식은 이렇습니다. 기본 AI 모델은 지금처럼 하나로 공유하고, 학습 결과만 프로젝트별 파일로 분리합니다. 분석할 때는 그 프로젝트의 학습 파일을 기본 모델에 붙여서 사용합니다. 이렇게 하면 프로젝트마다 모델을 새로 만들 필요가 없고, 프로젝트별 학습 자료를 따로 관리할 수 있습니다.</p>
+          <p data-s="4">이를 위해 크게 세 가지 작업이 필요합니다. 첫 번째로 학습 자료를 프로젝트별로 구분해 학습하고, 두 번째는 각 프로젝트가 어떤 학습 파일을 사용하는지 연결 정보를 관리합니다. 마지막으로 분석 요청이 들어오면 해당 프로젝트에 맞는 학습 파일을 적용하도록 개선할 예정입니다.</p>
+          <p data-s="5">다만 모든 프로젝트에 한 번에 적용하기보다는 승인된 분석 사례가 충분히 쌓인 프로젝트부터 단계적으로 적용할 계획입니다. 또한 정답이 정해진 테스트 데이터를 활용해 실제 분석 정확도가 개선되었는지도 검증하겠습니다. 궁극적으로는 프로젝트마다 축적된 분석 경험을 바탕으로 더 정확한 영향도 분석과 견적 산출까지 이어가는 것이 목표입니다.</p>
+        </div>
+      </section>
+
+      <section data-title="마무리" class="slide imp dark end" data-steps="2">
+        <div class="topbar"><div class="brand"><svg><use href="#logo"/></svg>doenaai</div><div class="tag">CLOSING</div></div>
+        <div class="body">
+          <div class="head">
+            <h1 class="rv" style="--d:120">경험에 의존하던 견적에서,<br><span class="blue">근거에 기반한 견적</span>으로.</h1>
+          </div>
+          <div class="talk">
+            <div class="msg-col">
+              <div class="msg cust rv" data-s="1"><div class="who-l">고객</div>책임님~<br>이 기능, <em class="q">되나요?</em></div>
+            </div>
+            <div class="arrow rv fade" data-s="2"><svg viewBox="0 0 24 24" fill="none" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+            <div class="msg-col">
+              <div class="msg mgr rv" data-s="2"><div class="who-l">담당자</div>이제 고객의 <em class="q">“되나요?”</em>에,<br>근거로 답할 수 있습니다.
+                <div class="status"><span>소스·DB 근거 확인</span><i>›</i><span>담당자 최종 판단</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="notes-src">
+          <p data-s="0">이 모든 과정을 통해 저희가 바꾸고자 하는 것은 하나입니다. 경험에 의존하던 견적을 근거에 기반한 견적으로 바꾸는 것입니다.</p>
+          <p data-s="1">이제 되나AI는 고객의 한마디, "되나요?"라는 질문에 단순히 가능 여부만 답하는 것이 아니라,</p>
+          <p data-s="2">근거를 가지고 답하겠습니다. 감사합니다.</p>
+        </div>
+      </section>
+
+      <section data-title="질의응답" class="slide imp dark qa" data-steps="1">
+        <div class="topbar"><div class="brand"><svg><use href="#logo"/></svg>doenaai</div><div class="tag">Q&amp;A</div></div>
+        <div class="body">
+          <div class="qa-c">
+            <div class="eyebrow rv" style="--d:0">Q&amp;A</div>
+            <h1 class="rv" style="--d:120">궁금한 점을 <span class="blue">질문</span>해 주세요</h1>
+            <p class="rv" data-s="1" style="--d:0">경청해 주셔서 감사합니다.</p>
+          </div>
+        </div>
+        <div class="notes-src">
+          <p data-s="0">발표를 들어 주셔서 감사합니다. 궁금한 점이 있으시면 편하게 질문해 주세요.</p>
+          <p data-s="1">경청해 주셔서 감사합니다.</p>
+        </div>
+      </section>
+
+      <div class="pagenum" id="pn"></div>
+      <div id="bar"></div>
+    </div>
+  </div>
+
+    <aside id="notes">
+    <header><b>발표 대본</b><div id="nt"></div></header>
+    <div id="np"></div>
+    <footer>→ · Space 다음 &nbsp; ← 이전 &nbsp; N 대본 &nbsp; F 전체화면</footer>
+  </aside>
+</div>
+<div id="hint">→ 다음 · ← 이전 · N 대본 · F 전체화면</div>
+
+<script>
+(() => {
+  const slides = [...document.querySelectorAll('.slide')];
+  const stage = document.getElementById('stage');
+  const view = document.getElementById('view');
+  const notes = document.getElementById('notes');
+  const np = document.getElementById('np');
+  const nt = document.getElementById('nt');
+  const pn = document.getElementById('pn');
+  const bar = document.getElementById('bar');
+  const maxStep = (i) => Number(slides[i].dataset.steps || 0);
+  const titles = slides.map((s) => s.dataset.title || s.querySelector('.tag').textContent);
+
+  let cur = 0;
+  let step = 0;
+
+  // 창 크기에 맞춰 16:9 무대를 축소한다.
+  function fit() {
+    const w = view.clientWidth;
+    const h = view.clientHeight;
+    const s = Math.min(w / 1920, h / 1080);
+    stage.style.transform = `translate(-50%, -50%) scale(${s})`;
+  }
+
+  function render() {
+    slides.forEach((sl, i) => {
+      const active = i === cur;
+      sl.classList.toggle('active', active);
+      if (active) {
+        sl.dataset.step = step;
+        for (let k = 1; k <= 12; k++) sl.classList.toggle('step-' + k, k <= step);
+        sl.querySelectorAll('.rv, .rv-b').forEach((el) => {
+          const s = Number(el.dataset.s || 0);
+          el.classList.toggle('on', s <= step);
+        });
+      } else if (!sl.dataset.resetting && sl.querySelector('.rv.on, .rv-b.on')) {
+        // 사라지는 동안은 그대로 두고, 완전히 가려진 뒤 초기 상태로 되돌린다.
+        sl.dataset.resetting = '1';
+        setTimeout(() => {
+          delete sl.dataset.resetting;
+          if (sl.classList.contains('active')) return;
+          sl.querySelectorAll('.rv.on, .rv-b.on').forEach((el) => el.classList.remove('on'));
+          sl.removeAttribute('data-step');
+        }, 520);
+      }
+    });
+    pn.textContent = String(cur + 1).padStart(2, '0') + ' / ' + String(slides.length).padStart(2, '0');
+    bar.style.width = ((cur + 1) / slides.length * 100) + '%';
+    syncDetail();
+    renderNotes();
+    history.replaceState(null, '', '#' + (cur + 1) + '-' + step);
+  }
+
+  // 단계 0~5는 서버 설명(AI 분석 서버는 2·3단계), 6~8은 업무 흐름. 같은 하단 영역을 쓴다.
+  const CARD_OF = [0, 1, 2, 3, 3, 4, 5];
+  const FIRST_STEP = [0, 1, 2, 3, 5, 6];
+  function syncDetail() {
+    const sl = slides[cur];
+    const sel = step <= 6 ? CARD_OF[step] : 0;
+    sl.querySelectorAll('.det').forEach((el) => el.classList.toggle('on', Number(el.dataset.s) === step));
+    sl.querySelectorAll('.flow').forEach((el) => el.classList.toggle('on', step >= 7));
+    sl.querySelectorAll('.srv5 .node').forEach((el) => el.classList.toggle('sel', Number(el.dataset.n) === sel));
+    const proc = sl.querySelector('.proc');
+    if (!proc) return;
+    const BX = [0, 163, 514, 864, 1214, 1565];
+    if (sel) {
+      proc.style.setProperty('--bx', BX[sel] + 'px');
+      proc.style.setProperty('--pac', sel <= 2 ? 'var(--brand-500)' : 'var(--cyan)');
+    }
+    proc.classList.toggle('ringed', sel > 0);
+  }
+
+  function renderNotes() {
+    nt.textContent = String(cur + 1).padStart(2, '0') + ' · ' + titles[cur];
+    const src = [...slides[cur].querySelectorAll('.notes-src p')];
+    np.innerHTML = '';
+    src.forEach((p) => {
+      const s = Number(p.dataset.s || 0);
+      const el = document.createElement('p');
+      const small = document.createElement('small');
+      small.textContent = s === 0 ? '슬라이드 시작' : '클릭 ' + s;
+      el.appendChild(small);
+      el.appendChild(document.createTextNode(p.textContent.trim()));
+      el.className = s === step ? 'cur' : (s < step ? 'past' : 'future');
+      np.appendChild(el);
+    });
+    const c = np.querySelector('.cur');
+    if (c) c.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }
+
+  function next() {
+    if (step < maxStep(cur)) step++;
+    else if (cur < slides.length - 1) { cur++; step = 0; }
+    render();
+  }
+  function prev() {
+    if (step > 0) step--;
+    else if (cur > 0) { cur--; step = maxStep(cur); }
+    render();
+  }
+  function toggleNotes() { notes.classList.toggle('hide'); fit(); }
+  function toggleFull() {
+    if (document.fullscreenElement) document.exitFullscreen();
+    else document.documentElement.requestFullscreen().catch(() => {});
+  }
+
+  document.addEventListener('keydown', (e) => {
+    const k = e.key;
+    if (['ArrowRight', 'ArrowDown', ' ', 'Enter', 'PageDown'].includes(k)) { e.preventDefault(); next(); }
+    else if (['ArrowLeft', 'ArrowUp', 'Backspace', 'PageUp'].includes(k)) { e.preventDefault(); prev(); }
+    else if (k === 'Home') { cur = 0; step = 0; render(); }
+    else if (k === 'End') { cur = slides.length - 1; step = maxStep(cur); render(); }
+    else if (k === 'n' || k === 'N') toggleNotes();
+    else if (k === 'f' || k === 'F') toggleFull();
+  });
+  view.addEventListener('click', next);
+  // 서버 카드를 누르면 해당 서버 설명으로 바로 이동한다(다음 단계로 넘어가지 않도록 전파를 막는다).
+  document.querySelectorAll('.srv5 .node').forEach((el) => el.addEventListener('click', (e) => {
+    e.stopPropagation();
+    step = FIRST_STEP[Number(el.dataset.n)];
+    render();
+  }));
+  window.addEventListener('resize', fit);
+  document.addEventListener('fullscreenchange', fit);
+
+  // 주소 끝에 #7 또는 #7-3 을 붙이면 해당 슬라이드(와 단계)에서 시작한다.
+  const [hs, hp] = location.hash.slice(1).split('-').map((v) => parseInt(v, 10));
+  if (hs >= 1 && hs <= slides.length) {
+    cur = hs - 1;
+    if (hp >= 0) step = Math.min(hp, maxStep(cur));
+  }
+  fit();
+  render();
+  setTimeout(() => { document.getElementById('hint').style.opacity = 0; }, 6000);
+})();
+</script>
+</body>
+</html>
+
